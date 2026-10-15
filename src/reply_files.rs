@@ -72,7 +72,6 @@ enum FileFailure {
     InvalidPath,
     MissingOrUnreadable,
     NotRegularFile,
-    Protected,
     RequestTooLarge,
 }
 
@@ -103,8 +102,7 @@ impl ReplyAccumulator {
         }
         let outcome = match result {
             Err(failure) => LinkOutcome::Failed(failure),
-            Ok(mut file) => {
-                file.filename = unique_upload_filename(&self.files, &file.filename);
+            Ok(file) => {
                 let index = self.files.len();
                 self.files.push(file);
                 LinkOutcome::File(index)
@@ -113,36 +111,6 @@ impl ReplyAccumulator {
         self.seen.insert(key, outcome.clone());
         outcome
     }
-}
-
-fn unique_upload_filename(existing: &[ReplyFile], requested: &str) -> String {
-    let is_used = |candidate: &str| {
-        existing
-            .iter()
-            .any(|file| file.filename.eq_ignore_ascii_case(candidate))
-    };
-    if !is_used(requested) {
-        return requested.to_owned();
-    }
-
-    let path = Path::new(requested);
-    let stem = path
-        .file_stem()
-        .map(|part| part.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "attachment".to_owned());
-    let extension = path.extension().map(|part| part.to_string_lossy());
-    for suffix in 2_u64.. {
-        let candidate = match &extension {
-            Some(extension) if !extension.is_empty() => {
-                format!("{stem}-{suffix}.{extension}")
-            }
-            _ => format!("{stem}-{suffix}"),
-        };
-        if !is_used(&candidate) {
-            return candidate;
-        }
-    }
-    requested.to_owned()
 }
 
 fn plan_reply(text: &str, project_dir: &Path) -> ReplyPlan {
@@ -201,27 +169,15 @@ fn local_link_path(destination: &str, project_dir: &Path) -> Option<PathBuf> {
 
     if is_file_scheme(destination) {
         let mut url = Url::parse(destination).ok()?;
-        if url.scheme() != "file"
-            || url
-                .host_str()
-                .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
-        {
-            return None;
-        }
-        if url.fragment().is_some_and(is_line_anchor) {
-            return None;
-        }
         url.set_fragment(None);
         url.set_query(None);
         return url.to_file_path().ok();
     }
 
-    let (path_text, fragment) = destination
+    let path_text = destination
         .split_once('#')
-        .map_or((destination, None), |(path, fragment)| {
-            (path, Some(fragment))
-        });
-    if fragment.is_some_and(is_line_anchor) || path_text.is_empty() {
+        .map_or(destination, |(path, _)| path);
+    if path_text.is_empty() {
         return None;
     }
     let decoded = percent_encoding::percent_decode_str(path_text)
@@ -260,12 +216,6 @@ fn is_file_scheme(value: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
 }
 
-fn is_line_anchor(fragment: &str) -> bool {
-    fragment
-        .strip_prefix('L')
-        .is_some_and(|rest| rest.as_bytes().first().is_some_and(u8::is_ascii_digit))
-}
-
 fn safe_basename(path: &Path) -> String {
     let value = path
         .file_name()
@@ -277,7 +227,6 @@ fn safe_basename(path: &Path) -> String {
         .unwrap_or_default()
         .chars()
         .filter(|ch| !ch.is_control())
-        .take(240)
         .collect::<String>();
     if value.is_empty() || value == "." || value == ".." {
         "attachment".to_owned()
@@ -313,50 +262,6 @@ fn absolute_candidate(config: &Config, path: &Path) -> PathBuf {
     }
 }
 
-fn codex_home(config: &Config) -> Option<PathBuf> {
-    config
-        .codex_home
-        .clone()
-        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
-        .or_else(|| {
-            #[cfg(windows)]
-            let home = std::env::var_os("USERPROFILE");
-            #[cfg(not(windows))]
-            let home = std::env::var_os("HOME");
-            home.map(PathBuf::from).map(|home| home.join(".codex"))
-        })
-}
-
-fn is_protected_path(config: &Config, candidate: &Path, canonical: &Path) -> bool {
-    if let Some(credentials) = &config.credentials_file {
-        let configured = absolute_candidate(config, credentials);
-        if candidate == configured
-            || std::fs::canonicalize(&configured)
-                .ok()
-                .is_some_and(|path| path == canonical)
-        {
-            return true;
-        }
-    }
-
-    if let Some(home) = codex_home(config) {
-        let configured = absolute_candidate(config, &home);
-        // Generated artifacts share CODEX_HOME with account files. Only the
-        // actual account/settings files are covered by the retained guard.
-        for name in ["auth.json", "config.toml"] {
-            let account_file = configured.join(name);
-            if candidate == account_file
-                || std::fs::canonicalize(&account_file)
-                    .ok()
-                    .is_some_and(|path| path == canonical)
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 async fn canonical_candidate(
     config: &Config,
     path: &Path,
@@ -365,9 +270,6 @@ async fn canonical_candidate(
     let canonical = tokio::fs::canonicalize(&candidate)
         .await
         .map_err(map_io_failure)?;
-    if is_protected_path(config, &candidate, &canonical) {
-        return Err(FileFailure::Protected);
-    }
     Ok(canonical)
 }
 
@@ -424,14 +326,12 @@ fn failure_text(language: Language, filename: &str, failure: FileFailure) -> Str
             FileFailure::InvalidPath => "not a local file path",
             FileFailure::MissingOrUnreadable => "file is missing or unreadable",
             FileFailure::NotRegularFile => "not a regular file",
-            FileFailure::Protected => "protected credentials or Codex settings cannot be attached",
             FileFailure::RequestTooLarge => "the file alone exceeds Discord's 25 MiB request limit",
         },
         match failure {
             FileFailure::InvalidPath => "로컬 파일 경로가 아닙니다",
             FileFailure::MissingOrUnreadable => "파일이 없거나 읽을 수 없습니다",
             FileFailure::NotRegularFile => "일반 파일이 아닙니다",
-            FileFailure::Protected => "보호된 자격 증명 또는 Codex 설정 파일은 첨부할 수 없습니다",
             FileFailure::RequestTooLarge => {
                 "파일 하나만으로 Discord의 25 MiB 요청 제한을 초과합니다"
             }
@@ -440,14 +340,12 @@ fn failure_text(language: Language, filename: &str, failure: FileFailure) -> Str
             FileFailure::InvalidPath => "不是本地文件路径",
             FileFailure::MissingOrUnreadable => "文件不存在或无法读取",
             FileFailure::NotRegularFile => "不是普通文件",
-            FileFailure::Protected => "不能附加受保护的凭据或 Codex 设置文件",
             FileFailure::RequestTooLarge => "单个文件就超过了 Discord 25 MiB 的请求上限",
         },
         match failure {
             FileFailure::InvalidPath => "ローカルファイルのパスではありません",
             FileFailure::MissingOrUnreadable => "ファイルがないか、読み取れません",
             FileFailure::NotRegularFile => "通常ファイルではありません",
-            FileFailure::Protected => "保護された認証情報またはCodex設定ファイルは添付できません",
             FileFailure::RequestTooLarge => {
                 "ファイル単体でDiscordの25 MiBリクエスト上限を超えています"
             }
@@ -516,7 +414,7 @@ fn finish_reply(
 }
 
 /// Prepare explicit local paths (for a user-requested file send). The operation
-/// is all-or-nothing and never returns a credential or Codex settings file.
+/// is all-or-nothing and applies no file-type or path-based policy.
 pub(crate) async fn prepare_explicit_files(
     config: &Config,
     paths: &[String],
@@ -556,7 +454,7 @@ fn explicit_path(value: &str, project_dir: &Path) -> Option<PathBuf> {
     if is_file_scheme(value) {
         return local_link_path(value, project_dir);
     }
-    if !is_windows_drive_path(value) && (has_uri_scheme(value) || value.starts_with("//")) {
+    if !is_windows_drive_path(value) && has_uri_scheme(value) {
         return None;
     }
     let path = PathBuf::from(value);
@@ -602,22 +500,58 @@ pub(crate) async fn prepare_reply(config: &Config, text: &str) -> PreparedReply 
 mod tests {
     use super::*;
 
-    #[test]
-    fn generated_artifact_path_is_not_an_account_file() {
-        let root = std::env::temp_dir().join("discodex-path-policy-example");
+    #[tokio::test]
+    async fn explicit_and_markdown_attachments_accept_all_readable_file_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
         let home = root.join("codex");
+        tokio::fs::create_dir_all(home.join("generated"))
+            .await
+            .unwrap();
         let config: Config = serde_json::from_value(serde_json::json!({
             "profile":"example", "name":"Example", "tokenEnv":"EXAMPLE_TOKEN",
             "guildId":1, "homeChannelId":2, "transcriptChannelId":3,
             "codexPath":"codex", "codexHome":home,
-            "projectDir":root, "stateDir":root.join("state"),
+            "projectDir":root.join("project"), "stateDir":root.join("state"),
             "credentialsFile":root.join("discord-token")
-        })).unwrap();
-        let generated = home.join("generated").join("result.png");
-        assert!(!is_protected_path(&config, &generated, &generated));
-        for account_file in [home.join("auth.json"), home.join("config.toml"), root.join("discord-token")] {
-            assert!(is_protected_path(&config, &account_file, &account_file));
+        }))
+        .unwrap();
+        let paths = [
+            home.join("auth.json"),
+            home.join("config.toml"),
+            root.join("discord-token"),
+            home.join("generated").join("result.png"),
+            root.join("outside-project.txt"),
+        ];
+        let data = b"synthetic attachment bytes";
+        for path in &paths {
+            tokio::fs::write(path, data).await.unwrap();
         }
+        let supplied = paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let explicit = prepare_explicit_files(&config, &supplied).await.unwrap();
+        assert_eq!(explicit.len(), paths.len());
+        for (file, path) in explicit.iter().zip(&paths) {
+            assert_eq!(file.filename, path.file_name().unwrap().to_str().unwrap());
+            assert_eq!(file.data, data);
+        }
+
+        let markdown = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| format!("[file {index}]({})", Url::from_file_path(path).unwrap()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let reply = prepare_reply(&config, &markdown).await;
+        assert_eq!(reply.files, explicit);
+    }
+
+    #[test]
+    fn upload_filename_preserves_the_complete_basename() {
+        let filename = format!("{}.txt", "a".repeat(250));
+        assert_eq!(safe_upload_filename(&filename), filename);
     }
 
     #[test]
@@ -630,12 +564,13 @@ mod tests {
         );
         let plan = plan_reply(&input, project);
 
-        assert_eq!(plan.links.len(), 4);
+        assert_eq!(plan.links.len(), 5);
         assert_eq!(plan.links[0].path, Path::new("project/docs/a b.txt"));
         assert_eq!(plan.links[0].filename, "a b.txt");
         assert_eq!(plan.links[1].filename, "another file.png");
         assert_eq!(plan.links[2].filename, "reply file.pdf");
         assert_eq!(plan.links[3].path, Path::new("project/docs/ref.md"));
+        assert_eq!(plan.links[4].path, Path::new("project/src/main.rs"));
         assert_eq!(plan.reference_definition_ranges.len(), 1);
         let rendered = finish_reply(
             plan,
@@ -644,6 +579,7 @@ mod tests {
                 LinkOutcome::File(1),
                 LinkOutcome::File(2),
                 LinkOutcome::File(3),
+                LinkOutcome::File(4),
             ],
             Vec::new(),
             Language::English,
@@ -680,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn distinct_paths_with_same_basename_get_unique_upload_names() {
+    fn distinct_paths_with_same_basename_keep_original_upload_names() {
         let mut accumulator = ReplyAccumulator::default();
         for (path, filename) in [
             ("a/report.txt", "report.txt"),
@@ -703,12 +639,7 @@ mod tests {
                 .iter()
                 .map(|file| file.filename.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "report.txt",
-                "report-2.txt",
-                "report-2-2.txt",
-                "report-3.txt"
-            ]
+            ["report.txt", "report.txt", "report-2.txt", "report.txt"]
         );
     }
 
@@ -764,6 +695,25 @@ mod tests {
         assert!(is_windows_drive_path("D:\\work\\file.txt"));
         assert!(!is_windows_drive_path("https://example.org/file.txt"));
         assert!(explicit_path("C:/Users/Example/file.txt", Path::new("project")).is_some());
+    }
+
+    #[test]
+    fn explicit_network_paths_and_local_link_fragments_follow_native_path_parsing() {
+        assert_eq!(
+            explicit_path("//example/share/report.txt", Path::new("project")),
+            Some(PathBuf::from("//example/share/report.txt"))
+        );
+        let file = std::env::temp_dir().join("example.rs");
+        let mut url = Url::from_file_path(&file).unwrap();
+        url.set_fragment(Some("L42"));
+        assert_eq!(
+            local_link_path(url.as_str(), Path::new("project")),
+            Some(file)
+        );
+        assert_eq!(
+            local_link_path("//example.org/report.pdf", Path::new("project")),
+            None
+        );
     }
 
     #[test]

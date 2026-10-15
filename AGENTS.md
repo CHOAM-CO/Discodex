@@ -20,3 +20,5 @@ The installation language defaults to English and can be selected as English, Ko
 Product documentation lives in `docs/design.md` and `docs/installation.md`.
 
 Do not introduce product restrictions that the user did not request, such as inferred path deny lists, artificial size/count/range caps, or forced permission profiles. Accommodate actual service and protocol limits through pagination and split delivery, and preserve the requested content instead of silently truncating it.
+
+Discodex controls Discord connectivity: channel and thread routing, voice sessions, and message delivery. Do not add a second permission, security, or file-access policy over Codex and the host OS. Explicitly selected readable files are eligible for attachment regardless of type or path.

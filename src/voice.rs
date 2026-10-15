@@ -246,7 +246,7 @@ fn reply_file_edit_plan(files: &[ReplyFile], existing: &[PostedReplyFile]) -> Ve
 fn match_reply_attachment_ids(
     files: &[ReplyFile],
     attachments: &[(AttachmentId, String, u32)],
-) -> Result<Vec<AttachmentId>> {
+) -> Result<Vec<Option<AttachmentId>>> {
     if files.len() != attachments.len() {
         bail!("Discord returned a different number of voice transcript attachments");
     }
@@ -264,14 +264,14 @@ fn match_reply_attachment_ids(
                 })
                 .map(|(index, (id, _, _))| (index, *id))
                 .collect::<Vec<_>>();
-            if matches.len() != 1 {
-                bail!("Discord voice transcript attachment metadata is not uniquely matchable");
-            }
-            let (index, id) = matches[0];
-            if std::mem::replace(&mut used[index], true) {
-                bail!("Discord reused a voice transcript attachment identity");
-            }
-            Ok(id)
+            let Some((index, id)) = matches.iter().copied().find(|(index, _)| !used[*index]) else {
+                bail!("Discord voice transcript attachment metadata does not match the sent files");
+            };
+            used[index] = true;
+            // Equal names and sizes cannot identify a file's bytes from response
+            // metadata. Delivery succeeded; omit only the reusable-ID cache entry
+            // so a later edit uploads those files again without renaming them.
+            Ok((matches.len() == 1).then_some(id))
         })
         .collect()
 }
@@ -289,12 +289,12 @@ fn posted_reply_files_from_attachments(
     Ok(files
         .iter()
         .zip(ids)
-        .map(|(file, id)| PostedReplyFile {
+        .filter_map(|(file, id)| id.map(|id| PostedReplyFile {
             page,
             id,
             filename: file.filename.clone(),
             digest: reply_file_digest(file),
-        })
+        }))
         .collect())
 }
 
@@ -9115,14 +9115,22 @@ mod tests {
         ];
         assert_eq!(
             match_reply_attachment_ids(&[first.clone(), second.clone()], &returned).unwrap(),
-            vec![AttachmentId::new(51), AttachmentId::new(52)]
+            vec![Some(AttachmentId::new(51)), Some(AttachmentId::new(52))]
         );
 
         let ambiguous = vec![
             (AttachmentId::new(61), "first.md".into(), 13),
             (AttachmentId::new(62), "first.md".into(), 13),
         ];
-        assert!(match_reply_attachment_ids(&[first], &ambiguous).is_err());
+        assert!(match_reply_attachment_ids(&[first.clone()], &ambiguous).is_err());
+        let same_name_and_size = ReplyFile {
+            filename: first.filename.clone(),
+            data: b"other content".to_vec(),
+        };
+        assert_eq!(
+            match_reply_attachment_ids(&[first, same_name_and_size], &ambiguous).unwrap(),
+            vec![None, None]
+        );
     }
 
     #[test]
