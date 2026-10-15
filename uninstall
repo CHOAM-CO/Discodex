@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+data_root=${XDG_DATA_HOME:-"${HOME:?HOME is not set}/.local/share"}/discodex
+installed="$data_root/bin/discodex"
+if [ -x "$installed" ]; then
+    exec "$installed" uninstall "$@"
+fi
+
+# The source CLI can complete an interrupted owned uninstall after its binary
+# disappeared. Ownership records still determine every file and service change.
+target=${CARGO_TARGET_DIR:-"$repository/target"}
+case "$target" in /*) ;; *) target="$repository/$target" ;; esac
+command -v cargo >/dev/null 2>&1 || {
+    printf '%s\n' 'Rust Cargo is required to build the source uninstall CLI.' >&2
+    exit 2
+}
+cargo build --release --locked --manifest-path "$repository/Cargo.toml" --target-dir "$target"
+exec "$target/release/discodex" uninstall "$@"

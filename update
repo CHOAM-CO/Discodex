@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+REPOSITORY_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec sh "$REPOSITORY_ROOT/scripts/update.sh" "$@"

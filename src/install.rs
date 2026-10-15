@@ -1,0 +1,6673 @@
+use std::env;
+use std::ffi::OsString;
+use std::fs::{self, File, OpenOptions};
+use std::future::Future;
+use std::io::{self, IsTerminal, Read, Write};
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use flate2::read::GzDecoder;
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tar::Archive;
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
+
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
+
+use crate::config::{Config, InputMode};
+use crate::i18n::Language;
+
+const RELEASES_API: &str = "https://api.github.com/repos/openai/codex/releases";
+const APP_NAME: &str = "discodex";
+const SERVICE_NAME: &str = "discodex";
+const LEGACY_APP_NAME: &str = "codex-worker";
+const LEGACY_SERVICE_NAME: &str = "codex-worker-renewal";
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallationList {
+    format_version: u32,
+    #[serde(default)]
+    language: Language,
+    profile: String,
+    native_source: NativeSource,
+    native_path: Option<PathBuf>,
+    discord_app: String,
+    guild_id: u64,
+    home_channel_id: u64,
+    transcript_channel_id: u64,
+    operator_ids: Vec<u64>,
+    voice_channel_ids: Vec<u64>,
+    project_dir: PathBuf,
+    model: Option<String>,
+    requested_permission_profile: String,
+    created_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum NativeSource {
+    DesktopApp,
+    ExistingCli,
+    OfficialCore,
+}
+
+fn merge_install_config(
+    previous: Option<Config>,
+    list: &InstallationList,
+    credentials_path: &Path,
+    codex_path: &Path,
+    worker_path: Option<&Path>,
+    state_dir: &Path,
+    selected_codex_home: &Path,
+) -> Config {
+    let (
+        name,
+        permissions,
+        voice,
+        input_mode,
+        effort,
+        service_tier,
+        memory_enabled,
+        language,
+        model,
+    ) = match previous {
+        Some(config) => (
+            config.name,
+            config.permissions,
+            config.voice,
+            config.input_mode,
+            config.effort,
+            config.service_tier,
+            config.memory_enabled,
+            configured_language(config.language),
+            config.model.or_else(|| list.model.clone()),
+        ),
+        None => (
+            list.profile.clone(),
+            None,
+            None,
+            InputMode::Steering,
+            None,
+            None,
+            None,
+            configured_language(list.language),
+            list.model.clone(),
+        ),
+    };
+    Config {
+        language: env_language().unwrap_or(language),
+        profile: list.profile.clone(),
+        name,
+        token_env: "DISCODEX_DISCORD_TOKEN".to_owned(),
+        credentials_file: Some(credentials_path.to_owned()),
+        guild_id: list.guild_id,
+        home_channel_id: list.home_channel_id,
+        transcript_channel_id: list.transcript_channel_id,
+        operator_ids: list.operator_ids.clone(),
+        voice_channel_ids: list.voice_channel_ids.clone(),
+        codex_path: codex_path.to_owned(),
+        worker_path: worker_path.map(Path::to_owned),
+        codex_home: Some(selected_codex_home.to_owned()),
+        project_dir: list.project_dir.clone(),
+        state_dir: state_dir.to_owned(),
+        model,
+        effort,
+        service_tier,
+        memory_enabled,
+        permissions,
+        voice,
+        input_mode,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum WindowsTaskRunLevel {
+    #[default]
+    Limited,
+    Highest,
+}
+
+#[cfg(windows)]
+impl WindowsTaskRunLevel {
+    fn powershell(self) -> &'static str {
+        match self {
+            Self::Limited => "Limited",
+            Self::Highest => "Highest",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Ownership {
+    format_version: u32,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    runtime_owned: bool,
+    config_file: PathBuf,
+    credentials_file: PathBuf,
+    install_list_file: PathBuf,
+    runtime_dir: PathBuf,
+    runtime_executable: Option<PathBuf>,
+    #[serde(default)]
+    worker_executable: Option<PathBuf>,
+    service_file: Option<PathBuf>,
+    service_kind: Option<String>,
+    #[serde(default)]
+    windows_task_run_level: WindowsTaskRunLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows_task_pending_run_level: Option<WindowsTaskRunLevel>,
+    codex_source: String,
+    codex_path: PathBuf,
+    codex_version: Option<String>,
+    state_dir: PathBuf,
+    project_dir: PathBuf,
+    #[serde(default)]
+    mac_signing_requirement: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Release {
+    tag_name: String,
+    assets: Vec<ReleaseAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
+}
+
+#[derive(Debug)]
+struct Candidate {
+    label: String,
+    path: PathBuf,
+    source: NativeSource,
+}
+
+#[cfg(windows)]
+fn same_windows_desktop_app_package(
+    previous_source: &str,
+    current_source: &NativeSource,
+    previous_path: &Path,
+    current_path: &Path,
+) -> bool {
+    previous_source == "desktop-app"
+        && current_source == &NativeSource::DesktopApp
+        && windows_openai_codex_package_family(previous_path)
+            .zip(windows_openai_codex_package_family(current_path))
+            .is_some_and(|(previous, current)| previous == current)
+}
+
+#[cfg(windows)]
+fn windows_openai_codex_package_family(path: &Path) -> Option<String> {
+    if !path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("codex.exe"))
+    {
+        return None;
+    }
+    let components: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    components.windows(2).find_map(|pair| {
+        if !pair[0].eq_ignore_ascii_case("WindowsApps") {
+            return None;
+        }
+        let identity: Vec<_> = pair[1].split('_').collect();
+        if identity.len() == 5
+            && identity[0].eq_ignore_ascii_case("OpenAI.Codex")
+            && !identity[1].is_empty()
+            && !identity[4].is_empty()
+        {
+            Some(format!(
+                "{}_{}",
+                identity[0].to_ascii_lowercase(),
+                identity[4]
+            ))
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(windows)]
+fn windows_task_may_be_replaced(state: &str, previous_record_owns_task: bool) -> bool {
+    match state {
+        "absent" => true,
+        "matching" => previous_record_owns_task,
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+fn windows_task_executable_path(path: &Path) -> Result<PathBuf> {
+    let mut value = path
+        .to_str()
+        .context("Windows task executable path is not valid UTF-8")?;
+    if let Some(unprefixed) = value.strip_prefix(r"\\?\") {
+        value = unprefixed;
+    }
+    let bytes = value.as_bytes();
+    if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' || bytes[2] != b'\\' {
+        bail!(
+            "Windows task executable must be a local drive path; UNC and device paths are not supported"
+        )
+    }
+    Ok(PathBuf::from(value))
+}
+
+pub fn print_plan() -> Result<()> {
+    let language = choose_language(None)?;
+    print_plan_for_language(language)
+}
+
+fn print_plan_for_language(language: Language) -> Result<()> {
+    let roots = roots()?;
+    fs::create_dir_all(&roots.config)
+        .with_context(|| format!("create {}", roots.config.display()))?;
+    set_private_dir(&roots.config)?;
+
+    let profile = ask_text(
+        language,
+        "Discord profile name",
+        "Discord 프로필 이름",
+        "Discord 配置名称",
+        "Discord プロファイル名",
+        "default",
+    )?;
+    let candidates = discover_native_candidates()?;
+    let (native_source, native_path) = choose_native(&candidates, language)?;
+    let discord_app = ask_text(
+        language,
+        "Discord application profile (existing app)",
+        "Discord 애플리케이션 프로필 (기존 앱)",
+        "Discord 应用配置（现有应用）",
+        "Discord アプリケーションプロファイル（既存アプリ）",
+        &profile,
+    )?;
+    let guild_id = ask_u64(
+        language,
+        "Home guild/server ID",
+        "홈 서버 ID",
+        "主页服务器 ID",
+        "ホームサーバー ID",
+    )?;
+    let home_channel_id = ask_u64(
+        language,
+        "Home text channel ID",
+        "홈 텍스트 채널 ID",
+        "主页文本频道 ID",
+        "ホームテキストチャンネル ID",
+    )?;
+    let transcript_channel_id = ask_u64(
+        language,
+        "Voice transcript channel ID",
+        "음성 전사 채널 ID",
+        "语音转录频道 ID",
+        "音声文字起こしチャンネル ID",
+    )?;
+    let voice_channel_ids = ask_ids(
+        language,
+        "Allowed voice channel IDs (comma-separated)",
+        "허용할 음성 채널 ID (쉼표로 구분)",
+        "允许的语音频道 ID（逗号分隔）",
+        "許可する音声チャンネル ID（カンマ区切り）",
+    )?;
+    let operator_ids = ask_ids(
+        language,
+        "Operator user IDs (comma-separated)",
+        "운영자 사용자 ID (쉼표로 구분)",
+        "操作员用户 ID（逗号分隔）",
+        "オペレーターのユーザー ID（カンマ区切り）",
+    )?;
+    let project_default = env::current_dir().context("read current directory")?;
+    let project_dir = PathBuf::from(ask_text(
+        language,
+        "Codex project/work directory",
+        "Codex 프로젝트/작업 디렉터리",
+        "Codex 项目/工作目录",
+        "Codex プロジェクト/作業ディレクトリ",
+        &project_default.display().to_string(),
+    )?)
+    .canonicalize()
+    .context("Codex project/work directory must already exist")?;
+    let model = optional_value(
+        language,
+        "Codex model (leave empty for native default)",
+        "Codex 모델 (비우면 기본값)",
+        "Codex 模型（留空使用默认值）",
+        "Codex モデル（空欄なら標準）",
+    )?;
+
+    let list = InstallationList {
+        format_version: 1,
+        language,
+        profile,
+        native_source,
+        native_path,
+        discord_app,
+        guild_id,
+        home_channel_id,
+        transcript_channel_id,
+        operator_ids,
+        voice_channel_ids,
+        project_dir,
+        model,
+        requested_permission_profile: "Full Access (resolve exact ID from native catalog)".into(),
+        created_at: unix_time_string(),
+    };
+    validate_existing_installation_plan(
+        &roots.config.join("ownership.json"),
+        &roots.config.join("config.json"),
+        &list.profile,
+    )?;
+    let path = roots.config.join("installation-list.json");
+    write_json_private(&path, &list)?;
+    println!("Saved installation list: {}", path.display());
+    println!(
+        "The next `discodex install` step will ask for the Discord token privately and verify the selected services."
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+fn checked_recorded_config_path(recorded: &Path, selected: &Path) -> Result<PathBuf> {
+    ensure!(
+        recorded.canonicalize().context("resolve recorded config")?
+            == selected.canonicalize().context("resolve selected config")?,
+        "selected config is not the file recorded by ownership"
+    );
+    Ok(recorded.to_owned())
+}
+
+pub fn migrate_installation(config_path: &Path) -> Result<()> {
+    let source_config = config_path
+        .canonicalize()
+        .with_context(|| format!("resolve selected legacy config {}", config_path.display()))?;
+    let legacy_config_root = source_config
+        .parent()
+        .context("legacy config path has no parent")?
+        .to_owned();
+    ensure!(
+        legacy_config_root
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(LEGACY_APP_NAME),
+        "migration requires an explicit config inside a {LEGACY_APP_NAME} profile directory"
+    );
+    let legacy_owner_path = legacy_config_root.join("ownership.json");
+    let legacy: Ownership = read_json(&legacy_owner_path)
+        .with_context(|| format!("read legacy ownership {}", legacy_owner_path.display()))?;
+    // Windows canonical paths add a verbatim prefix. Prove file identity, then
+    // retain the ownership record's spelling for sibling paths and task arguments.
+    #[cfg(windows)]
+    let source_config = checked_recorded_config_path(&legacy.config_file, &source_config)?;
+    #[cfg(windows)]
+    let legacy_config_root = source_config
+        .parent()
+        .context("recorded legacy config path has no parent")?
+        .to_owned();
+    let old_data_root = legacy
+        .state_dir
+        .parent()
+        .context("legacy state directory has no data root")?
+        .to_owned();
+    ensure!(
+        legacy.state_dir == old_data_root.join("state")
+            && old_data_root.file_name().and_then(|name| name.to_str()) == Some(LEGACY_APP_NAME),
+        "legacy ownership does not identify the expected codex-worker state layout"
+    );
+
+    let new_config = rename_legacy_path(&source_config);
+    let new_data = rename_legacy_path(&old_data_root);
+    let roots = Roots {
+        config: new_config
+            .parent()
+            .context("Discodex config path has no parent")?
+            .to_owned(),
+        data: new_data,
+    };
+    validate_legacy_migration_source(&legacy, &legacy_config_root, &old_data_root, &source_config)?;
+    ensure!(
+        !roots.config.exists() && !roots.data.exists(),
+        "Discodex profile paths already exist; migration will not overwrite them"
+    );
+
+    let service_backup = validate_legacy_service(&legacy)?;
+    let migration_language = choose_language(Some(Config::load(&source_config)?.language))?;
+    #[cfg(target_os = "macos")]
+    let mut mac_identity_proven = false;
+    #[cfg(not(target_os = "macos"))]
+    let mac_identity_proven = false;
+    #[cfg(target_os = "macos")]
+    if let Some(requirement) = legacy.mac_signing_requirement.as_deref() {
+        let executable = legacy
+            .worker_executable
+            .as_deref()
+            .context("legacy ownership has no signed worker executable")?
+            .canonicalize()
+            .context("resolve legacy signed worker executable")?;
+        crate::mac_signing::adopt_owned_binary_identifier(&executable, requirement)
+            .context("preserve the verified legacy macOS signing identity")?;
+        mac_identity_proven = true;
+    }
+    stage_legacy_profile(&legacy_config_root, &roots)?;
+    let staged_worker = match stage_worker_file(&env::current_exe()?, &roots.data) {
+        Ok(path) => path,
+        Err(error) => {
+            remove_migration_staging(&roots, &legacy_config_root)
+                .context("worker staging failed and staged migration files could not be removed")?;
+            return Err(error)
+                .context("could not stage the Discodex worker before stopping the legacy service");
+        }
+    };
+    #[cfg(target_os = "macos")]
+    if let Err(error) = sign_staged_migration_worker(
+        &staged_worker,
+        migration_language,
+        legacy.mac_signing_requirement.as_deref(),
+    ) {
+        remove_migration_staging(&roots, &legacy_config_root)
+            .context("worker signing failed and staged migration files could not be removed")?;
+        return Err(error).context(
+            "could not prepare the signed Discodex worker before stopping the legacy service",
+        );
+    }
+    let _ = staged_worker;
+    let mut stopped_ownership = legacy.clone();
+    if let Err(error) = uninstall_user_service(&mut stopped_ownership, &legacy_owner_path) {
+        let staged_cleanup = remove_migration_staging(&roots, &legacy_config_root);
+        let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
+        if let Err(restore_error) = service_restore {
+            return Err(anyhow!(
+                "could not stop the verified legacy service ({error:#}) and its restoration failed ({restore_error:#})"
+            ));
+        }
+        if let Err(cleanup_error) = staged_cleanup {
+            return Err(anyhow!(
+                "could not stop the verified legacy service ({error:#}); the old service was restored but staged Discodex files remain ({cleanup_error:#})"
+            ));
+        }
+        return Err(error)
+            .context("could not stop the verified legacy service before Discodex startup");
+    }
+    if let Err(error) =
+        copy_private_directory(&old_data_root.join("state"), &roots.data.join("state"))
+    {
+        let staged_cleanup = remove_migration_staging(&roots, &legacy_config_root);
+        let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
+        if let Err(restore_error) = service_restore {
+            return Err(anyhow!(
+                "could not copy final stopped legacy state ({error:#}) and the old service restoration failed ({restore_error:#})"
+            ));
+        }
+        if let Err(cleanup_error) = staged_cleanup {
+            return Err(anyhow!(
+                "could not copy final stopped legacy state ({error:#}); old service restored but staged files remain ({cleanup_error:#})"
+            ));
+        }
+        return Err(error).context("could not copy the legacy state after stopping its service");
+    }
+    match install_at(roots.clone(), migration_language, mac_identity_proven) {
+        Ok(()) => {
+            if let Err(error) = remove_migration_marker(&roots) {
+                eprintln!(
+                    "Discodex is installed, but its migration marker could not be removed: {error:#}"
+                );
+            }
+            println!(
+                "Migrated profile {} to Discodex. Legacy config and native data remain at {}.",
+                legacy.profile.as_deref().unwrap_or("unknown"),
+                legacy_config_root.display()
+            );
+            Ok(())
+        }
+        Err(error) => {
+            let cleanup = rollback_new_migration_service(&roots);
+            if let Err(cleanup_error) = cleanup {
+                return Err(anyhow!(
+                    "Discodex migration failed ({error:#}); its new service could not be verified and removed ({cleanup_error:#}), so the legacy service was left stopped to avoid two workers using the same native thread"
+                ));
+            }
+            let files_cleanup = remove_migration_staging(&roots, &legacy_config_root);
+            restore_legacy_service(&service_backup, &legacy_owner_path).context(
+                "Discodex migration failed and the previous service could not be restored",
+            )?;
+            if let Err(cleanup_error) = files_cleanup {
+                Err(anyhow!(
+                    "Discodex migration failed ({error:#}); the previous service was restored, but staged files remain ({cleanup_error:#})"
+                ))
+            } else {
+                Err(error).context("Discodex migration failed; the previous service was restored")
+            }
+        }
+    }
+}
+
+fn rename_legacy_path(path: &Path) -> PathBuf {
+    let mut renamed = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name)
+                if name == OsString::from(LEGACY_APP_NAME)
+                    || name == OsString::from(LEGACY_SERVICE_NAME) =>
+            {
+                renamed.push(APP_NAME);
+            }
+            other => renamed.push(other.as_os_str()),
+        }
+    }
+    renamed
+}
+
+struct LegacyServiceBackup {
+    ownership: Ownership,
+    service_contents: Option<String>,
+    was_enabled: bool,
+    was_active: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn systemctl_user_state(operation: &str, unit: &str) -> Result<String> {
+    let output = command_without_console("systemctl")
+        .args(["--user", operation, unit])
+        .stdin(Stdio::null())
+        .output()
+        .context("inspect the legacy user service state")?;
+    let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let known = match operation {
+        "is-active" => [
+            "active",
+            "inactive",
+            "failed",
+            "activating",
+            "deactivating",
+            "reloading",
+        ]
+        .contains(&state.as_str()),
+        "is-enabled" => [
+            "enabled",
+            "enabled-runtime",
+            "linked",
+            "linked-runtime",
+            "alias",
+            "disabled",
+            "static",
+            "indirect",
+            "generated",
+            "transient",
+            "masked",
+            "masked-runtime",
+        ]
+        .contains(&state.as_str()),
+        _ => false,
+    };
+    ensure!(
+        known,
+        "unexpected systemctl {operation} state for {unit}: {state}"
+    );
+    Ok(state)
+}
+
+#[cfg(windows)]
+fn inspect_windows_task_state(task_name: &str) -> Result<(bool, bool)> {
+    let task_name = ps_single_quote(task_name);
+    let script = format!(
+        r#"$ErrorActionPreference='Stop'; $task=Get-ScheduledTask -TaskPath '\' -TaskName '{task_name}'; Write-Output ($task.Settings.Enabled.ToString() + '|' + $task.State.ToString())"#
+    );
+    let output = command_without_console("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .stdin(Stdio::null())
+        .output()
+        .context("inspect Windows task state")?;
+    ensure!(output.status.success(), "could not read Windows task state");
+    let value = String::from_utf8(output.stdout)?.trim().to_owned();
+    let (enabled, state) = value
+        .split_once('|')
+        .context("Windows task returned an invalid state")?;
+    let enabled = enabled.eq_ignore_ascii_case("true");
+    ensure!(
+        state == "Running" || state == "Ready" || state == "Disabled",
+        "Windows task is in a transitional state; operation refused"
+    );
+    ensure!(
+        (enabled && state != "Disabled") || (!enabled && state == "Disabled"),
+        "Windows task enabled flag and state disagree"
+    );
+    Ok((enabled, state == "Running"))
+}
+
+fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup> {
+    let executable = ownership
+        .worker_executable
+        .as_deref()
+        .context("legacy ownership has no worker executable")?
+        .canonicalize()
+        .context("resolve legacy owned worker executable")?;
+    let config = ownership
+        .config_file
+        .canonicalize()
+        .context("resolve legacy owned config")?;
+    #[cfg(target_os = "linux")]
+    {
+        let path = ownership
+            .service_file
+            .as_deref()
+            .context("legacy systemd ownership has no unit path")?;
+        let expected_name = format!("{LEGACY_SERVICE_NAME}.service");
+        ensure!(
+            ownership.service_kind.as_deref() == Some("systemd-user")
+                && path.file_name().and_then(|name| name.to_str()) == Some(expected_name.as_str())
+                && path
+                    .parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    == Some("user")
+                && path
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    == Some("systemd"),
+            "legacy ownership does not identify the expected systemd user service"
+        );
+        let expected_unit = format!(
+            "[Unit]\nDescription=Codex Worker Discord bridge\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
+            systemd_quote(&executable),
+            systemd_quote(&config)
+        );
+        let actual = fs::read_to_string(path).context("read legacy systemd unit")?;
+        ensure!(
+            actual == expected_unit,
+            "legacy systemd unit differs from its recorded executable and config"
+        );
+        let was_enabled = systemctl_user_state("is-enabled", &expected_name)? == "enabled";
+        let was_active = systemctl_user_state("is-active", &expected_name)? == "active";
+        Ok(LegacyServiceBackup {
+            ownership: ownership.clone(),
+            service_contents: Some(actual),
+            was_enabled,
+            was_active,
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let (label, expected_path) = launchd_identity_for_service(&config, LEGACY_SERVICE_NAME)?;
+        let path = ownership
+            .service_file
+            .as_deref()
+            .context("legacy LaunchAgent ownership has no plist path")?;
+        ensure!(
+            ownership.service_kind.as_deref() == Some("launchd-user") && path == expected_path,
+            "legacy ownership does not identify the expected LaunchAgent"
+        );
+        let expected = launchd_plist(&label, &executable, &config);
+        ensure!(
+            existing_launchd_plist_matches(path, &expected, true)?,
+            "legacy LaunchAgent plist is missing"
+        );
+        let contents = fs::read_to_string(path)?;
+        let was_active = launchd_is_loaded(&label, &executable, &config)?;
+        Ok(LegacyServiceBackup {
+            ownership: ownership.clone(),
+            service_contents: Some(contents),
+            was_enabled: true,
+            was_active,
+        })
+    }
+    #[cfg(windows)]
+    {
+        ensure!(
+            ownership.service_kind.as_deref() == Some("scheduled-task-user")
+                && ownership.service_file.is_none(),
+            "legacy ownership does not identify the expected Windows task"
+        );
+        let task_executable = windows_task_executable_path(&executable)?;
+        let expected_executable = ps_single_quote(&task_executable.display().to_string());
+        let expected_arguments = ps_single_quote(&format!(
+            "run --config \"{}\"",
+            ownership.config_file.display()
+        ));
+        let (state, _) =
+            inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+        ensure!(
+            state == "matching",
+            "legacy Windows task differs from its ownership record"
+        );
+        let (was_enabled, was_active) =
+            inspect_windows_task_state(windows_task_name_for_config(&ownership.config_file))?;
+        Ok(LegacyServiceBackup {
+            ownership: ownership.clone(),
+            service_contents: None,
+            was_enabled,
+            was_active,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = (executable, config);
+        bail!("legacy service migration is supported on Linux, macOS, and Windows")
+    }
+}
+
+fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Result<()> {
+    let mut ownership = backup.ownership.clone();
+    #[cfg(target_os = "linux")]
+    {
+        let path = ownership
+            .service_file
+            .as_deref()
+            .context("legacy systemd unit path missing")?;
+        fs::write(
+            path,
+            backup
+                .service_contents
+                .as_deref()
+                .context("legacy systemd unit snapshot missing")?,
+        )?;
+        set_private_file(path)?;
+        write_json_private(owner_file, &ownership)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .context("legacy systemd unit filename invalid")?;
+        run_checked("systemctl", &["--user", "daemon-reload"])?;
+        if backup.was_enabled {
+            run_checked("systemctl", &["--user", "enable", name])?;
+        }
+        if backup.was_active {
+            run_checked("systemctl", &["--user", "start", name])?;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let path = ownership
+            .service_file
+            .as_deref()
+            .context("legacy LaunchAgent plist path missing")?;
+        let contents = backup
+            .service_contents
+            .as_deref()
+            .context("legacy LaunchAgent snapshot missing")?;
+        let config = ownership.config_file.canonicalize()?;
+        let (label, _) = launchd_identity_for_service(&config, LEGACY_SERVICE_NAME)?;
+        if path.exists() {
+            ensure!(
+                existing_launchd_plist_matches(
+                    path,
+                    &launchd_plist(
+                        &label,
+                        ownership
+                            .worker_executable
+                            .as_deref()
+                            .context("legacy LaunchAgent executable missing")?,
+                        &config
+                    ),
+                    true
+                )?,
+                "existing legacy LaunchAgent differs from its ownership record"
+            );
+        } else {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .with_context(|| format!("restore legacy LaunchAgent {}", path.display()))?;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            set_private_file(path)?;
+        }
+        write_json_private(owner_file, &ownership)?;
+        let domain = launchd_domain()?;
+        if backup.was_active
+            && !launchd_is_loaded(
+                &label,
+                ownership
+                    .worker_executable
+                    .as_deref()
+                    .context("legacy LaunchAgent executable missing")?,
+                &config,
+            )?
+        {
+            run_checked(
+                "launchctl",
+                &[
+                    "bootstrap",
+                    &domain,
+                    path.to_str()
+                        .context("legacy LaunchAgent path is not UTF-8")?,
+                ],
+            )?;
+            run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+        }
+    }
+    #[cfg(windows)]
+    {
+        let executable = ownership
+            .worker_executable
+            .as_deref()
+            .context("legacy task executable missing")?;
+        let task_executable = windows_task_executable_path(executable)?;
+        let expected_executable = ps_single_quote(&task_executable.display().to_string());
+        let expected_arguments = ps_single_quote(&format!(
+            "run --config \"{}\"",
+            ownership.config_file.display()
+        ));
+        write_json_private(owner_file, &ownership)?;
+        let level = ownership.windows_task_run_level;
+        let registration = windows_task_registration_script_named(
+            &expected_executable,
+            &expected_arguments,
+            false,
+            level,
+            windows_task_name_for_config(&ownership.config_file),
+        );
+        run_elevated_powershell(&registration)?;
+        if backup.was_active {
+            let start = windows_task_start_script_named(
+                &expected_executable,
+                &expected_arguments,
+                level,
+                windows_task_name_for_config(&ownership.config_file),
+            );
+            run_powershell(&start)?;
+        }
+        if !backup.was_enabled {
+            run_powershell(&format!(
+                "Disable-ScheduledTask -TaskPath '\\' -TaskName '{}' | Out-Null",
+                ps_single_quote(windows_task_name_for_config(&ownership.config_file))
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_legacy_migration_source(
+    ownership: &Ownership,
+    config_root: &Path,
+    data_root: &Path,
+    config_path: &Path,
+) -> Result<()> {
+    ensure!(
+        ownership.config_file == config_path
+            && ownership.credentials_file == config_root.join("discord-token")
+            && ownership.install_list_file == config_root.join("installation-list.json")
+            && ownership.state_dir == data_root.join("state")
+            && ownership.project_dir.is_absolute(),
+        "legacy ownership paths do not match the selected profile; refusing migration"
+    );
+    let config = Config::load(config_path).context("read legacy profile settings")?;
+    ensure!(
+        !config.profile.is_empty()
+            && ownership
+                .profile
+                .as_deref()
+                .is_none_or(|profile| profile == config.profile)
+            && config.credentials_file.as_deref() == Some(ownership.credentials_file.as_path())
+            && config.state_dir == ownership.state_dir
+            && config.project_dir == ownership.project_dir
+            && config.codex_path == ownership.codex_path,
+        "legacy config does not match its ownership record; refusing migration"
+    );
+    let list: InstallationList =
+        read_json(&ownership.install_list_file).context("read legacy installation list")?;
+    ensure!(
+        list.profile == config.profile && list.project_dir == ownership.project_dir,
+        "legacy installation list does not match its ownership record; refusing migration"
+    );
+    let credentials_metadata = fs::symlink_metadata(&ownership.credentials_file)
+        .context("inspect legacy Discord credential file")?;
+    ensure!(
+        credentials_metadata.file_type().is_file(),
+        "legacy Discord credentials are not a regular file; refusing migration"
+    );
+    let executable = ownership
+        .worker_executable
+        .as_deref()
+        .context("legacy ownership has no worker executable")?
+        .canonicalize()
+        .context("resolve legacy worker executable")?;
+    ensure!(
+        executable.is_file() && is_owned_worker_executable(&executable, data_root),
+        "legacy worker executable is outside its recorded owned bin directory"
+    );
+    ensure!(
+        ownership.runtime_dir
+            == data_root.join(if ownership.codex_source == "official-core-owned" {
+                "official-codex"
+            } else {
+                "codex-runtime"
+            }),
+        "legacy runtime directory does not match its owned data root"
+    );
+    Ok(())
+}
+
+fn worker_executable_name() -> OsString {
+    #[cfg(windows)]
+    {
+        OsString::from("discodex.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        OsString::from("discodex")
+    }
+}
+
+fn stage_worker_file(source: &Path, data_root: &Path) -> Result<PathBuf> {
+    let source = source
+        .canonicalize()
+        .context("resolve running Discodex executable")?;
+    ensure!(
+        fs::symlink_metadata(&source)?.file_type().is_file(),
+        "running Discodex executable is not a regular file"
+    );
+    let bin = data_root.join("bin");
+    create_private_dir(&bin)?;
+    let destination = bin.join(worker_executable_name());
+    copy_private_regular_file(&source, &destination)?;
+    set_executable(&destination)?;
+    destination
+        .canonicalize()
+        .context("resolve staged Discodex executable")
+}
+
+#[cfg(target_os = "macos")]
+fn sign_staged_migration_worker(
+    path: &Path,
+    language: Language,
+    expected: Option<&str>,
+) -> Result<()> {
+    use crate::mac_signing::{sign_binary_with_language, verify_binary};
+    let requirement = sign_binary_with_language(path, language)
+        .context("sign staged Discodex worker with the preserved macOS identity")?;
+    if let Some(expected) = expected {
+        ensure!(
+            requirement == expected,
+            "staged Discodex signing identity differs from the legacy pin"
+        );
+    }
+    verify_binary(path, &requirement).context("verify staged Discodex worker signature")
+}
+
+fn recorded_service_executable(ownership: &Ownership) -> Result<Option<PathBuf>> {
+    let Some(recorded) = ownership.worker_executable.as_deref() else {
+        return Ok(None);
+    };
+    let data_root = ownership
+        .state_dir
+        .parent()
+        .context("owned state directory has no data root")?;
+    ensure!(
+        ownership.state_dir == data_root.join("state"),
+        "owned state directory does not match the worker data layout"
+    );
+    let executable = recorded
+        .canonicalize()
+        .with_context(|| format!("resolve recorded worker executable {}", recorded.display()))?;
+    ensure!(
+        recorded == executable
+            && executable.is_file()
+            && is_owned_worker_executable(&executable, data_root),
+        "recorded worker executable is not a regular file in its canonical owned bin directory"
+    );
+    Ok(Some(executable))
+}
+
+fn staged_migration_worker(roots: &Roots) -> Result<Option<PathBuf>> {
+    let marker = roots.config.join("migration-in-progress");
+    let metadata = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("inspect migration marker"),
+    };
+    ensure!(
+        metadata.file_type().is_file(),
+        "migration marker is not a regular file"
+    );
+    let old_config_root: PathBuf =
+        serde_json::from_slice(&fs::read(&marker).context("read migration marker")?)
+            .context("parse migration marker")?;
+    ensure!(
+        old_config_root.file_name().and_then(|name| name.to_str()) == Some(LEGACY_APP_NAME)
+            && rename_legacy_path(&old_config_root) == roots.config,
+        "migration marker does not map to the selected Discodex profile"
+    );
+    let candidate = roots.data.join("bin").join(worker_executable_name());
+    if !candidate.is_file() {
+        return Ok(None);
+    }
+    let candidate = candidate
+        .canonicalize()
+        .context("resolve staged migration worker")?;
+    let data_root = roots
+        .data
+        .canonicalize()
+        .context("resolve migration data root")?;
+    ensure!(
+        candidate.starts_with(data_root.join("bin"))
+            && is_owned_worker_executable(&candidate, &data_root),
+        "staged migration worker is outside the new profile's owned bin directory"
+    );
+    Ok(Some(candidate))
+}
+
+fn stage_legacy_profile(old_config_root: &Path, roots: &Roots) -> Result<()> {
+    let config_parent = roots
+        .config
+        .parent()
+        .context("Discodex config path has no parent")?;
+    let data_parent = roots
+        .data
+        .parent()
+        .context("Discodex data path has no parent")?;
+    fs::create_dir_all(config_parent)?;
+    fs::create_dir_all(data_parent)?;
+    let config_stage = tempfile::tempdir_in(config_parent)?;
+    let data_stage = tempfile::tempdir_in(data_parent)?;
+    let staged_config = config_stage.path().join(APP_NAME);
+    let staged_data = data_stage.path().join(APP_NAME);
+    create_private_dir(&staged_config)?;
+    create_private_dir(&staged_data)?;
+    for name in ["config.json", "discord-token", "installation-list.json"] {
+        copy_private_regular_file(&old_config_root.join(name), &staged_config.join(name))?;
+    }
+    fs::rename(&staged_config, &roots.config)
+        .with_context(|| format!("publish staged config at {}", roots.config.display()))?;
+    if let Err(error) = fs::rename(&staged_data, &roots.data) {
+        let cleanup = fs::remove_dir_all(&roots.config);
+        return match cleanup {
+            Ok(()) => Err(error)
+                .with_context(|| format!("publish staged data at {}", roots.data.display())),
+            Err(cleanup_error) => Err(anyhow!(
+                "could not publish staged data at {} ({error}); cleanup of newly-created config path {} also failed ({cleanup_error})",
+                roots.data.display(),
+                roots.config.display()
+            )),
+        };
+    }
+    let marker = roots.config.join("migration-in-progress");
+    if let Err(error) = fs::write(&marker, serde_json::to_vec(old_config_root)?)
+        .and_then(|()| set_private_file(&marker).map_err(io::Error::other))
+    {
+        let config_cleanup = fs::remove_dir_all(&roots.config);
+        let data_cleanup = fs::remove_dir_all(&roots.data);
+        return Err(anyhow!(
+            "write migration marker failed ({error}); staged root cleanup results: config={config_cleanup:?}, data={data_cleanup:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn remove_migration_marker(roots: &Roots) -> Result<()> {
+    let marker = roots.config.join("migration-in-progress");
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.file_type().is_file(),
+                "migration marker is not a regular file"
+            );
+            fs::remove_file(&marker).context("remove completed migration marker")
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).context("inspect migration marker"),
+    }
+}
+
+fn remove_migration_staging(roots: &Roots, old_config_root: &Path) -> Result<()> {
+    let marker = roots.config.join("migration-in-progress");
+    let metadata =
+        fs::symlink_metadata(&marker).context("verify ownership of staged migration roots")?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "migration marker is not a regular file"
+    );
+    ensure!(
+        fs::read(&marker)? == serde_json::to_vec(old_config_root)?,
+        "migration marker does not match the selected legacy profile"
+    );
+    for path in [&roots.config, &roots.data] {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("inspect staged migration root {}", path.display()))?;
+        ensure!(
+            metadata.file_type().is_dir(),
+            "staged migration root {} is not a regular directory",
+            path.display()
+        );
+    }
+    fs::remove_dir_all(&roots.data)
+        .with_context(|| format!("remove staged data {}", roots.data.display()))?;
+    fs::remove_dir_all(&roots.config)
+        .with_context(|| format!("remove staged config {}", roots.config.display()))?;
+    Ok(())
+}
+
+fn copy_private_regular_file(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("inspect migration source {}", source.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "migration source {} is not a regular file",
+        source.display()
+    );
+    let mut input = File::open(source)?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .with_context(|| format!("create staged migration file {}", destination.display()))?;
+    io::copy(&mut input, &mut output)?;
+    output.sync_all()?;
+    set_private_file(destination)?;
+    Ok(())
+}
+
+fn copy_private_directory(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("inspect migration state directory {}", source.display()))?;
+    ensure!(
+        metadata.file_type().is_dir(),
+        "migration state path {} is not a regular directory",
+        source.display()
+    );
+    create_private_dir(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_dir() {
+            copy_private_directory(&source_path, &destination_path)?;
+        } else {
+            copy_private_regular_file(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn rollback_new_migration_service(roots: &Roots) -> Result<()> {
+    let owner_path = roots.config.join("ownership.json");
+    if !owner_path.is_file() {
+        return Ok(());
+    }
+    let mut ownership: Ownership = read_json(&owner_path)?;
+    uninstall_user_service(&mut ownership, &owner_path)
+}
+
+pub fn install() -> Result<()> {
+    let roots = roots()?;
+    let language = choose_language(saved_install_language(&roots)?)?;
+    install_at(roots, language, false)
+}
+
+fn install_at(roots: Roots, language: Language, mac_identity_proven: bool) -> Result<()> {
+    fs::create_dir_all(&roots.config)
+        .with_context(|| format!("create {}", roots.config.display()))?;
+    fs::create_dir_all(&roots.data).with_context(|| format!("create {}", roots.data.display()))?;
+    set_private_dir(&roots.config)?;
+    set_private_dir(&roots.data)?;
+
+    let list_path = roots.config.join("installation-list.json");
+    if !list_path.exists() {
+        println!(
+            "{}",
+            language.text(
+                "No installation list is saved. Create it before setup starts.",
+                "저장된 설치 목록이 없습니다. 설정을 시작하기 전에 목록을 만듭니다.",
+                "未找到已保存的安装列表。请先创建列表再开始设置。",
+                "保存済みのインストールリストがありません。設定を始める前に作成します。"
+            )
+        );
+        print_plan_for_language(language)?;
+    }
+    let list: InstallationList = read_json(&list_path)?;
+    let config_path = roots.config.join("config.json");
+    let credentials_path = roots.config.join("discord-token");
+    let state_dir = roots.data.join("state");
+    create_private_dir(&state_dir)?;
+    let bundled_dir = roots.data.join("official-codex");
+    let bundled_dir = if list.native_source == NativeSource::OfficialCore {
+        fs::create_dir_all(&bundled_dir)
+            .with_context(|| format!("create {}", bundled_dir.display()))?;
+        set_private_dir(&bundled_dir)?;
+        bundled_dir
+            .canonicalize()
+            .with_context(|| format!("resolve owned Codex directory {}", bundled_dir.display()))?
+    } else {
+        bundled_dir
+    };
+    let ownership_path = roots.config.join("ownership.json");
+
+    let mut codex_path = match (&list.native_source, &list.native_path) {
+        (NativeSource::DesktopApp | NativeSource::ExistingCli, Some(path)) => {
+            crate::native::resolve_codex_path(path)?
+                .canonicalize()
+                .with_context(|| format!("resolve selected Codex executable {}", path.display()))?
+        }
+        (NativeSource::OfficialCore, _) => bundled_dir.join(codex_executable_name()),
+        (_, None) => bail!(
+            "the saved installation list has no selected native executable; run `discodex install-plan` again"
+        ),
+    };
+
+    let is_owned_core = list.native_source == NativeSource::OfficialCore;
+    let expected_source = match &list.native_source {
+        NativeSource::DesktopApp => "desktop-app",
+        NativeSource::ExistingCli => "existing-cli",
+        NativeSource::OfficialCore => "official-core-owned",
+    };
+    let previous_ownership = if ownership_path.exists() {
+        let previous: Ownership = read_json(&ownership_path)?;
+        let same_codex_path = previous.codex_path == codex_path || {
+            #[cfg(windows)]
+            {
+                same_windows_desktop_app_package(
+                    &previous.codex_source,
+                    &list.native_source,
+                    &previous.codex_path,
+                    &codex_path,
+                )
+            }
+            #[cfg(not(windows))]
+            {
+                false
+            }
+        };
+        let same_profile_paths = same_profile_installation_paths(
+            &previous,
+            &config_path,
+            &credentials_path,
+            &list_path,
+            &state_dir,
+            &list.project_dir,
+        );
+        let same_install =
+            same_profile_paths && previous.codex_source == expected_source && same_codex_path;
+        let partial_reselection = is_partial_install_reselection_allowed(
+            same_profile_paths,
+            previous.service_kind.as_deref(),
+            previous.service_file.is_some(),
+        );
+        if !same_install && !partial_reselection {
+            bail!(
+                "an ownership record already exists for a different profile/core path at {}; uninstall it before changing installation identity",
+                ownership_path.display()
+            )
+        }
+        Some(previous)
+    } else {
+        None
+    };
+    let previous_config = if config_path.is_file() {
+        Some(Config::load(&config_path).with_context(|| {
+            format!(
+                "read existing profile settings from {}; refusing to replace an unreadable config",
+                config_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    validate_existing_profile_identity(
+        previous_ownership.is_some(),
+        &list.profile,
+        previous_ownership
+            .as_ref()
+            .and_then(|ownership| ownership.profile.as_deref()),
+        previous_config
+            .as_ref()
+            .map(|config| config.profile.as_str()),
+    )?;
+    let worker_executable = owned_bridge_executable(&roots.data)
+        .or(staged_migration_worker(&roots)?)
+        .or_else(|| {
+            let previous = previous_ownership.as_ref()?;
+            let executable = previous.worker_executable.as_ref()?.canonicalize().ok()?;
+            is_owned_worker_executable(&executable, &roots.data).then_some(executable)
+        });
+    let mut ownership = Ownership {
+        format_version: 1,
+        profile: Some(list.profile.clone()),
+        runtime_owned: false,
+        config_file: config_path.clone(),
+        credentials_file: credentials_path.clone(),
+        install_list_file: list_path.clone(),
+        runtime_dir: if is_owned_core {
+            bundled_dir.clone()
+        } else {
+            roots.data.join("codex-runtime")
+        },
+        runtime_executable: is_owned_core.then(|| codex_path.clone()),
+        worker_executable: worker_executable.clone(),
+        service_file: previous_ownership
+            .as_ref()
+            .and_then(|previous| previous.service_file.clone()),
+        service_kind: previous_ownership
+            .as_ref()
+            .and_then(|previous| previous.service_kind.clone()),
+        windows_task_run_level: previous_ownership
+            .as_ref()
+            .map(|previous| previous.windows_task_run_level)
+            .unwrap_or_default(),
+        windows_task_pending_run_level: previous_ownership
+            .as_ref()
+            .and_then(|previous| previous.windows_task_pending_run_level),
+        codex_source: expected_source.into(),
+        codex_path: codex_path.clone(),
+        codex_version: previous_ownership
+            .as_ref()
+            .and_then(|previous| previous.codex_version.clone()),
+        state_dir: state_dir.clone(),
+        project_dir: list.project_dir.clone(),
+        mac_signing_requirement: previous_ownership
+            .as_ref()
+            .and_then(|previous| previous.mac_signing_requirement.clone()),
+    };
+    let mut codex_version = None;
+    if is_owned_core {
+        let previous_owns_core = previous_ownership
+            .as_ref()
+            .is_some_and(|previous| previous_owns_completed_core(previous, &codex_path));
+        if previous_owns_core {
+            let existing_version = previous_ownership
+                .as_ref()
+                .and_then(|previous| previous.codex_version.clone())
+                .or_else(|| executable_version(&codex_path).ok());
+            let recorded_release_tag = existing_version
+                .as_deref()
+                .and_then(official_codex_release_tag);
+            ensure_official_core_pair(&bundled_dir, recorded_release_tag.as_deref())?;
+            codex_version = recorded_release_tag.or(existing_version);
+        } else {
+            if codex_path.exists() {
+                bail!(
+                    "an unowned Codex executable already exists at {}; it was left unchanged",
+                    codex_path.display()
+                )
+            }
+            let (path, tag) = download_official_codex(&bundled_dir)?;
+            codex_path = path
+                .canonicalize()
+                .context("resolve downloaded official Codex core")?;
+            codex_version = Some(tag);
+        }
+        ownership.codex_path = codex_path.clone();
+        ownership.runtime_executable = Some(codex_path.clone());
+        ownership.codex_version = codex_version.clone();
+        ownership.runtime_owned = true;
+        write_json_private(&ownership_path, &ownership)?;
+    } else {
+        codex_version = executable_version(&codex_path).ok();
+    }
+    ownership.codex_version = codex_version.clone();
+    if !codex_path.is_file() {
+        bail!(
+            "selected Codex executable is missing: {}",
+            codex_path.display()
+        );
+    }
+    let selected_env_home = env::var_os("CODEX_HOME").map(PathBuf::from);
+    let previous_home = previous_config
+        .as_ref()
+        .and_then(|config| config.codex_home.as_deref());
+    if selected_env_home
+        .as_ref()
+        .is_some_and(|path| previous_home.is_none() && path.as_os_str().is_empty())
+    {
+        bail!("CODEX_HOME must not be empty");
+    }
+    let default_home = if previous_home.is_none() && selected_env_home.is_none() {
+        Some(default_codex_home()?)
+    } else {
+        None
+    };
+    let selected_codex_home = resolve_codex_home(
+        previous_home,
+        selected_env_home.as_deref(),
+        &list.project_dir,
+        default_home.as_deref(),
+    )?;
+    let partial_runtime_dir = partial_owned_core_runtime_for_cleanup(
+        previous_ownership.as_ref(),
+        &roots.data,
+        list.native_source == NativeSource::OfficialCore,
+        previous_config.as_ref(),
+        &[&selected_codex_home, &codex_path],
+    )?;
+    let saved_token = if credentials_path.exists() {
+        let metadata = fs::symlink_metadata(&credentials_path)
+            .context("inspect saved Discord credential file")?;
+        ensure!(
+            metadata.file_type().is_file(),
+            "saved Discord credentials are not a regular file; refusing to replace them"
+        );
+        Some(fs::read_to_string(&credentials_path).context("read saved Discord credential file")?)
+    } else {
+        None
+    };
+    let token = env::var("DISCODEX_DISCORD_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            env::var("CODEX_WORKER_DISCORD_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| saved_token.unwrap_or_default());
+    let token = if token.trim().is_empty() {
+        rpassword::prompt_password(language.text(
+            "Discord bot token (input hidden): ",
+            "Discord 봇 토큰 (입력 숨김): ",
+            "Discord 机器人令牌（隐藏输入）：",
+            "Discord ボットトークン（入力非表示）：",
+        ))
+        .context("read Discord token privately")?
+    } else {
+        token
+    };
+    if token.trim().is_empty() {
+        bail!("Discord token was empty; no credential file was written");
+    }
+    write_secret(&credentials_path, token.trim())?;
+
+    let mut config = merge_install_config(
+        previous_config,
+        &list,
+        &credentials_path,
+        &codex_path,
+        worker_executable.as_deref(),
+        &state_dir,
+        &selected_codex_home,
+    );
+    write_json_private(&config_path, &config)?;
+    if let Some(runtime_dir) = &partial_runtime_dir {
+        remove_owned_core_runtime(runtime_dir)?;
+    }
+
+    println!("Config saved at {}", config_path.display());
+    println!(
+        "Selected Codex: {} ({})",
+        codex_path.display(),
+        codex_version.as_deref().unwrap_or("version not reported")
+    );
+
+    write_json_private(&ownership_path, &ownership)?;
+    #[cfg(target_os = "macos")]
+    if !mac_identity_proven {
+        request_mac_fda_guidance(&ownership_path, language)?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = mac_identity_proven;
+    let discord = run_async(crate::commands::validate_discord(&config))
+        .context("Discord profile check failed; saved installation list and private config remain for correction")?;
+    for id in [list.home_channel_id, list.transcript_channel_id] {
+        let channel = discord
+            .channels
+            .iter()
+            .find(|channel| channel.id == id)
+            .ok_or_else(|| anyhow!("Discord validation omitted configured text channel {id}"))?;
+        if channel.kind != "text" {
+            bail!(
+                "configured home/transcript channel {id} is {}, expected a text channel",
+                channel.kind
+            );
+        }
+    }
+    for id in &list.voice_channel_ids {
+        let channel = discord
+            .channels
+            .iter()
+            .find(|channel| channel.id == *id)
+            .ok_or_else(|| anyhow!("Discord validation omitted configured voice channel {id}"))?;
+        if channel.kind != "voice" && channel.kind != "stage" {
+            bail!(
+                "configured voice channel {id} is {}, expected voice or stage",
+                channel.kind
+            );
+        }
+    }
+    for channel in &discord.channels {
+        for warning in &channel.warnings {
+            eprintln!(
+                "{}",
+                format!(
+                    "{}: {warning}",
+                    language.text(
+                        "Discord channel permission check",
+                        "Discord 채널 권한 확인",
+                        "Discord 频道权限检查",
+                        "Discord チャンネル権限の確認"
+                    )
+                )
+            );
+        }
+    }
+    println!("{}", language.text(
+        "Verified the bot's current role and channel overrides for read, write, voice, and transcript-thread permissions on Discord.",
+        "Discord의 현재 봇 역할과 채널 덮어쓰기에서 읽기·쓰기·통화·기록 스레드 권한을 확인했습니다.",
+        "已验证 Discord 中机器人当前角色和频道覆盖设置具备读取、写入、语音和记录线程权限。",
+        "Discord の現在のボットロールとチャンネル上書き設定で、読み取り、書き込み、音声、記録スレッドの権限を確認しました。"
+    ));
+    println!(
+        "Discord API authenticated bot {} and can read guild {} ({}).",
+        discord.bot_id, discord.guild_id, discord.guild_name
+    );
+    run_async(crate::commands::register_commands(&config)).context(
+        "Discord /discodex command registration failed; saved setup files remain for retry",
+    )?;
+    run_async(configure_native_profile(&mut config, &config_path)).context(
+        "Codex account or Full Access profile check failed; saved setup files remain for retry",
+    )?;
+    let previous_run = crate::installation_check::read(&config)
+        .ok()
+        .flatten()
+        .map(|report| report.run_id);
+    install_user_service(&config_path, &mut ownership, previous_ownership.as_ref())?;
+    write_json_private(&ownership_path, &ownership)?;
+    println!("{}", language.text(
+        "Codex account/read confirmed a ChatGPT account; the allowed Full Access profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
+        "Codex 계정 확인에서 ChatGPT 계정이 확인되었습니다. 허용된 Full Access 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
+        "Codex 账户检查已确认 ChatGPT 账户；已保存获准的 Full Access 配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
+        "Codex アカウント確認で ChatGPT アカウントを確認しました。許可された Full Access プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
+    ));
+    confirm_installed_features(&config, previous_run)?;
+    Ok(())
+}
+
+fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> Result<()> {
+    let language = configured_language(config.language);
+    println!("{}", language.text(
+        "Send a real text message in Discord and try settings, question forms, and approval buttons. Speak in an allowed voice channel and verify voice work and its finalized transcript. Handle sign-in, MFA, OS consent, and microphone prompts in their official user interfaces.",
+        "Discord에서 실제 텍스트를 보내고 설정 변경·질문 폼·승인 버튼을 사용하세요. 허용한 음성 채널에서 말한 뒤 음성 업무와 확정 전사를 확인하세요. 로그인·MFA·OS 동의·마이크는 공식 사용자 화면에서 처리합니다.",
+        "请在 Discord 中发送真实文本，并尝试设置、问题表单和批准按钮。在获准的语音频道中讲话，验证语音任务和最终转录。请在官方用户界面中处理登录、MFA、操作系统授权和麦克风提示。",
+        "Discord で実際のテキストを送り、設定、質問フォーム、承認ボタンを試してください。許可された音声チャンネルで話し、音声タスクと確定した文字起こしを確認してください。サインイン、MFA、OS の許可、マイクの確認は公式ユーザー画面で行ってください."
+    ));
+    loop {
+        let report = match crate::installation_check::read(config) {
+            Ok(Some(report)) if Some(report.run_id.as_str()) != previous_run.as_deref() => {
+                Some(report)
+            }
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "{}: {error:#}",
+                        language.text(
+                            "Could not read installation feature observations",
+                            "설치 기능 관측을 읽지 못했습니다",
+                            "无法读取安装功能观察结果",
+                            "インストール機能の観測結果を読み取れませんでした"
+                        )
+                    )
+                );
+                None
+            }
+        };
+        if let Some(report) = report {
+            println!("{}", report.summary(language));
+            for (name, result) in report.features(language) {
+                match result {
+                    crate::installation_check::Observation::Failed { error } => eprintln!(
+                        "{name}: {} — {error}",
+                        language.text("failed", "실패", "失败", "失敗")
+                    ),
+                    crate::installation_check::Observation::Incomplete { reason } => println!(
+                        "{name}: {} — {reason}",
+                        language.text("incomplete", "미완료", "未完成", "未完了")
+                    ),
+                    _ => {}
+                }
+            }
+            let durable = crate::state::StateStore::new(&config.state_dir).load();
+            if report.ready()
+                && durable
+                    .as_ref()
+                    .ok()
+                    .and_then(|state| state.thread_id.as_deref())
+                    == Some(report.thread_id.as_str())
+            {
+                println!("{}", language.text(
+                    "READY: This install successfully exercised text, settings, approvals, two-way voice, work linked to the same conversation, and the finalized transcript.",
+                    "준비 완료: 이 설치에서 텍스트·설정·승인·양방향 음성·같은 대화 업무 연결·확정 전사가 실제로 동작했습니다.",
+                    "就绪：此安装已成功验证文本、设置、批准、双向语音、关联同一对话的任务以及最终转录。",
+                    "準備完了：このインストールで、テキスト、設定、承認、双方向音声、同じ会話に紐づくタスク、確定した文字起こしが動作しました。"
+                ));
+                return Ok(());
+            }
+        } else {
+            println!(
+                "{}",
+                language.text(
+                    "No feature result from the current install has been observed yet.",
+                    "현재 설치의 기능 결과가 아직 관측되지 않았습니다。",
+                    "尚未观察到当前安装的功能结果。",
+                    "現在のインストールでの機能結果はまだ確認されていません。"
+                )
+            );
+        }
+        if !io::stdin().is_terminal() {
+            println!("{}", language.text(
+                "Settings and conversation history were preserved. Feature verification is incomplete.",
+                "설정과 대화 이력을 보존했습니다. 기능 확인은 미완료입니다.",
+                "设置和对话历史已保留。功能验证尚未完成。",
+                "設定と会話履歴は保持されています。機能確認は未完了です。"
+            ));
+            return Ok(());
+        }
+        print!(
+            "{}",
+            language.text(
+                "Press Enter to read results again, or q to exit with verification incomplete > ",
+                "Enter: 실제 결과 다시 읽기, q: 미완료 상태로 종료 > ",
+                "按 Enter 重新读取结果，或按 q 在验证未完成时退出 > ",
+                "Enter で結果を再読込、q で確認未完了のまま終了 > "
+            )
+        );
+        io::stdout().flush()?;
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 || input.trim().eq_ignore_ascii_case("q") {
+            println!("{}", language.text(
+                "Settings and conversation history were preserved. Feature verification is incomplete.",
+                "설정과 대화 이력을 보존했습니다. 기능 확인은 미완료입니다.",
+                "设置和对话历史已保留。功能验证尚未完成。",
+                "設定と会話履歴は保持されています。機能確認は未完了です。"
+            ));
+            return Ok(());
+        }
+    }
+}
+
+pub fn uninstall() -> Result<()> {
+    let roots = roots()?;
+    let ownership_path = roots.config.join("ownership.json");
+    if !ownership_path.exists() {
+        println!(
+            "No Discodex ownership record exists at {}",
+            ownership_path.display()
+        );
+        return Ok(());
+    }
+    let ownership: Ownership = read_json(&ownership_path)?;
+
+    println!(
+        "Owned service: {}",
+        ownership.service_kind.as_deref().unwrap_or("none")
+    );
+    println!("Owned config: {}", ownership.config_file.display());
+    println!(
+        "Owned credentials: {}",
+        ownership.credentials_file.display()
+    );
+    println!(
+        "Native thread state will be preserved at {}",
+        ownership.state_dir.display()
+    );
+    println!(
+        "External Codex app/CLI and its account, threads, projects, and conversation files will be preserved."
+    );
+    println!(
+        "Discord application and server history will be preserved; registered commands will be removed when the token remains valid."
+    );
+
+    if let Some(executable) = &ownership.worker_executable {
+        if !is_owned_worker_executable(executable, &roots.data) {
+            bail!(
+                "ownership records bridge executable {} but it is not inside the canonical owned bin directory {}; preserving config and ownership for investigation",
+                executable.display(),
+                roots.data.join("bin").display()
+            )
+        }
+    }
+
+    let config =
+        if ownership.codex_source == "official-core-owned" && ownership.config_file.exists() {
+            Some(Config::load(&ownership.config_file).context(
+            "read profile settings before uninstall; configuration and ownership were preserved",
+        )?)
+        } else {
+            None
+        };
+    let mut ownership = ownership;
+    let runtime_dir = prepare_owned_core_uninstall(&mut ownership, &roots.data, config.as_ref())?;
+    uninstall_user_service(&mut ownership, &ownership_path)?;
+    remove_registered_commands(&ownership.config_file, &ownership.credentials_file, &ownership.state_dir)
+        .context("could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry")?;
+
+    #[cfg(windows)]
+    if let Some(executable) = &ownership.worker_executable {
+        if is_current_executable(executable) {
+            defer_windows_self_cleanup(
+                &ownership,
+                &ownership_path,
+                runtime_dir.as_deref(),
+                config.as_ref(),
+            )?;
+            println!(
+                "Windows accepted the owned-file cleanup request. The helper will wait for this process to exit, then remove the recorded files and report the actual result."
+            );
+            return Ok(());
+        }
+    }
+
+    if let Some(runtime_dir) = &runtime_dir {
+        remove_owned_core_runtime(runtime_dir)?;
+    }
+    if let Some(executable) = &ownership.worker_executable {
+        remove_if_file(executable)?;
+    }
+    remove_if_file(&ownership.config_file)?;
+    remove_if_file(&ownership.credentials_file)?;
+    remove_if_file(&ownership.install_list_file)?;
+    remove_if_file(&ownership_path)?;
+    println!(
+        "Uninstall finished. Native thread state and Codex user data remain at {}.",
+        ownership.state_dir.display()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn open_mac_permissions(args: &[String]) -> Result<()> {
+    let roots = roots()?;
+    let ownership_path =
+        mac_permissions_ownership_path(args, &roots.config.join("ownership.json"))?;
+    let (ownership, executable) = owned_mac_worker(&ownership_path)?;
+    let language = ownership
+        .config_file
+        .is_file()
+        .then(|| {
+            Config::load(&ownership.config_file)
+                .ok()
+                .map(|config| config.language)
+        })
+        .flatten()
+        .unwrap_or_else(|| configured_language(Language::default()));
+    open_mac_permissions_for_executable(&executable)?;
+    println!("{}", language.text(
+        "In Finder, add the selected executable to System Settings > Privacy & Security > Full Disk Access and enable it: {}",
+        "Finder에서 선택한 실행 파일을 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에 추가하고 켜세요: {}",
+        "在 Finder 中将选定的可执行文件添加到“系统设置”>“隐私与安全性”>“完全磁盘访问权限”并启用：{}",
+        "Finder で選択した実行ファイルを「システム設定」>「プライバシーとセキュリティ」>「フルディスクアクセス」に追加して有効にしてください：{}"
+    ).replace("{}", &executable.display().to_string()));
+    println!(
+        "{}",
+        language.text(
+            "This command does not automatically check or change macOS permissions.",
+            "이 명령은 macOS 권한 부여 여부를 자동으로 확인하거나 변경하지 않습니다.",
+            "此命令不会自动检查或更改 macOS 权限。",
+            "このコマンドは macOS の権限を自動で確認または変更しません。"
+        )
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn owned_mac_worker(ownership_path: &Path) -> Result<(Ownership, PathBuf)> {
+    let ownership: Ownership = read_json(ownership_path).with_context(|| {
+        format!(
+            "read owned installation record {}",
+            ownership_path.display()
+        )
+    })?;
+    let data_root = ownership_data_root(&ownership)?;
+    let recorded_executable = ownership
+        .worker_executable
+        .as_ref()
+        .context("the owned installation has no recorded worker executable")?;
+    let executable = recorded_executable.canonicalize().with_context(|| {
+        format!(
+            "resolve the owned worker executable {}",
+            recorded_executable.display()
+        )
+    })?;
+    ensure!(
+        recorded_executable == &executable,
+        "recorded worker path is not canonical: {}",
+        recorded_executable.display()
+    );
+    if !executable.is_file() || !is_owned_worker_executable(&executable, &data_root) {
+        bail!(
+            "the recorded worker executable is not a regular file in its canonical owned bin directory: {}",
+            executable.display()
+        );
+    }
+    Ok((ownership, executable))
+}
+
+#[cfg(target_os = "macos")]
+fn open_mac_permissions_for_executable(executable: &Path) -> Result<()> {
+    let executable_text = executable
+        .to_str()
+        .context("the owned worker executable path is not valid UTF-8")?;
+    run_checked("/usr/bin/open", &["-R", executable_text])?;
+    run_checked(
+        "/usr/bin/open",
+        &["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn require_mac_fda_interactive_terminal_state(
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+    executable: &Path,
+    operation: &str,
+) -> Result<()> {
+    ensure!(
+        stdin_is_terminal && stdout_is_terminal,
+        "Full Disk Access setup must be reviewed in an interactive terminal before {operation}; owned worker: {}. Rerun the operation from a terminal.",
+        executable.display()
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn require_mac_fda_interactive_terminal(executable: &Path, operation: &str) -> Result<()> {
+    require_mac_fda_interactive_terminal_state(
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+        executable,
+        operation,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn mac_fda_guidance_answer(read_count: usize, answer: &str) -> Result<bool> {
+    ensure!(
+        read_count != 0,
+        "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged"
+    );
+    match answer.trim() {
+        "" => Ok(true),
+        "q" | "Q" => Ok(false),
+        _ => bail!("enter an empty line to continue or q to cancel; service was not started"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result<()> {
+    use crate::mac_signing::{expected_requirement, verify_binary};
+
+    let (ownership, executable) = owned_mac_worker(ownership_path)?;
+    let requirement =
+        expected_requirement().context("read the configured macOS signing identity")?;
+    if let Some(pin) = ownership.mac_signing_requirement.as_deref() {
+        ensure!(
+            pin == requirement,
+            "owned worker signing identity does not match the configured identity"
+        );
+    }
+    verify_binary(&executable, &requirement)
+        .context("verify the actual owned worker before opening Full Disk Access settings")?;
+    require_mac_fda_interactive_terminal(
+        &executable,
+        "installation can configure the native profile or start the service",
+    )?;
+    open_mac_permissions_for_executable(&executable).with_context(|| {
+        format!(
+            "open Full Disk Access guidance for signed worker {}",
+            executable.display()
+        )
+    })?;
+    println!("{}", language.text(
+        "Only if Full Disk Access is needed, add this signed executable selected in Finder to the list and enable it.",
+        "전체 디스크 접근이 필요한 경우에만 Finder에서 선택된 이 서명 실행 파일을 목록에 추가하고 켜세요.",
+        "仅在需要完全磁盘访问权限时，才将 Finder 中选定的此签名可执行文件添加到列表并启用。",
+        "フルディスクアクセスが必要な場合のみ、Finder で選択されたこの署名済み実行ファイルを一覧に追加して有効にしてください。"
+    ));
+    println!("{}", language.text(
+        "If access is already allowed or not needed, press Enter to continue, or q to cancel. This choice does not verify permission status.",
+        "이미 허용했거나 필요하지 않으면 Enter로 설치를 계속하고, q를 입력하면 취소합니다. 이 선택은 권한 허용 여부를 확인하지 않습니다.",
+        "如果已允许访问或不需要此权限，请按 Enter 继续，或按 q 取消。此选择不会检查权限状态。",
+        "すでに許可済みまたは不要な場合は Enter で続行、q でキャンセルしてください。この選択で権限状態は確認されません。"
+    ));
+    print!(
+        "{}",
+        language.text(
+            "Continue after FDA guidance [Enter] / cancel [q] > ",
+            "FDA 안내 후 계속 [Enter] / 취소 [q] > ",
+            "完成完全磁盘访问提示后继续 [Enter] / 取消 [q] > ",
+            "フルディスクアクセスの案内後に続行 [Enter] / キャンセル [q] > "
+        )
+    );
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    let read = io::stdin().read_line(&mut answer)?;
+    if mac_fda_guidance_answer(read, &answer)? {
+        Ok(())
+    } else {
+        bail!(
+            "installation cancelled before service startup; signed worker: {}",
+            executable.display()
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn ownership_data_root(ownership: &Ownership) -> Result<PathBuf> {
+    let state_dir = ownership.state_dir.canonicalize().with_context(|| {
+        format!(
+            "resolve owned state directory {}",
+            ownership.state_dir.display()
+        )
+    })?;
+    if state_dir.file_name().and_then(|name| name.to_str()) != Some("state") {
+        bail!(
+            "owned state directory does not use the expected profile data layout: {}",
+            state_dir.display()
+        );
+    }
+    let data_root = state_dir
+        .parent()
+        .context("owned state directory has no profile data root")?
+        .to_owned();
+    if !ownership.runtime_dir.is_absolute() || !ownership.runtime_dir.starts_with(&data_root) {
+        bail!(
+            "owned runtime directory is outside the profile data root: {}",
+            ownership.runtime_dir.display()
+        );
+    }
+    Ok(data_root)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_permissions_ownership_path(args: &[String], default: &Path) -> Result<PathBuf> {
+    let mut config = None;
+    let mut ownership = None;
+    let mut index = 0;
+    while index < args.len() {
+        let option = args[index].as_str();
+        if matches!(option, "--config" | "--ownership") {
+            let value = args
+                .get(index + 1)
+                .context("mac-permissions option requires a path")?;
+            if value.starts_with('-') {
+                bail!("mac-permissions option requires a path");
+            }
+            if option == "--config" {
+                if config.replace(PathBuf::from(value)).is_some() {
+                    bail!("mac-permissions accepts --config only once");
+                }
+            } else if ownership.replace(PathBuf::from(value)).is_some() {
+                bail!("mac-permissions accepts --ownership only once");
+            }
+            index += 2;
+        } else {
+            bail!("unknown mac-permissions option `{option}`");
+        }
+    }
+    if config.is_some() && ownership.is_some() {
+        bail!("mac-permissions accepts either --config or --ownership, not both");
+    }
+    Ok(ownership.unwrap_or_else(|| {
+        config.map_or_else(
+            || default.to_owned(),
+            |path| {
+                path.parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("ownership.json")
+            },
+        )
+    }))
+}
+
+struct UpdateArgs {
+    source: PathBuf,
+    config: PathBuf,
+}
+
+fn parse_update_args(args: &[String]) -> Result<UpdateArgs> {
+    let (mut source, mut config) = (None, None);
+    let mut i = 0;
+    while i < args.len() {
+        let option = args[i].as_str();
+        ensure!(
+            option == "--source" || option == "--config",
+            "unknown update option {option}"
+        );
+        let value = args.get(i + 1).context("update option requires a path")?;
+        ensure!(!value.starts_with('-'), "update option requires a path");
+        let slot = if option == "--source" {
+            &mut source
+        } else {
+            &mut config
+        };
+        ensure!(
+            slot.replace(PathBuf::from(value)).is_none(),
+            "{option} may be used only once"
+        );
+        i += 2;
+    }
+    Ok(UpdateArgs {
+        source: source.context("update requires --source <new-binary>")?,
+        config: config.context("update requires --config <existing-config>")?,
+    })
+}
+
+pub fn update(args: &[String]) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        update_mac(args)
+    }
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        update_owned_binary(parse_update_args(args)?)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        let _ = args;
+        bail!("binary updates are supported on Linux, macOS, and Windows")
+    }
+}
+
+fn resolve_profile_ownership(config_path: &Path) -> Result<Ownership> {
+    ensure!(
+        config_path.file_name().and_then(|name| name.to_str()) == Some("config.json")
+            && config_path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some(APP_NAME),
+        "selected config is not inside a Discodex profile directory"
+    );
+    let owner_path = config_path
+        .parent()
+        .context("config path has no parent")?
+        .join("ownership.json");
+    let owner: Ownership = read_json(&owner_path)
+        .with_context(|| format!("read profile ownership record {}", owner_path.display()))?;
+    ensure!(
+        owner.config_file.canonicalize()? == config_path,
+        "ownership record points at another profile config"
+    );
+    Ok(owner)
+}
+
+#[cfg(any(target_os = "linux", windows))]
+fn update_owned_binary(args: UpdateArgs) -> Result<()> {
+    let source = args
+        .source
+        .canonicalize()
+        .context("resolve update source")?;
+    ensure!(
+        fs::symlink_metadata(&source)?.file_type().is_file(),
+        "update source is not a regular file"
+    );
+    let config_path = args
+        .config
+        .canonicalize()
+        .context("resolve selected config")?;
+    let owner = resolve_profile_ownership(&config_path)?;
+    ensure!(
+        owner.config_file.canonicalize()? == config_path,
+        "selected config differs from ownership record"
+    );
+    let data_root = owner
+        .state_dir
+        .parent()
+        .context("owned state directory has no data root")?;
+    ensure!(
+        owner.state_dir == data_root.join("state"),
+        "owned state directory layout is invalid"
+    );
+    let installed = recorded_service_executable(&owner)?
+        .context("ownership record has no validated worker executable")?;
+    ensure!(
+        source != installed,
+        "update source must be separate from the installed executable"
+    );
+    ensure!(
+        installed.file_name() == Some(worker_executable_name().as_os_str()),
+        "owned executable does not use the Discodex worker filename"
+    );
+    let config = Config::load(&config_path)?;
+    ensure!(
+        config.state_dir == owner.state_dir
+            && config.credentials_file.as_deref() == Some(owner.credentials_file.as_path()),
+        "profile config differs from ownership record"
+    );
+    #[cfg(target_os = "linux")]
+    let service = validate_owned_linux_update_service(&owner, &installed, &config_path)?;
+    #[cfg(windows)]
+    let service = validate_owned_windows_update_service(&owner, &installed, &config_path)?;
+    let previous = fs::read(&installed).context("snapshot owned worker")?;
+    let permissions = fs::metadata(&installed)?.permissions();
+    let parent = installed
+        .parent()
+        .context("worker executable has no parent")?;
+    let staged = stage_update_binary(&source, parent)?;
+    let mut stopped = false;
+    let mut replaced = false;
+    let result = (|| -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if service.was_active {
+            run_checked("systemctl", &["--user", "stop", &service.unit])?;
+            stopped = true;
+        }
+        #[cfg(windows)]
+        if service.was_active || service.was_enabled {
+            stopped = true;
+            set_windows_update_task(&service.task_name, false, false)?;
+        }
+        staged
+            .persist(&installed)
+            .map_err(|error| anyhow!("replace owned worker: {}", error.error))?;
+        replaced = true;
+        set_executable(&installed)?;
+        ensure!(
+            fs::metadata(&installed)?.len() > 0,
+            "updated worker is empty"
+        );
+        #[cfg(target_os = "linux")]
+        {
+            if service.was_active {
+                run_checked("systemctl", &["--user", "start", &service.unit])?;
+                ensure!(
+                    systemctl_user_state("is-active", &service.unit)? == "active",
+                    "updated Discodex worker did not become active"
+                );
+            }
+            let enabled_state = systemctl_user_state("is-enabled", &service.unit)?;
+            let remains_enabled = matches!(enabled_state.as_str(), "enabled" | "enabled-runtime");
+            ensure!(
+                remains_enabled == service.was_enabled,
+                "updated systemd unit did not retain its previous enabled state"
+            );
+            stopped = false;
+        }
+        #[cfg(windows)]
+        {
+            set_windows_update_task(&service.task_name, service.was_enabled, service.was_active)?;
+            let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+            ensure!(
+                enabled == service.was_enabled && active == service.was_active,
+                "updated scheduled task did not return to its previous enabled/running state"
+            );
+            stopped = false;
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let mut rollback = Vec::new();
+        #[cfg(target_os = "linux")]
+        if stopped {
+            let _ = run_checked("systemctl", &["--user", "stop", &service.unit]);
+        }
+        #[cfg(windows)]
+        let mut windows_task_stopped = false;
+        #[cfg(windows)]
+        if stopped || replaced {
+            match set_windows_update_task(&service.task_name, false, false).and_then(|()| {
+                let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+                ensure!(
+                    !enabled && !active,
+                    "Windows task is still enabled or running"
+                );
+                Ok(())
+            }) {
+                Ok(()) => windows_task_stopped = true,
+                Err(stop_error) => rollback.push(format!(
+                    "could not stop updated task before restoring worker: {stop_error:#}"
+                )),
+            }
+        }
+        #[cfg(windows)]
+        let may_restore_worker = windows_task_stopped;
+        #[cfg(not(windows))]
+        let may_restore_worker = true;
+        if replaced && may_restore_worker {
+            if let Err(e) = restore_worker_bytes(&installed, &previous, permissions) {
+                rollback.push(format!("binary restore failed: {e:#}"));
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if service.was_active {
+            if let Err(e) = run_checked("systemctl", &["--user", "start", &service.unit]) {
+                rollback.push(format!("service restart failed: {e:#}"));
+            }
+        }
+        #[cfg(windows)]
+        if windows_task_stopped {
+            if let Err(e) =
+                set_windows_update_task(&service.task_name, service.was_enabled, service.was_active)
+            {
+                rollback.push(format!("task state restore failed: {e:#}"));
+            }
+        }
+        if rollback.is_empty() {
+            return Err(error)
+                .context("update failed; previous worker and service state were restored");
+        }
+        return Err(anyhow!(
+            "update failed ({error:#}); rollback incomplete: {}",
+            rollback.join("; ")
+        ));
+    }
+    println!(
+        "{}",
+        config
+            .language
+            .text(
+                "Updated Discodex worker at {}.",
+                "Discodex 작업자를 업데이트했습니다: {}",
+                "已更新 Discodex 工作程序：{}",
+                "Discodex ワーカーを更新しました：{}"
+            )
+            .replace("{}", &installed.display().to_string())
+    );
+    Ok(())
+}
+
+fn stage_update_binary(source: &Path, parent: &Path) -> Result<tempfile::NamedTempFile> {
+    let staged = tempfile::NamedTempFile::new_in(parent).context("stage update beside worker")?;
+    fs::copy(source, staged.path()).context("copy update binary to staging file")?;
+    set_executable(staged.path())?;
+    staged.as_file().sync_all()?;
+    ensure!(
+        fs::metadata(staged.path())?.len() > 0,
+        "update source is empty"
+    );
+    Ok(staged)
+}
+
+fn restore_worker_bytes(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> Result<()> {
+    let parent = path.parent().context("worker path has no parent")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+    staged.as_file().set_permissions(permissions)?;
+    staged
+        .persist(path)
+        .map_err(|e| anyhow!("restore previous worker: {}", e.error))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+struct OwnedLinuxUpdateService {
+    unit: String,
+    was_enabled: bool,
+    was_active: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn validate_owned_linux_update_service(
+    owner: &Ownership,
+    executable: &Path,
+    config: &Path,
+) -> Result<OwnedLinuxUpdateService> {
+    let unit = format!("{SERVICE_NAME}.service");
+    let path = owner
+        .service_file
+        .as_deref()
+        .context("ownership has no service unit path")?;
+    ensure!(
+        owner.service_kind.as_deref() == Some("systemd-user")
+            && path.file_name().and_then(|n| n.to_str()) == Some(unit.as_str()),
+        "ownership does not identify the Discodex systemd user unit"
+    );
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")?;
+    let dir = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("systemd/user");
+    ensure!(
+        path == &dir.join(&unit),
+        "service unit path differs from this user's Discodex service path"
+    );
+    let expected = format!(
+        "[Unit]\nDescription=Discodex Discord bridge\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
+        systemd_quote(executable),
+        systemd_quote(config)
+    );
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.file_type().is_file() && fs::read_to_string(path)? == expected,
+        "owned systemd unit differs from the verified worker/config"
+    );
+    let active_state = systemctl_user_state("is-active", &unit)?;
+    ensure!(
+        active_state == "active" || active_state == "inactive",
+        "systemd unit is in a transitional or failed state; update refused"
+    );
+    let enabled_state = systemctl_user_state("is-enabled", &unit)?;
+    Ok(OwnedLinuxUpdateService {
+        unit: unit.clone(),
+        was_enabled: matches!(enabled_state.as_str(), "enabled" | "enabled-runtime"),
+        was_active: active_state == "active",
+    })
+}
+
+#[cfg(windows)]
+struct OwnedWindowsUpdateService {
+    task_name: String,
+    was_enabled: bool,
+    was_active: bool,
+}
+
+#[cfg(windows)]
+fn validate_owned_windows_update_service(
+    owner: &Ownership,
+    executable: &Path,
+    config: &Path,
+) -> Result<OwnedWindowsUpdateService> {
+    ensure!(
+        owner.service_kind.as_deref() == Some("scheduled-task-user")
+            && owner.service_file.is_none(),
+        "ownership does not identify the Discodex scheduled task"
+    );
+    let task_name = windows_task_name_for_config(config).to_owned();
+    let task_exe = windows_task_executable_path(executable)?;
+    let expected_exe = ps_single_quote(&task_exe.display().to_string());
+    let expected_args = ps_single_quote(&format!(
+        r#"run --config "{}""#,
+        owner.config_file.display()
+    ));
+    let (state, _) = inspect_owned_windows_task(&expected_exe, &expected_args, owner)?;
+    ensure!(
+        state == "matching",
+        "scheduled task differs from ownership record"
+    );
+    let (was_enabled, was_active) = inspect_windows_task_state(&task_name)?;
+    Ok(OwnedWindowsUpdateService {
+        task_name,
+        was_enabled,
+        was_active,
+    })
+}
+
+#[cfg(windows)]
+fn set_windows_update_task(name: &str, enabled: bool, active: bool) -> Result<()> {
+    let name = ps_single_quote(name);
+    let change_enabled = if enabled {
+        format!("Enable-ScheduledTask -TaskPath '\\' -TaskName '{name}' | Out-Null")
+    } else {
+        format!("Disable-ScheduledTask -TaskPath '\\' -TaskName '{name}' | Out-Null")
+    };
+    let change_active = if active {
+        format!("Start-ScheduledTask -TaskPath '\\' -TaskName '{name}'")
+    } else {
+        format!(
+            "Stop-ScheduledTask -TaskPath '\\' -TaskName '{name}' -ErrorAction SilentlyContinue"
+        )
+    };
+    let expected_enabled = enabled.to_string();
+    let expected_active = active.to_string();
+    run_powershell(&format!(
+        "$ErrorActionPreference='Stop'; $task=Get-ScheduledTask -TaskPath '\\' -TaskName '{name}'; if ($task.State -eq 'Running') {{ Stop-ScheduledTask -InputObject $task; $limit=(Get-Date).AddSeconds(20); while ((Get-ScheduledTask -TaskPath '\\' -TaskName '{name}').State -eq 'Running' -and (Get-Date) -lt $limit) {{ Start-Sleep -Milliseconds 100 }}; if ((Get-ScheduledTask -TaskPath '\\' -TaskName '{name}').State -eq 'Running') {{ throw 'task did not stop' }} }}; {change_enabled}; {change_active}; $expectedEnabled=[bool]::Parse('{expected_enabled}'); $expectedActive=[bool]::Parse('{expected_active}'); $limit=(Get-Date).AddSeconds(15); do {{ $task=Get-ScheduledTask -TaskPath '\\' -TaskName '{name}'; $enabledMatches=($task.Settings.Enabled -eq $expectedEnabled); $activeMatches=(($task.State -eq 'Running') -eq $expectedActive); if ($enabledMatches -and $activeMatches) {{ break }}; Start-Sleep -Milliseconds 100 }} while ((Get-Date) -lt $limit); if (-not $enabledMatches -or -not $activeMatches) {{ throw 'task did not reach its expected enabled/running state' }}"
+    ))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+struct MacUpdateArgs {
+    source: PathBuf,
+    config: Option<PathBuf>,
+    ownership: Option<PathBuf>,
+    migrate_adhoc: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn parse_mac_update_args(args: &[String]) -> Result<MacUpdateArgs> {
+    let (mut source, mut config, mut ownership, mut migrate_adhoc) = (None, None, None, false);
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--source" | "--config" | "--ownership" => {
+                let option = args[index].as_str();
+                let value = args
+                    .get(index + 1)
+                    .context("update option requires a path")?;
+                if value.starts_with('-') {
+                    bail!("update option requires a path");
+                }
+                let slot = match option {
+                    "--source" => &mut source,
+                    "--config" => &mut config,
+                    _ => &mut ownership,
+                };
+                if slot.replace(PathBuf::from(value)).is_some() {
+                    bail!("{option} may be used only once");
+                }
+                index += 2;
+            }
+            "--migrate-adhoc" => {
+                if migrate_adhoc {
+                    bail!("--migrate-adhoc may be used only once");
+                }
+                migrate_adhoc = true;
+                index += 1;
+            }
+            option => bail!("unknown mac-update option `{option}`"),
+        }
+    }
+    let source = source.context("mac-update requires --source <new-build-binary>")?;
+    if config.is_some() && ownership.is_some() {
+        bail!("mac-update accepts either --config or --ownership, not both");
+    }
+    Ok(MacUpdateArgs {
+        source,
+        config,
+        ownership,
+        migrate_adhoc,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn validate_mac_update_migration(
+    pinned_requirement: Option<&str>,
+    migrate_adhoc: bool,
+    existing_signature_is_adhoc: Option<bool>,
+) -> Result<()> {
+    if pinned_requirement.is_some() {
+        if migrate_adhoc {
+            bail!(
+                "--migrate-adhoc is only valid for an installation without a pinned signing identity"
+            );
+        }
+        return Ok(());
+    }
+    if !migrate_adhoc {
+        bail!(
+            "no signing identity is pinned; pass --migrate-adhoc once to migrate the ad-hoc build"
+        );
+    }
+    if existing_signature_is_adhoc != Some(true) {
+        bail!("the unpinned installation is not verified as ad-hoc signed; migration refused");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn update_mac(args: &[String]) -> Result<()> {
+    use crate::mac_signing::{
+        adopt_owned_binary_identifier, sign_binary_with_language, verify_binary,
+    };
+
+    let args = parse_mac_update_args(args)?;
+    let source = args.source;
+    let config = args.config;
+    let owner_override = args.ownership;
+    let migrate = args.migrate_adhoc;
+    let mut owner_args = Vec::new();
+    if let Some(path) = &config {
+        owner_args.extend(["--config".to_owned(), path.display().to_string()]);
+    }
+    if let Some(path) = &owner_override {
+        owner_args.extend(["--ownership".to_owned(), path.display().to_string()]);
+    }
+    let owner_path =
+        mac_permissions_ownership_path(&owner_args, &roots()?.config.join("ownership.json"))?
+            .canonicalize()
+            .context("resolve ownership record")?;
+    let mut owner: Ownership = read_json(&owner_path).context("read owned installation record")?;
+    let config_path = owner
+        .config_file
+        .canonicalize()
+        .context("resolve owned profile config")?;
+    if config
+        .as_ref()
+        .is_some_and(|p| p.canonicalize().ok().as_deref() != Some(config_path.as_path()))
+    {
+        bail!("--config does not identify the config recorded by this ownership record");
+    }
+    let adjacent_owner = config_path
+        .parent()
+        .context("owned config has no parent")?
+        .join("ownership.json")
+        .canonicalize()
+        .context("resolve ownership record beside config")?;
+    if adjacent_owner != owner_path {
+        bail!("ownership record is not beside its owned profile config");
+    }
+    let data_root = ownership_data_root(&owner)?;
+    let recorded_worker = owner
+        .worker_executable
+        .as_ref()
+        .context("owned install has no recorded worker executable")?;
+    let installed = recorded_worker
+        .canonicalize()
+        .context("resolve recorded worker executable")?;
+    if recorded_worker != &installed {
+        bail!("recorded worker path is not its canonical owned executable path");
+    }
+    if !installed.is_file() || !is_owned_worker_executable(&installed, &data_root) {
+        bail!(
+            "recorded worker executable is not a regular file in the canonical owned bin directory"
+        );
+    }
+    if owner.service_kind.as_deref() != Some("launchd-user") {
+        bail!("ownership record does not identify an owned macOS LaunchAgent");
+    }
+    let language = Config::load(&config_path)?.language;
+    let (label, plist) = launchd_identity(&config_path)?;
+    if owner.service_file.as_deref() != Some(plist.as_path()) {
+        bail!("recorded LaunchAgent path does not match this owned profile");
+    }
+    let expected_plist = launchd_plist(&label, &installed, &config_path);
+    if !existing_launchd_plist_matches(&plist, &expected_plist, true)? {
+        bail!("owned LaunchAgent plist is missing");
+    }
+    let was_loaded = launchd_is_loaded(&label, &installed, &config_path)?;
+
+    let source = source.canonicalize().context("resolve update source")?;
+    if !source.is_file() {
+        bail!("update source is not a regular file: {}", source.display());
+    }
+    if source == installed {
+        bail!("update source must be separate from the installed worker executable");
+    }
+    if let Some(pin) = owner.mac_signing_requirement.as_deref() {
+        validate_mac_update_migration(Some(pin), migrate, None)?;
+        adopt_owned_binary_identifier(&installed, pin)
+            .context("preserve the verified owned signing identity")?;
+        verify_binary(&installed, pin)
+            .context("verify installed binary against pinned signing identity")?;
+    } else {
+        let output = Command::new("/usr/bin/codesign")
+            .args(["-dv", "--verbose=4"])
+            .arg(&installed)
+            .output()
+            .context("inspect installed signature")?;
+        let details = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let adhoc =
+            output.status.success() && details.lines().any(|line| line.trim() == "Signature=adhoc");
+        validate_mac_update_migration(None, migrate, Some(adhoc))?;
+    }
+    if migrate {
+        require_mac_fda_interactive_terminal(
+            &installed,
+            "ad-hoc migration can stop or replace the service",
+        )?;
+    }
+
+    let parent = installed
+        .parent()
+        .context("installed executable has no parent")?;
+    let old_bytes = fs::read(&installed).context("snapshot installed executable")?;
+    let old_permissions = fs::metadata(&installed)?.permissions();
+    let old_owner_bytes = fs::read(&owner_path).context("snapshot ownership record")?;
+    let old_owner_permissions = fs::metadata(&owner_path)?.permissions();
+    let old_pin = owner.mac_signing_requirement.clone();
+    let staged =
+        tempfile::NamedTempFile::new_in(parent).context("stage beside installed executable")?;
+    fs::copy(&source, staged.path()).context("copy update source into staging file")?;
+    set_executable(staged.path())?;
+    let requirement =
+        sign_binary_with_language(staged.path(), language).context("sign staged executable")?;
+    staged
+        .as_file()
+        .sync_all()
+        .context("flush signed staged executable")?;
+    if old_pin.as_deref().is_some_and(|pin| pin != requirement) {
+        bail!("update signer does not match pinned installation identity");
+    }
+    verify_binary(staged.path(), &requirement).context("verify staged executable")?;
+
+    let mut booted_out = false;
+    let update = (|| -> Result<()> {
+        if was_loaded {
+            run_checked(
+                "launchctl",
+                &["bootout", &format!("{}/{}", launchd_domain()?, label)],
+            )?;
+            booted_out = true;
+            wait_for_launchd_unloaded(&label, &installed, &config_path)?;
+        }
+        staged
+            .persist(&installed)
+            .map_err(|e| anyhow!("atomically replace executable: {}", e.error))?;
+        set_executable(&installed)?;
+        verify_binary(&installed, &requirement).context("verify replaced executable")?;
+        owner.mac_signing_requirement = Some(requirement.clone());
+        write_json_private(&owner_path, &owner).context("save pinned signing identity")?;
+        if migrate {
+            request_mac_fda_guidance(&owner_path, language)?;
+        }
+        if was_loaded {
+            let domain = launchd_domain()?;
+            run_checked(
+                "launchctl",
+                &[
+                    "bootstrap",
+                    &domain,
+                    plist.to_str().context("LaunchAgent path is not UTF-8")?,
+                ],
+            )?;
+            run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+            if !launchd_is_loaded(&label, &installed, &config_path)? {
+                bail!("updated LaunchAgent did not load");
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = update {
+        let rollback = (|| -> Result<()> {
+            if was_loaded && booted_out && launchd_is_loaded(&label, &installed, &config_path)? {
+                run_checked(
+                    "launchctl",
+                    &["bootout", &format!("{}/{}", launchd_domain()?, label)],
+                )?;
+                wait_for_launchd_unloaded(&label, &installed, &config_path)?;
+            }
+            atomic_restore(&installed, &old_bytes, &old_permissions)?;
+            atomic_restore(&owner_path, &old_owner_bytes, &old_owner_permissions)
+                .context("restore ownership record")?;
+            if was_loaded && booted_out {
+                let domain = launchd_domain()?;
+                run_checked(
+                    "launchctl",
+                    &[
+                        "bootstrap",
+                        &domain,
+                        plist.to_str().context("LaunchAgent path is not UTF-8")?,
+                    ],
+                )?;
+                run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+                if !launchd_is_loaded(&label, &installed, &config_path)? {
+                    bail!("previous LaunchAgent did not return to loaded state");
+                }
+            }
+            Ok(())
+        })();
+        return match rollback {
+            Ok(()) => Err(error).context("update failed; previous executable, ownership record, and loaded state were restored"),
+            Err(restore) => Err(anyhow!("update failed ({error:#}); rollback failed ({restore:#})")),
+        };
+    }
+    println!("Updated owned macOS worker at {}.", installed.display());
+    Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_update_policy_tests {
+    use super::{
+        MacUpdateArgs, mac_fda_guidance_answer, parse_mac_update_args, parse_update_args,
+        require_mac_fda_interactive_terminal_state, validate_mac_update_migration,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_source_and_one_ownership_selector() {
+        let input = [
+            "--source",
+            "/tmp/new-worker",
+            "--config",
+            "/profile/config.json",
+        ]
+        .map(str::to_owned);
+        let parsed = parse_mac_update_args(&input).unwrap();
+        assert_eq!(
+            parsed,
+            MacUpdateArgs {
+                source: PathBuf::from("/tmp/new-worker"),
+                config: Some(PathBuf::from("/profile/config.json")),
+                ownership: None,
+                migrate_adhoc: false,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_or_conflicting_options() {
+        let duplicate = ["--source", "/tmp/one", "--source", "/tmp/two"].map(str::to_owned);
+        assert!(parse_mac_update_args(&duplicate).is_err());
+        let conflict = [
+            "--source",
+            "/tmp/new",
+            "--config",
+            "/profile/config.json",
+            "--ownership",
+            "/profile/ownership.json",
+        ]
+        .map(str::to_owned);
+        assert!(parse_mac_update_args(&conflict).is_err());
+        assert!(parse_mac_update_args(&[]).is_err());
+        assert!(parse_mac_update_args(&["--source".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn migration_flag_only_authorizes_verified_unpinned_adhoc_builds() {
+        assert!(validate_mac_update_migration(None, false, Some(true)).is_err());
+        assert!(validate_mac_update_migration(None, true, Some(true)).is_ok());
+        assert!(validate_mac_update_migration(None, true, Some(false)).is_err());
+        assert!(
+            validate_mac_update_migration(Some("designated => identifier \"worker\""), false, None)
+                .is_ok()
+        );
+        assert!(validate_mac_update_migration(Some("pinned"), true, None).is_err());
+    }
+
+    #[test]
+    fn fda_gate_requires_interactive_acknowledgment_and_explicit_input() {
+        let executable = PathBuf::from("/owned/bin/codex-worker-renewal");
+        assert!(
+            require_mac_fda_interactive_terminal_state(true, true, &executable, "install").is_ok()
+        );
+        assert!(
+            require_mac_fda_interactive_terminal_state(false, true, &executable, "install")
+                .is_err()
+        );
+        assert!(
+            require_mac_fda_interactive_terminal_state(true, false, &executable, "install")
+                .is_err()
+        );
+        assert_eq!(mac_fda_guidance_answer(1, "\n").unwrap(), true);
+        assert_eq!(mac_fda_guidance_answer(2, "q\n").unwrap(), false);
+        assert_eq!(mac_fda_guidance_answer(2, "Q\n").unwrap(), false);
+        assert!(mac_fda_guidance_answer(4, "yes\n").is_err());
+        assert!(mac_fda_guidance_answer(0, "").is_err());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn atomic_restore(path: &Path, bytes: &[u8], permissions: &fs::Permissions) -> Result<()> {
+    let mut temp =
+        tempfile::NamedTempFile::new_in(path.parent().context("worker path has no parent")?)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    fs::set_permissions(temp.path(), permissions.clone())?;
+    temp.persist(path)
+        .map_err(|e| anyhow!("atomically restore file: {}", e.error))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_current_executable(path: &Path) -> bool {
+    let Ok(current) = env::current_exe() else {
+        return false;
+    };
+    let current = current.canonicalize().unwrap_or(current);
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    current == path
+}
+
+#[cfg(windows)]
+fn defer_windows_self_cleanup(
+    ownership: &Ownership,
+    ownership_path: &Path,
+    runtime_dir: Option<&Path>,
+    config: Option<&Config>,
+) -> Result<()> {
+    let worker = ownership
+        .worker_executable
+        .as_ref()
+        .context("self-cleanup requires the owned worker executable path")?;
+    let mut preserved_paths = vec![ownership.project_dir.clone(), ownership.state_dir.clone()];
+    if let Some(config) = config {
+        preserved_paths.extend([config.project_dir.clone(), config.state_dir.clone()]);
+        preserved_paths.extend(config.codex_home.clone());
+    }
+    let preserved_paths = preserved_paths
+        .into_iter()
+        .map(|path| path.canonicalize().unwrap_or(path))
+        .collect::<Vec<_>>();
+    let preserved_paths = serde_json::to_string(&preserved_paths)
+        .context("record Codex user data and project paths for deferred cleanup")?;
+    let parent_pid = std::process::id().to_string();
+    let script = r#"
+$ErrorActionPreference = 'Stop'
+$parentId = [int]$env:DISCODEX_UNINSTALL_PARENT_PID
+while ($true) {
+    $parent = Get-Process -Id $parentId -ErrorAction SilentlyContinue
+    if ($null -eq $parent) { break }
+    $parent.WaitForExit(250) | Out-Null
+}
+try {
+    $runtime = $env:DISCODEX_UNINSTALL_RUNTIME_DIR
+    if (-not [string]::IsNullOrEmpty($runtime) -and (Test-Path -LiteralPath $runtime)) {
+        $preserved = @($env:DISCODEX_UNINSTALL_PRESERVED_PATHS | ConvertFrom-Json)
+        $configPath = $env:DISCODEX_UNINSTALL_CONFIG
+        if (Test-Path -LiteralPath $configPath) {
+            $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+            foreach ($name in @('codexHome', 'projectDir', 'stateDir')) {
+                $value = $config.$name
+                if (-not [string]::IsNullOrEmpty($value)) {
+                    if (-not [IO.Path]::IsPathRooted($value)) {
+                        $value = Join-Path (Split-Path -Parent $configPath) $value
+                    }
+                    $preserved += $value
+                }
+            }
+        }
+        $runtimePath = [IO.Path]::GetFullPath($runtime).TrimEnd('\')
+        foreach ($path in $preserved) {
+            $path = [IO.Path]::GetFullPath($path).TrimEnd('\')
+            if ($path.Equals($runtimePath, [StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($runtimePath + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Codex user data, project, or state overlaps the owned runtime; its files and ownership were preserved.'
+            }
+        }
+        $directory = Get-Item -LiteralPath $runtime -Force
+        if (-not $directory.PSIsContainer -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Owned runtime changed to a non-directory or link; its files and ownership were preserved.'
+        }
+        $names = @('codex.exe', 'codex-code-mode-host.exe')
+        foreach ($entry in @(Get-ChildItem -LiteralPath $runtime -Force)) {
+            if ($entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $entry.Name -cnotin $names) {
+                throw 'Owned runtime contains unrecorded files or user data; its files and ownership were preserved.'
+            }
+        }
+        foreach ($name in $names) {
+            $path = Join-Path $runtime $name
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+        }
+        [IO.Directory]::Delete($runtime, $false)
+    }
+    Remove-Item -LiteralPath $env:DISCODEX_UNINSTALL_EXECUTABLE -Force
+    foreach ($name in @('CONFIG', 'CREDENTIALS', 'INSTALL_LIST')) {
+        $path = [Environment]::GetEnvironmentVariable("DISCODEX_UNINSTALL_$name")
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+    }
+    Remove-Item -LiteralPath $env:DISCODEX_UNINSTALL_OWNERSHIP -Force
+    Write-Output 'Owned Windows files removed; native state and user Codex data were preserved.'
+    exit 0
+} catch {
+    [Console]::Error.WriteLine("Deferred uninstall cleanup failed: $($_.Exception.Message). Ownership/configuration records remain where deletion had not yet completed.")
+    exit 1
+}
+"#;
+
+    command_without_console("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ])
+        .env("DISCODEX_UNINSTALL_PARENT_PID", parent_pid)
+        .env("DISCODEX_UNINSTALL_PRESERVED_PATHS", preserved_paths)
+        .env("DISCODEX_UNINSTALL_EXECUTABLE", worker)
+        .env(
+            "DISCODEX_UNINSTALL_RUNTIME_DIR",
+            runtime_dir.map_or_else(|| std::ffi::OsStr::new(""), Path::as_os_str),
+        )
+        .env("DISCODEX_UNINSTALL_CONFIG", &ownership.config_file)
+        .env(
+            "DISCODEX_UNINSTALL_CREDENTIALS",
+            &ownership.credentials_file,
+        )
+        .env(
+            "DISCODEX_UNINSTALL_INSTALL_LIST",
+            &ownership.install_list_file,
+        )
+        .env("DISCODEX_UNINSTALL_OWNERSHIP", ownership_path)
+        .stdin(Stdio::null())
+        .spawn()
+        .context("start the user-scoped Windows cleanup helper")?;
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct Roots {
+    config: PathBuf,
+    data: PathBuf,
+}
+
+fn roots() -> Result<Roots> {
+    roots_for_app(APP_NAME)
+}
+
+fn roots_for_app(app_name: &str) -> Result<Roots> {
+    #[cfg(windows)]
+    let config_base = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .context("APPDATA is not set")?;
+    #[cfg(not(windows))]
+    let config_base = env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .context("XDG_CONFIG_HOME or HOME is not set")?;
+
+    #[cfg(windows)]
+    let data_base = env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .context("LOCALAPPDATA is not set")?;
+    #[cfg(not(windows))]
+    let data_base = env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .context("XDG_DATA_HOME or HOME is not set")?;
+
+    Ok(Roots {
+        config: config_base.join(app_name),
+        data: data_base.join(app_name),
+    })
+}
+
+fn default_codex_home() -> Result<PathBuf> {
+    #[cfg(windows)]
+    let home = env::var_os("USERPROFILE").context("USERPROFILE is not set")?;
+    #[cfg(not(windows))]
+    let home = env::var_os("HOME").context("HOME is not set")?;
+    Ok(PathBuf::from(home).join(".codex"))
+}
+
+fn resolve_codex_home(
+    previous: Option<&Path>,
+    selected_env: Option<&Path>,
+    project_dir: &Path,
+    default_home: Option<&Path>,
+) -> Result<PathBuf> {
+    let selected = previous
+        .or(selected_env)
+        .or(default_home)
+        .context("no CODEX_HOME or default home was available")?;
+    if selected.is_absolute() {
+        return Ok(selected.to_owned());
+    }
+    let base = if project_dir.is_absolute() {
+        project_dir.to_owned()
+    } else {
+        env::current_dir()
+            .context("resolve relative project directory for CODEX_HOME")?
+            .join(project_dir)
+    };
+    Ok(base.join(selected))
+}
+
+fn validate_existing_profile_identity(
+    existing_installation: bool,
+    requested_profile: &str,
+    ownership_profile: Option<&str>,
+    config_profile: Option<&str>,
+) -> Result<()> {
+    if existing_installation && ownership_profile.is_none() && config_profile.is_none() {
+        bail!(
+            "an existing installation has no readable profile identity; refusing to reuse its state"
+        );
+    }
+    if ownership_profile.is_some_and(|profile| profile != requested_profile)
+        || config_profile.is_some_and(|profile| profile != requested_profile)
+    {
+        bail!(
+            "an existing installation belongs to another profile; refusing to replace its config, credentials, or ownership"
+        );
+    }
+    Ok(())
+}
+
+fn is_partial_install_reselection_allowed(
+    same_profile_paths: bool,
+    service_kind: Option<&str>,
+    service_file_present: bool,
+) -> bool {
+    same_profile_paths && service_kind.is_none() && !service_file_present
+}
+
+fn previous_owns_completed_core(previous: &Ownership, codex_path: &Path) -> bool {
+    previous.codex_source == "official-core-owned"
+        && previous.runtime_executable.as_deref() == Some(codex_path)
+        && (previous.runtime_owned
+            || (previous.service_kind.is_some() && previous.service_file.is_some()))
+}
+
+fn same_profile_installation_paths(
+    previous: &Ownership,
+    config_path: &Path,
+    credentials_path: &Path,
+    install_list_path: &Path,
+    state_dir: &Path,
+    project_dir: &Path,
+) -> bool {
+    previous.config_file == config_path
+        && previous.credentials_file == credentials_path
+        && previous.install_list_file == install_list_path
+        && previous.state_dir == state_dir
+        && previous.project_dir == project_dir
+}
+
+fn partial_owned_core_runtime_for_cleanup(
+    previous: Option<&Ownership>,
+    data_root: &Path,
+    selecting_official_core: bool,
+    config: Option<&Config>,
+    retained_native_paths: &[&Path],
+) -> Result<Option<PathBuf>> {
+    let Some(previous) = previous else {
+        return Ok(None);
+    };
+    if previous.service_kind.is_some()
+        || previous.service_file.is_some()
+        || !previous.runtime_owned
+        || previous.codex_source != "official-core-owned"
+        || selecting_official_core
+    {
+        return Ok(None);
+    }
+    owned_core_runtime_for_cleanup(previous, data_root, config, retained_native_paths)
+}
+
+fn prepare_owned_core_uninstall(
+    ownership: &mut Ownership,
+    data_root: &Path,
+    config: Option<&Config>,
+) -> Result<Option<PathBuf>> {
+    let runtime_dir = owned_core_runtime_for_cleanup(ownership, data_root, config, &[])?;
+    if runtime_dir.is_some() {
+        // Service unlink persists this proof so a later command/cleanup failure can be retried.
+        ownership.runtime_owned = true;
+    }
+    Ok(runtime_dir)
+}
+
+fn owned_core_runtime_for_cleanup(
+    ownership: &Ownership,
+    data_root: &Path,
+    config: Option<&Config>,
+    retained_native_paths: &[&Path],
+) -> Result<Option<PathBuf>> {
+    if ownership.codex_source != "official-core-owned" {
+        return Ok(None);
+    }
+    let data_root = data_root
+        .canonicalize()
+        .with_context(|| format!("resolve profile data root {}", data_root.display()))?;
+    let runtime_dir = data_root.join("official-codex");
+    if ownership.runtime_dir != runtime_dir {
+        bail!(
+            "owned Codex runtime is not the expected profile directory; configuration and ownership were preserved"
+        );
+    }
+    match fs::symlink_metadata(&runtime_dir) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => bail!(
+            "owned Codex runtime is not a regular directory; configuration and ownership were preserved"
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("inspect owned Codex runtime before cleanup"),
+    }
+    let executable = runtime_dir.join(codex_executable_name());
+    if ownership.runtime_executable.as_deref() != Some(executable.as_path())
+        || ownership.codex_path != executable
+        || !previous_owns_completed_core(ownership, &executable)
+    {
+        bail!(
+            "remaining Codex runtime has an incomplete ownership record; configuration and ownership were preserved"
+        );
+    }
+    let mut preserved_paths = vec![
+        ownership.project_dir.as_path(),
+        ownership.state_dir.as_path(),
+    ];
+    if let Some(config) = config {
+        preserved_paths.extend([config.project_dir.as_path(), config.state_dir.as_path()]);
+        if let Some(home) = &config.codex_home {
+            preserved_paths.push(home.as_path());
+        }
+    }
+    preserved_paths.extend_from_slice(retained_native_paths);
+    for path in preserved_paths {
+        let resolved = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+        if resolved.starts_with(&runtime_dir) {
+            bail!(
+                "Codex user data, project, state, or a selected executable overlaps the owned runtime at {}; its files, configuration, and ownership were preserved",
+                path.display()
+            );
+        }
+    }
+    inspect_owned_core_runtime_contents(&runtime_dir)?;
+    Ok(Some(runtime_dir))
+}
+
+fn inspect_owned_core_runtime_contents(runtime_dir: &Path) -> Result<()> {
+    if !fs::symlink_metadata(runtime_dir)
+        .context("inspect owned Codex runtime before cleanup")?
+        .file_type()
+        .is_dir()
+    {
+        bail!(
+            "owned Codex runtime changed to a non-directory or link; its files, configuration, and ownership were preserved"
+        );
+    }
+    for entry in fs::read_dir(runtime_dir).context("read owned Codex runtime before cleanup")? {
+        let entry = entry.context("read owned Codex runtime entry")?;
+        let name = entry.file_name();
+        if (name != codex_executable_name()
+            && name != OsString::from(code_mode_host_executable_name()))
+            || !entry
+                .file_type()
+                .context("inspect owned runtime entry")?
+                .is_file()
+        {
+            bail!(
+                "owned runtime contains unrecorded files or user data at {}; its files, configuration, and ownership were preserved",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn remove_owned_core_runtime(runtime_dir: &Path) -> Result<()> {
+    inspect_owned_core_runtime_contents(runtime_dir)?;
+    remove_if_file(&runtime_dir.join(codex_executable_name()))?;
+    remove_if_file(&runtime_dir.join(code_mode_host_executable_name()))?;
+    fs::remove_dir(runtime_dir)
+        .context("remove empty owned runtime; configuration and ownership remain if cleanup failed")
+}
+
+fn validate_existing_installation_plan(
+    ownership_path: &Path,
+    config_path: &Path,
+    requested_profile: &str,
+) -> Result<()> {
+    let ownership = if ownership_path.exists() {
+        Some(read_json::<Ownership>(ownership_path).with_context(|| {
+            format!(
+                "read existing installation ownership {}; refusing to replace its plan",
+                ownership_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    let config = if config_path.exists() {
+        Some(Config::load(config_path).with_context(|| {
+            format!(
+                "read existing profile settings from {}; refusing to replace its plan",
+                config_path.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    validate_existing_profile_identity(
+        ownership.is_some(),
+        requested_profile,
+        ownership
+            .as_ref()
+            .and_then(|value| value.profile.as_deref()),
+        config.as_ref().map(|value| value.profile.as_str()),
+    )
+}
+
+fn owned_bridge_executable(data_root: &Path) -> Option<PathBuf> {
+    let executable = env::current_exe().ok()?.canonicalize().ok()?;
+    is_owned_worker_executable(&executable, data_root).then_some(executable)
+}
+
+fn is_owned_worker_executable(executable: &Path, data_root: &Path) -> bool {
+    let Ok(owned_bin_dir) = data_root.join("bin").canonicalize() else {
+        return false;
+    };
+    let canonical_executable = executable
+        .canonicalize()
+        .unwrap_or_else(|_| executable.to_owned());
+    canonical_executable.starts_with(owned_bin_dir)
+}
+
+fn choose_native(
+    candidates: &[Candidate],
+    language: Language,
+) -> Result<(NativeSource, Option<PathBuf>)> {
+    let app_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|item| item.source == NativeSource::DesktopApp)
+        .collect();
+    let cli_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|item| item.source == NativeSource::ExistingCli)
+        .collect();
+    println!(
+        "{}",
+        language.text(
+            "Choose the official Codex core for this profile:",
+            "이 프로필에서 사용할 공식 Codex 코어를 선택하세요:",
+            "为此配置选择官方 Codex 核心：",
+            "このプロファイルで使う公式 Codex コアを選択してください："
+        )
+    );
+    println!(
+        "  1) Installed Codex app core ({} discovered)",
+        app_candidates.len()
+    );
+    println!(
+        "  2) Existing Codex CLI ({} discovered)",
+        cli_candidates.len()
+    );
+    println!(
+        "  3) Download the official Codex release into this install's private runtime directory"
+    );
+    loop {
+        let selected = ask_text(language, "Selection", "선택", "选择", "選択", "3")?;
+        let options = match selected.as_str() {
+            "1" => &app_candidates,
+            "2" => &cli_candidates,
+            "3" => return Ok((NativeSource::OfficialCore, None)),
+            _ => {
+                println!(
+                    "{}",
+                    language.text(
+                        "Choose 1, 2, or 3.",
+                        "1, 2 또는 3을 선택하세요.",
+                        "请选择 1、2 或 3。",
+                        "1、2、3 から選んでください。"
+                    )
+                );
+                continue;
+            }
+        };
+        if options.is_empty() {
+            println!(
+                "No executable was discovered for that choice. Select a discovered source or download the official core."
+            );
+            continue;
+        }
+        for (index, candidate) in options.iter().enumerate() {
+            println!(
+                "  {}) {} — {}",
+                index + 1,
+                candidate.label,
+                candidate.path.display()
+            );
+        }
+        let index: usize = ask_text(
+            language,
+            "Executable number",
+            "실행 파일 번호",
+            "可执行文件编号",
+            "実行ファイル番号",
+            "1",
+        )?
+        .parse()
+        .context("executable selection must be a number")?;
+        if let Some(candidate) = options.get(index.saturating_sub(1)) {
+            return Ok((candidate.source.clone(), Some(candidate.path.clone())));
+        }
+        println!(
+            "{}",
+            language.text(
+                "That executable number is not in the list.",
+                "목록에 없는 실행 파일 번호입니다.",
+                "该可执行文件编号不在列表中。",
+                "その番号の実行ファイルは一覧にありません。"
+            )
+        );
+    }
+}
+
+fn discover_native_candidates() -> Result<Vec<Candidate>> {
+    let mut found = Vec::new();
+    #[cfg(target_os = "linux")]
+    {
+        let resource_root = Path::new("/usr/lib/chatgpt/resources");
+        if resource_root.is_dir() {
+            match fs::read_dir(resource_root) {
+                Ok(entries) => {
+                    for item in entries {
+                        let item = match item {
+                            Ok(item) => item,
+                            Err(error) => {
+                                eprintln!("Skipping unreadable ChatGPT resource entry: {error}");
+                                continue;
+                            }
+                        };
+                        let path = item.path();
+                        let file_name = item.file_name().to_string_lossy().to_ascii_lowercase();
+                        if file_name.starts_with("codex") {
+                            add_candidate_paths_best_effort(
+                                &mut found,
+                                &path,
+                                NativeSource::DesktopApp,
+                                "Installed ChatGPT app core",
+                            );
+                        }
+                    }
+                }
+                Err(error) => eprintln!(
+                    "Skipping unreadable ChatGPT resource directory {}: {error}",
+                    resource_root.display()
+                ),
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut codex_bundles = vec![PathBuf::from("/Applications/Codex.app")];
+        let mut chatgpt_bundles = vec![PathBuf::from("/Applications/ChatGPT.app")];
+        if let Some(home) = env::var_os("HOME") {
+            let applications = PathBuf::from(home).join("Applications");
+            codex_bundles.push(applications.join("Codex.app"));
+            chatgpt_bundles.push(applications.join("ChatGPT.app"));
+        }
+        if let Ok(output) = command_without_console("mdfind")
+            .args(["-name", "Codex.app"])
+            .output()
+        {
+            if output.status.success() {
+                codex_bundles.extend(
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(PathBuf::from),
+                );
+            }
+        }
+        if let Ok(output) = command_without_console("mdfind")
+            .args(["-name", "ChatGPT.app"])
+            .output()
+        {
+            if output.status.success() {
+                chatgpt_bundles.extend(
+                    String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(PathBuf::from),
+                );
+            }
+        }
+        for bundle in codex_bundles {
+            add_candidate_paths_best_effort(
+                &mut found,
+                &bundle.join("Contents/Resources"),
+                NativeSource::DesktopApp,
+                "Installed Codex app core",
+            );
+        }
+        for bundle in chatgpt_bundles {
+            add_candidate_paths_best_effort(
+                &mut found,
+                &bundle.join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+                NativeSource::DesktopApp,
+                "Installed ChatGPT app core",
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        let ps = "$pkg=Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1; if ($pkg) { $p=$pkg.InstallLocation; $candidate=Join-Path $p 'app/resources/codex.exe'; if (Test-Path -LiteralPath $candidate -PathType Leaf) { (Resolve-Path -LiteralPath $candidate).Path; exit 0 }; $manifestPath=Join-Path $p 'AppxManifest.xml'; if (Test-Path -LiteralPath $manifestPath) { [xml]$manifest=Get-Content -LiteralPath $manifestPath; foreach ($app in $manifest.Package.Applications.Application) { if ($app.Executable) { $entry=Join-Path $p $app.Executable; if ((Test-Path -LiteralPath $entry -PathType Leaf) -and ([IO.Path]::GetFileName($entry) -ieq 'codex.exe')) { (Resolve-Path -LiteralPath $entry).Path } } } } }";
+        let output = command_without_console("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", ps])
+            .output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                for line in String::from_utf8_lossy(&output.stdout).lines() {
+                    let path = PathBuf::from(line.trim());
+                    if path.is_file() {
+                        found.push(Candidate {
+                            label: "Installed ChatGPT app core".into(),
+                            path,
+                            source: NativeSource::DesktopApp,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    for path in find_on_path(codex_executable_name()) {
+        found.push(Candidate {
+            label: "Existing Codex CLI".into(),
+            path,
+            source: NativeSource::ExistingCli,
+        });
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|candidate| seen.insert(candidate.path.clone()));
+    Ok(found)
+}
+
+fn add_candidate_paths(
+    found: &mut Vec<Candidate>,
+    root: &Path,
+    source: NativeSource,
+    label: &str,
+) -> Result<()> {
+    if root.is_file()
+        && root
+            .file_name()
+            .is_some_and(|name| name == codex_executable_name())
+    {
+        found.push(Candidate {
+            label: label.into(),
+            path: root.to_owned(),
+            source,
+        });
+    } else if root.is_dir() {
+        let entries = fs::read_dir(root)
+            .with_context(|| format!("read candidate directory {}", root.display()))?;
+        for item in entries {
+            let item = match item {
+                Ok(item) => item,
+                Err(error) => {
+                    eprintln!(
+                        "Skipping unreadable native candidate entry in {}: {error}",
+                        root.display()
+                    );
+                    continue;
+                }
+            };
+            let path = item.path();
+            if path.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name == codex_executable_name())
+            {
+                found.push(Candidate {
+                    label: label.into(),
+                    path,
+                    source: source.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn add_candidate_paths_best_effort(
+    found: &mut Vec<Candidate>,
+    root: &Path,
+    source: NativeSource,
+    label: &str,
+) -> bool {
+    match add_candidate_paths(found, root, source, label) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "Skipping unreadable native candidate {}: {error}",
+                root.display()
+            );
+            false
+        }
+    }
+}
+
+fn find_on_path(file_name: OsString) -> Vec<PathBuf> {
+    env::split_paths(&env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join(&file_name))
+        .filter(|path| path.is_file())
+        .collect()
+}
+
+fn codex_executable_name() -> OsString {
+    #[cfg(windows)]
+    {
+        OsString::from("codex.exe")
+    }
+    #[cfg(not(windows))]
+    {
+        OsString::from("codex")
+    }
+}
+
+fn download_official_codex(runtime_dir: &Path) -> Result<(PathBuf, String)> {
+    let host_path = runtime_dir.join(code_mode_host_executable_name());
+    if host_path.exists() {
+        bail!(
+            "an unowned code-mode host already exists at {}; it was left unchanged",
+            host_path.display()
+        )
+    }
+    let client = Client::builder()
+        .user_agent(concat!("discodex/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("create HTTPS client for official release metadata")?;
+    let release = fetch_official_release(&client, None)?;
+    let (codex_asset_name, host_asset_name) = official_asset_names()?;
+    install_release_components(
+        &client,
+        &release,
+        runtime_dir,
+        &codex_asset_name,
+        &host_asset_name,
+        true,
+        true,
+    )?;
+    let codex_path = runtime_dir.join(codex_executable_name());
+    Ok((codex_path, release.tag_name))
+}
+
+fn ensure_official_core_pair(runtime_dir: &Path, codex_release_tag: Option<&str>) -> Result<()> {
+    let core_path = runtime_dir.join(codex_executable_name());
+    let host_path = runtime_dir.join(code_mode_host_executable_name());
+    let core_missing = !core_path.is_file();
+    let host_missing = !host_path.is_file();
+    if !core_missing && !host_missing {
+        return Ok(());
+    }
+    let tag = codex_release_tag.context(
+        "the owned Codex install has no recorded release tag, so its matching core and code-mode host cannot be selected",
+    )?;
+    let client = Client::builder()
+        .user_agent(concat!("discodex/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .context("create HTTPS client for official release metadata")?;
+    let release = fetch_official_release(&client, Some(tag))?;
+    if release.tag_name != tag {
+        bail!(
+            "official Codex release lookup returned {} for recorded tag {tag}",
+            release.tag_name
+        );
+    }
+    let (codex_asset_name, host_asset_name) = official_asset_names()?;
+    install_release_components(
+        &client,
+        &release,
+        runtime_dir,
+        &codex_asset_name,
+        &host_asset_name,
+        core_missing,
+        host_missing,
+    )?;
+    Ok(())
+}
+
+fn install_release_components(
+    client: &Client,
+    release: &Release,
+    runtime_dir: &Path,
+    codex_asset_name: &str,
+    host_asset_name: &str,
+    install_core: bool,
+    install_host: bool,
+) -> Result<()> {
+    let mut downloads = Vec::new();
+    if install_core {
+        let asset = release_asset(release, codex_asset_name)?;
+        downloads.push((
+            download_verified_asset(client, runtime_dir, asset)?,
+            codex_asset_name,
+            "codex",
+        ));
+    }
+    if install_host {
+        let asset = release_asset(release, host_asset_name)?;
+        downloads.push((
+            download_verified_asset(client, runtime_dir, asset)?,
+            host_asset_name,
+            "codex-code-mode-host",
+        ));
+    }
+    for (archive, asset_name, executable_stem) in downloads {
+        install_official_asset(&archive, runtime_dir, asset_name, executable_stem)?;
+    }
+    Ok(())
+}
+
+fn official_codex_release_tag(version: &str) -> Option<String> {
+    let version = version.trim();
+    let tag = if let Some(tag) = version.strip_prefix("rust-v") {
+        tag
+    } else {
+        version.strip_prefix("codex-cli ")?
+    };
+    let mut parts = tag.split('.');
+    for _ in 0..3 {
+        let part = parts.next()?;
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(if version.starts_with("rust-v") {
+        version.to_owned()
+    } else {
+        format!("rust-v{tag}")
+    })
+}
+
+fn fetch_official_release(client: &Client, tag: Option<&str>) -> Result<Release> {
+    let mut url =
+        reqwest::Url::parse(RELEASES_API).context("parse official Codex releases endpoint")?;
+    if let Some(tag) = tag {
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("official Codex releases endpoint cannot accept a tag"))?
+            .extend(["tags", tag]);
+    } else {
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("official Codex releases endpoint cannot accept latest"))?
+            .push("latest");
+    }
+    client
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .context("request the official OpenAI Codex release metadata")?
+        .error_for_status()
+        .context("official OpenAI Codex release metadata request failed")?
+        .json()
+        .context("parse official OpenAI Codex release metadata")
+}
+
+fn release_asset<'a>(release: &'a Release, asset_name: &str) -> Result<&'a ReleaseAsset> {
+    release
+        .assets
+        .iter()
+        .find(|asset| asset.name == asset_name)
+        .ok_or_else(|| {
+            anyhow!(
+                "official Codex release {} does not contain the required asset {asset_name}; no substitute was installed",
+                release.tag_name
+            )
+        })
+}
+
+fn download_verified_asset(
+    client: &Client,
+    runtime_dir: &Path,
+    asset: &ReleaseAsset,
+) -> Result<PathBuf> {
+    let digest = asset
+        .digest
+        .as_deref()
+        .and_then(|value| value.strip_prefix("sha256:"))
+        .ok_or_else(|| {
+            anyhow!(
+                "official Codex release metadata did not provide a SHA-256 digest for {}",
+                asset.name
+            )
+        })?;
+    let download_path = runtime_dir.join(&asset.name);
+    let mut response = client
+        .get(&asset.browser_download_url)
+        .send()
+        .with_context(|| format!("download official Codex asset {}", asset.name))?
+        .error_for_status()
+        .context("official Codex download failed")?;
+    let mut output = File::create(&download_path)
+        .with_context(|| format!("create {}", download_path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut length = 0_u64;
+    loop {
+        let count = response
+            .read(&mut buffer)
+            .context("read official Codex download")?;
+        if count == 0 {
+            break;
+        }
+        length += count as u64;
+        if length > 600 * 1024 * 1024 {
+            bail!("official Codex release asset exceeded the 600 MiB download limit");
+        }
+        hasher.update(&buffer[..count]);
+        output
+            .write_all(&buffer[..count])
+            .context("write official Codex release asset")?;
+    }
+    output
+        .sync_all()
+        .context("flush official Codex release asset")?;
+    drop(output);
+    let actual = format!("{:x}", hasher.finalize());
+    if !actual.eq_ignore_ascii_case(digest) {
+        remove_if_file(&download_path)?;
+        bail!(
+            "official Codex asset {} SHA-256 mismatch (metadata {}, downloaded {})",
+            asset.name,
+            digest,
+            actual
+        );
+    }
+    Ok(download_path)
+}
+
+fn install_official_asset(
+    download_path: &Path,
+    runtime_dir: &Path,
+    asset_name: &str,
+    executable_stem: &str,
+) -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        let executable = runtime_dir.join(executable_stem);
+        extract_linux_official_executable(download_path, &executable, asset_name)?;
+        remove_if_file(download_path)?;
+        set_executable(&executable)?;
+        Ok(executable)
+    }
+    #[cfg(windows)]
+    {
+        let executable = runtime_dir.join(format!("{executable_stem}.exe"));
+        fs::rename(download_path, &executable).with_context(|| {
+            format!(
+                "install verified official executable at {}",
+                executable.display()
+            )
+        })?;
+        Ok(executable)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let executable = runtime_dir.join(executable_stem);
+        extract_macos_official_executable(download_path, &executable, asset_name)?;
+        remove_if_file(download_path)?;
+        set_executable(&executable)?;
+        Ok(executable)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = (download_path, runtime_dir, asset_name, executable_stem);
+        bail!("official core downloads are currently supported on Linux, macOS, and Windows")
+    }
+}
+
+fn code_mode_host_executable_name() -> &'static str {
+    #[cfg(windows)]
+    {
+        "codex-code-mode-host.exe"
+    }
+    #[cfg(not(windows))]
+    {
+        "codex-code-mode-host"
+    }
+}
+
+fn official_asset_names() -> Result<(String, String)> {
+    let arch = match env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        other => bail!(
+            "official Codex core does not have a configured installer asset for architecture {other}"
+        ),
+    };
+    #[cfg(target_os = "linux")]
+    {
+        Ok((
+            format!("codex-{arch}-unknown-linux-musl.tar.gz"),
+            format!("codex-code-mode-host-{arch}-unknown-linux-musl.tar.gz"),
+        ))
+    }
+    #[cfg(windows)]
+    {
+        Ok((
+            format!("codex-{arch}-pc-windows-msvc.exe"),
+            format!("codex-code-mode-host-{arch}-pc-windows-msvc.exe"),
+        ))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok((
+            format!("codex-{arch}-apple-darwin.tar.gz"),
+            format!("codex-code-mode-host-{arch}-apple-darwin.tar.gz"),
+        ))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        bail!("official core downloads are currently supported on Linux, macOS, and Windows")
+    }
+}
+
+fn extract_linux_official_executable(
+    archive_path: &Path,
+    executable: &Path,
+    asset_name: &str,
+) -> Result<()> {
+    let expected = asset_name
+        .strip_suffix(".tar.gz")
+        .context("unexpected official Linux executable archive name")?;
+    let file =
+        File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    let mut entries = archive
+        .entries()
+        .context("read official executable tar archive")?;
+    let mut extracted = false;
+    while let Some(entry) = entries.next() {
+        let mut entry = entry.context("read official executable tar entry")?;
+        let path = entry
+            .path()
+            .context("read official Codex archive path")?
+            .into_owned();
+        let safe_relative = path
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)));
+        let file_name_matches = path.file_name().is_some_and(|name| name == expected);
+        if !safe_relative
+            || !file_name_matches
+            || !entry.header().entry_type().is_file()
+            || extracted
+        {
+            bail!(
+                "official executable archive contains an unexpected or unsafe entry: {}",
+                path.display()
+            );
+        }
+        let parent = executable
+            .parent()
+            .context("runtime executable has no parent")?;
+        let temp = parent.join(".codex.extracting");
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .with_context(|| format!("create {}", temp.display()))?;
+        io::copy(&mut entry, &mut output)
+            .with_context(|| format!("extract verified member {}", path.display()))?;
+        output
+            .sync_all()
+            .context("flush extracted official executable")?;
+        fs::rename(&temp, executable)
+            .with_context(|| format!("place official executable at {}", executable.display()))?;
+        remove_if_file(&temp)?;
+        extracted = true;
+    }
+    if !extracted {
+        bail!("official archive did not contain the expected executable {expected}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn extract_macos_official_executable(
+    archive_path: &Path,
+    executable: &Path,
+    asset_name: &str,
+) -> Result<()> {
+    let expected = asset_name
+        .strip_suffix(".tar.gz")
+        .context("unexpected official macOS executable archive name")?;
+    let file =
+        File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
+    let decoder = GzDecoder::new(file);
+    let mut archive = Archive::new(decoder);
+    let mut entries = archive
+        .entries()
+        .context("read official macOS executable archive")?;
+    let parent = executable
+        .parent()
+        .context("runtime executable has no parent")?;
+    let temp = parent.join(".codex.extracting");
+    let mut created_temp = false;
+    let extraction = (|| -> Result<()> {
+        let mut extracted = false;
+        while let Some(entry) = entries.next() {
+            let mut entry = entry.context("read official macOS executable entry")?;
+            let path = entry
+                .path()
+                .context("read official Codex archive path")?
+                .into_owned();
+            let safe_relative = path
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)));
+            if !safe_relative
+                || path.file_name().is_none_or(|name| name != expected)
+                || !entry.header().entry_type().is_file()
+                || extracted
+            {
+                bail!(
+                    "official macOS archive contains an unexpected or unsafe entry: {}",
+                    path.display()
+                );
+            }
+            let mut output = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .with_context(|| format!("create {}", temp.display()))?;
+            created_temp = true;
+            io::copy(&mut entry, &mut output)
+                .with_context(|| format!("extract verified member {}", path.display()))?;
+            output
+                .sync_all()
+                .context("flush extracted official macOS executable")?;
+            extracted = true;
+        }
+        if !extracted {
+            bail!("official archive did not contain the expected executable {expected}");
+        }
+        fs::hard_link(&temp, executable)
+            .with_context(|| format!("place official executable at {}", executable.display()))?;
+        remove_if_file(&temp)?;
+        created_temp = false;
+        Ok(())
+    })();
+    if extraction.is_err() && created_temp {
+        let _ = remove_if_file(&temp);
+    }
+    extraction
+}
+
+fn executable_version(path: &Path) -> Result<String> {
+    let output = command_without_console(path)
+        .arg("--version")
+        .output()
+        .with_context(|| format!("run {} --version", path.display()))?;
+    if !output.status.success() {
+        bail!("{} --version exited with {}", path.display(), output.status);
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if version.is_empty() {
+        bail!("{} --version returned no version", path.display());
+    }
+    Ok(version)
+}
+
+fn install_user_service(
+    config_path: &Path,
+    ownership: &mut Ownership,
+    previous_ownership: Option<&Ownership>,
+) -> Result<()> {
+    let executable = recorded_service_executable(ownership)?
+        .map(Ok)
+        .unwrap_or_else(|| env::current_exe().context("find Discodex executable"))?;
+    #[cfg(target_os = "linux")]
+    {
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("HOME is not set")?;
+        let unit_dir = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        let unit_dir = unit_dir.join("systemd/user");
+        fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+        let unit_path = unit_dir.join(format!("{SERVICE_NAME}.service"));
+        let loaded = Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                "--property=LoadState",
+                "--value",
+                &format!("{SERVICE_NAME}.service"),
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .context("check for an existing systemd user unit")?;
+        if !loaded.status.success() {
+            bail!(
+                "could not check whether `{SERVICE_NAME}.service` already exists; it was left unchanged"
+            )
+        }
+        let unit = format!(
+            "[Unit]\nDescription=Discodex Discord bridge\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
+            systemd_quote(&executable),
+            systemd_quote(config_path)
+        );
+        let previous_record_owns_unit = previous_ownership.is_some_and(|previous| {
+            previous.service_kind.as_deref() == Some("systemd-user")
+                && previous.service_file.as_deref() == Some(unit_path.as_path())
+                && previous.config_file == config_path
+        });
+        let existing_unit_matches =
+            fs::read_to_string(&unit_path).ok().as_deref() == Some(unit.as_str());
+        let unit_loaded = String::from_utf8_lossy(&loaded.stdout).trim() != "not-found";
+        if (unit_path.exists() || unit_loaded)
+            && !(previous_record_owns_unit && existing_unit_matches)
+        {
+            bail!(
+                "the user service `{SERVICE_NAME}.service` already exists outside this install record; it was left unchanged"
+            )
+        }
+        fs::write(&unit_path, unit).with_context(|| format!("write {}", unit_path.display()))?;
+        set_private_file(&unit_path)?;
+        ownership.service_file = Some(unit_path.clone());
+        ownership.service_kind = Some("systemd-user".into());
+        let owner_file = config_path
+            .parent()
+            .context("config path has no parent")?
+            .join("ownership.json");
+        write_json_private(&owner_file, ownership)?;
+        run_checked("systemctl", &["--user", "daemon-reload"])?;
+        let unit_path_arg = unit_path
+            .to_str()
+            .context("systemd unit path is not valid UTF-8")?;
+        run_checked("systemctl", &["--user", "enable", "--now", unit_path_arg])?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let executable = executable
+            .canonicalize()
+            .context("resolve the Windows bridge executable before task registration")?;
+        if ownership.worker_executable.as_deref() != Some(executable.as_path()) {
+            bail!(
+                "the Windows task can only use the bridge executable recorded inside this installation's owned bin directory; no task was changed"
+            )
+        }
+        let task_executable = windows_task_executable_path(&executable)?;
+        let expected_executable = ps_single_quote(&task_executable.display().to_string());
+        let expected_arguments =
+            ps_single_quote(&format!("run --config \"{}\"", config_path.display()));
+        let previous_record_owns_task = previous_ownership.is_some_and(|previous| {
+            (previous.service_kind.as_deref() == Some("scheduled-task-user")
+                || previous.windows_task_pending_run_level.is_some())
+                && previous.service_file.is_none()
+                && previous.config_file == config_path
+        });
+        let (task_state, previous_level) =
+            inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+        if !windows_task_may_be_replaced(&task_state, previous_record_owns_task) {
+            bail!(
+                "the user scheduled task already exists outside this install record; it was left unchanged"
+            )
+        }
+        let owner_file = config_path
+            .parent()
+            .context("config path has no parent")?
+            .join("ownership.json");
+        let registration_script = windows_task_registration_script(
+            &expected_executable,
+            &expected_arguments,
+            previous_record_owns_task,
+            previous_level,
+        );
+        println!(
+            "Windows will request administrator consent to register this user's worker for elevated automatic startup. Worker commands will have administrator access."
+        );
+        // Persist intent before changing Task Scheduler. If a later ownership
+        // write or rollback fails, retry/uninstall can inspect either exact level.
+        ownership.windows_task_pending_run_level = Some(WindowsTaskRunLevel::Highest);
+        write_json_private(&owner_file, ownership)
+            .context("record the pending Windows task transition before requesting UAC")?;
+        run_elevated_powershell(&registration_script).context(
+            "register the elevated Windows user task; pending ownership remains for retry",
+        )?;
+        ownership.service_kind = Some("scheduled-task-user".into());
+        ownership.service_file = None;
+        ownership.windows_task_run_level = WindowsTaskRunLevel::Highest;
+        ownership.windows_task_pending_run_level = None;
+        if let Err(error) = write_json_private(&owner_file, ownership) {
+            let cleanup = run_elevated_powershell(&windows_task_unregistration_script(
+                &expected_executable,
+                &expected_arguments,
+                WindowsTaskRunLevel::Highest,
+                "Discodex",
+            ));
+            if let Err(cleanup_error) = cleanup {
+                return Err(anyhow!(
+                    "could not save elevated task ownership ({error:#}); task cleanup also failed ({cleanup_error:#}); the task may remain registered"
+                ));
+            }
+            return Err(error).context("could not save elevated task ownership; the new task was removed and startup was not requested");
+        }
+        // Same-user task owners can start their task without elevating again.
+        run_powershell(&windows_task_start_script(
+            &expected_executable,
+            &expected_arguments,
+            WindowsTaskRunLevel::Highest,
+        ))
+        .context("start the registered elevated Windows user task")?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let executable = executable
+            .canonicalize()
+            .context("resolve the bridge executable for the user LaunchAgent")?;
+        let config_path = config_path
+            .canonicalize()
+            .context("resolve the profile config for the user LaunchAgent")?;
+        let requirement = crate::mac_signing::expected_requirement().context(
+            "load the configured macOS worker signing identity; run the signed installer",
+        )?;
+        crate::mac_signing::verify_binary(&executable, &requirement)
+            .context("verify the worker executable before changing the LaunchAgent")?;
+        if previous_ownership
+            .and_then(|previous| previous.mac_signing_requirement.as_deref())
+            .is_some_and(|previous| previous != requirement)
+        {
+            bail!(
+                "the signing identity differs from this installation's recorded identity; LaunchAgent was left unchanged"
+            );
+        }
+        ownership.mac_signing_requirement = Some(requirement);
+        let (label, plist_path) = launchd_identity(&config_path)?;
+        let expected_plist = launchd_plist(&label, &executable, &config_path);
+        let previous_record_owns_agent = previous_ownership.is_some_and(|previous| {
+            previous.service_kind.as_deref() == Some("launchd-user")
+                && previous.service_file.as_deref() == Some(plist_path.as_path())
+                && previous.config_file == config_path
+                && previous.worker_executable.as_deref() == Some(executable.as_path())
+        });
+        let plist_exists = existing_launchd_plist_matches(
+            &plist_path,
+            &expected_plist,
+            previous_record_owns_agent,
+        )?;
+        let loaded = launchd_is_loaded(&label, &executable, &config_path)?;
+        if loaded && !previous_record_owns_agent {
+            bail!(
+                "LaunchAgent {label} is already loaded without matching ownership; it was left unchanged"
+            );
+        }
+        if loaded {
+            run_checked(
+                "launchctl",
+                &["bootout", &format!("{}/{}", launchd_domain()?, label)],
+            )?;
+            wait_for_launchd_unloaded(&label, &executable, &config_path)?;
+        }
+        let agent_dir = plist_path
+            .parent()
+            .context("LaunchAgent path has no parent")?;
+        fs::create_dir_all(agent_dir)
+            .with_context(|| format!("create LaunchAgents directory {}", agent_dir.display()))?;
+        if plist_exists {
+            remove_if_file(&plist_path)?;
+        }
+        let mut plist_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&plist_path)
+            .with_context(|| {
+                format!(
+                    "create {} without replacing another service",
+                    plist_path.display()
+                )
+            })?;
+        plist_file
+            .write_all(expected_plist.as_bytes())
+            .with_context(|| format!("write {}", plist_path.display()))?;
+        plist_file
+            .sync_all()
+            .with_context(|| format!("flush {}", plist_path.display()))?;
+        set_private_file(&plist_path)?;
+        ownership.service_file = Some(plist_path.clone());
+        ownership.service_kind = Some("launchd-user".into());
+        ownership.worker_executable = Some(executable.clone());
+        let owner_file = config_path
+            .parent()
+            .context("config path has no parent")?
+            .join("ownership.json");
+        write_json_private(&owner_file, ownership)?;
+        let domain = launchd_domain()?;
+        run_checked(
+            "launchctl",
+            &[
+                "bootstrap",
+                &domain,
+                plist_path
+                    .to_str()
+                    .context("LaunchAgent path is not valid UTF-8")?,
+            ],
+        )?;
+        run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+        if !launchd_is_loaded(&label, &executable, &config_path)? {
+            bail!("launchctl accepted {label}, but the owned LaunchAgent is not loaded");
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = (config_path, ownership, executable);
+        bail!("user service installation is currently supported on Linux, macOS, and Windows")
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_identity(config_path: &Path) -> Result<(String, PathBuf)> {
+    launchd_identity_for_service(config_path, SERVICE_NAME)
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_identity_for_service(
+    config_path: &Path,
+    service_name: &str,
+) -> Result<(String, PathBuf)> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let config_root = config_path
+        .parent()
+        .context("profile config has no parent directory")?
+        .canonicalize()
+        .context("resolve profile config directory for LaunchAgent identity")?;
+    let digest = Sha256::digest(config_root.as_os_str().as_bytes());
+    let suffix = format!("{digest:x}");
+    let label = format!("{service_name}.{}", &suffix[..16]);
+    let home = env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set for the user LaunchAgent")?;
+    let plist = home
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist"));
+    Ok((label, plist))
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_domain() -> Result<String> {
+    let output = command_without_console("id")
+        .arg("-u")
+        .output()
+        .context("read current user id for LaunchAgent domain")?;
+    if !output.status.success() {
+        bail!("id -u failed while resolving the user LaunchAgent domain");
+    }
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if uid.is_empty() || !uid.bytes().all(|byte| byte.is_ascii_digit()) {
+        bail!("id -u returned an invalid user id for the LaunchAgent domain");
+    }
+    Ok(format!("gui/{uid}"))
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_plist(label: &str, executable: &Path, config_path: &Path) -> String {
+    fn xml(value: &str) -> String {
+        value
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    }
+
+    let config_root = config_path.parent().unwrap_or(config_path);
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>{}</string><key>ProgramArguments</key><array><string>{}</string><string>run</string><string>--config</string><string>{}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>3</integer><key>StandardOutPath</key><string>{}</string><key>StandardErrorPath</key><string>{}</string></dict></plist>\n",
+        xml(label),
+        xml(&executable.display().to_string()),
+        xml(&config_path.display().to_string()),
+        xml(&config_root.join("worker.stdout.log").display().to_string()),
+        xml(&config_root.join("worker.stderr.log").display().to_string())
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn existing_launchd_plist_matches(
+    path: &Path,
+    expected_contents: &str,
+    ownership_matches: bool,
+) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                bail!(
+                    "LaunchAgent path {} is not a regular owned file",
+                    path.display()
+                );
+            }
+            let matches = ownership_matches
+                && fs::read_to_string(path).ok().as_deref() == Some(expected_contents);
+            if !matches {
+                bail!(
+                    "the LaunchAgent plist {} is not the matching owned service; it was left unchanged",
+                    path.display()
+                );
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect LaunchAgent plist {}", path.display()))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn launchd_is_loaded(label: &str, executable: &Path, config_path: &Path) -> Result<bool> {
+    let domain = launchd_domain()?;
+    let target = format!("{domain}/{label}");
+    let output = command_without_console("launchctl")
+        .args(["print", &target])
+        .output()
+        .context("inspect user LaunchAgent registration")?;
+    if !output.status.success() {
+        let detail = format!(
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if detail.contains("Could not find service") || detail.contains("No such process") {
+            return Ok(false);
+        }
+        bail!("launchctl could not inspect {target}: {}", detail.trim());
+    }
+
+    let report = String::from_utf8_lossy(&output.stdout);
+    let expected_program = executable.display().to_string();
+    let program = report
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("program = "))
+        .context("loaded LaunchAgent has no program readback")?;
+    if program != expected_program {
+        bail!("loaded LaunchAgent {label} runs unexpected program {program}");
+    }
+
+    let mut lines = report.lines();
+    let mut arguments = None;
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("arguments = {") {
+            let mut values = Vec::new();
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_suffix('}') {
+                if !rest.trim().is_empty() {
+                    values.extend(rest.split_whitespace().map(str::to_owned));
+                }
+            } else {
+                if !rest.is_empty() {
+                    values.push(rest.to_owned());
+                }
+                for argument in lines.by_ref() {
+                    let argument = argument.trim();
+                    if argument == "}" {
+                        break;
+                    }
+                    if !argument.is_empty() {
+                        values.push(argument.to_owned());
+                    }
+                }
+            }
+            arguments = Some(values);
+            break;
+        }
+    }
+    let expected = vec![
+        executable.display().to_string(),
+        "run".to_owned(),
+        "--config".to_owned(),
+        config_path.display().to_string(),
+    ];
+    if arguments.as_deref() != Some(expected.as_slice()) {
+        bail!(
+            "loaded LaunchAgent {label} has unexpected arguments; refusing to stop or replace it"
+        );
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_launchd_unloaded(label: &str, executable: &Path, config_path: &Path) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match launchd_is_loaded(label, executable, config_path) {
+            Ok(false) => return Ok(()),
+            Ok(true) if Instant::now() >= deadline => {
+                bail!("LaunchAgent {label} remained loaded after bootout timeout")
+            }
+            Ok(true) => {}
+            Err(error) if Instant::now() >= deadline => {
+                return Err(error).context(format!(
+                    "could not confirm that LaunchAgent {label} unloaded after bootout"
+                ));
+            }
+            Err(_) => {}
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(any(windows, test))]
+fn windows_task_recorded_levels(ownership: &Ownership) -> Vec<WindowsTaskRunLevel> {
+    let mut levels = vec![ownership.windows_task_run_level];
+    if let Some(pending) = ownership.windows_task_pending_run_level {
+        if !levels.contains(&pending) {
+            levels.push(pending);
+        }
+    }
+    levels
+}
+
+#[cfg(windows)]
+fn windows_task_name_for_config(config_path: &Path) -> &'static str {
+    if config_path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        == Some(LEGACY_APP_NAME)
+    {
+        "CodexWorker Renewal"
+    } else {
+        "Discodex"
+    }
+}
+
+#[cfg(windows)]
+fn inspect_owned_windows_task(
+    executable: &str,
+    arguments: &str,
+    ownership: &Ownership,
+) -> Result<(String, WindowsTaskRunLevel)> {
+    for level in windows_task_recorded_levels(ownership) {
+        let output = command_without_console("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &windows_task_inspection_script(
+                    executable,
+                    arguments,
+                    level,
+                    windows_task_name_for_config(&ownership.config_file),
+                ),
+            ])
+            .stdin(Stdio::null())
+            .output()
+            .context("inspect the owned Windows task")?;
+        if !output.status.success() {
+            bail!("could not inspect the Windows task; it was left unchanged");
+        }
+        let state = String::from_utf8(output.stdout)?.trim().to_owned();
+        match state.as_str() {
+            "matching" | "absent" => return Ok((state, level)),
+            "different" => {}
+            _ => bail!("unexpected Windows task inspection result; it was left unchanged"),
+        }
+    }
+    Ok(("different".into(), ownership.windows_task_run_level))
+}
+
+#[cfg(windows)]
+fn windows_task_contract_script(
+    expected_executable: &str,
+    expected_arguments: &str,
+    task_name: &str,
+) -> String {
+    let task_name = ps_single_quote(task_name);
+    format!(
+        r#"$ErrorActionPreference='Stop'
+function Resolve-UserSid([string]$user) {{
+    if ($user.StartsWith('S-1-')) {{ return $user }}
+    try {{ return ([System.Security.Principal.NTAccount]::new($user).Translate([System.Security.Principal.SecurityIdentifier])).Value }} catch {{ return '' }}
+}}
+function Normalize-LocalPath([string]$path) {{
+    if ([string]::IsNullOrWhiteSpace($path)) {{ return '' }}
+    if ($path.StartsWith('\\?\', [System.StringComparison]::OrdinalIgnoreCase)) {{ $path=$path.Substring(4) }}
+    if ($path.Length -lt 3 -or $path[1] -ne ':' -or $path[2] -ne '\') {{ return '' }}
+    try {{ return [System.IO.Path]::GetFullPath($path) }} catch {{ return '' }}
+}}
+function Same-LocalPath([string]$left, [string]$right) {{
+    $left=Normalize-LocalPath $left
+    $right=Normalize-LocalPath $right
+    return $left -ne '' -and [System.String]::Equals($left, $right, [System.StringComparison]::OrdinalIgnoreCase)
+}}
+$identity=[System.Security.Principal.WindowsIdentity]::GetCurrent()
+$sid=$identity.User.Value
+$taskName='{task_name}'
+$taskPath='\'
+function Test-ExactTask($task, [string]$level) {{
+    if (!$task) {{ return $false }}
+    $valid=($task.Actions.Count -eq 1 -and (Same-LocalPath $task.Actions[0].Execute '{expected_executable}') -and $task.Actions[0].Arguments -ceq '{expected_arguments}')
+    $valid=$valid -and ((Resolve-UserSid $task.Principal.UserId) -eq $sid) -and ($task.Principal.LogonType -eq 'Interactive') -and ($task.Principal.RunLevel -eq $level)
+    $valid=$valid -and ($task.Triggers.Count -eq 1) -and ($task.Triggers[0].CimClass.CimClassName -ceq 'MSFT_TaskLogonTrigger') -and ($task.Triggers[0].Enabled -eq $true) -and ((Resolve-UserSid $task.Triggers[0].UserId) -eq $sid)
+    return $valid
+}}
+function Stop-OwnedTask($task) {{
+    if ($task.State -eq 'Running') {{
+        Stop-ScheduledTask -InputObject $task
+        $limit=(Get-Date).AddSeconds(15)
+        do {{ Start-Sleep -Milliseconds 200; $task=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName }} while ($task.State -eq 'Running' -and (Get-Date) -lt $limit)
+        if ($task.State -eq 'Running') {{ throw 'Owned bridge task did not stop.' }}
+    }}
+}}
+"#
+    )
+}
+
+#[cfg(windows)]
+fn windows_task_inspection_script(
+    expected_executable: &str,
+    expected_arguments: &str,
+    level: WindowsTaskRunLevel,
+    task_name: &str,
+) -> String {
+    let contract = windows_task_contract_script(expected_executable, expected_arguments, task_name);
+    let level = level.powershell();
+    format!(
+        r#"{contract}
+$t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+if (!$t) {{ 'absent'; exit 0 }}
+if (Test-ExactTask $t '{level}') {{ 'matching' }} else {{ 'different' }}"#
+    )
+}
+
+#[cfg(windows)]
+fn windows_task_registration_script(
+    expected_executable: &str,
+    expected_arguments: &str,
+    previous_record_owns_task: bool,
+    previous_level: WindowsTaskRunLevel,
+) -> String {
+    windows_task_registration_script_named(
+        expected_executable,
+        expected_arguments,
+        previous_record_owns_task,
+        previous_level,
+        "Discodex",
+    )
+}
+
+#[cfg(windows)]
+fn windows_task_registration_script_named(
+    expected_executable: &str,
+    expected_arguments: &str,
+    previous_record_owns_task: bool,
+    previous_level: WindowsTaskRunLevel,
+    task_name: &str,
+) -> String {
+    let contract = windows_task_contract_script(expected_executable, expected_arguments, task_name);
+    let owns = if previous_record_owns_task {
+        "$true"
+    } else {
+        "$false"
+    };
+    let previous_level = previous_level.powershell();
+    format!(
+        r#"{contract}
+$t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+$previousXml=$null
+$wasRunning=$false
+if ($t) {{
+    if (!(Test-ExactTask $t '{previous_level}') -or !{owns}) {{ throw 'An existing task does not match this installation record and current Windows identity; it was left unchanged.' }}
+    $previousXml=Export-ScheduledTask -InputObject $t
+    $wasRunning=$t.State -eq 'Running'
+    Stop-OwnedTask $t
+}}
+$registered=$false
+try {{
+    $action=New-ScheduledTaskAction -Execute '{expected_executable}' -Argument '{expected_arguments}'
+    $trigger=New-ScheduledTaskTrigger -AtLogOn -User $sid
+    $principal=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Highest
+    $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    if ($previousXml) {{
+        Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Discodex Discord bridge (administrator)' -Force | Out-Null
+    }} else {{
+        Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'Discodex Discord bridge (administrator)' | Out-Null
+    }}
+    $registered=$true
+    $t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName
+    if (!(Test-ExactTask $t 'Highest')) {{ throw 'The elevated task failed its action, principal, and logon-trigger readback.' }}
+}} catch {{
+    $failure=$_.Exception.Message
+    try {{
+        $current=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($current -and !(Test-ExactTask $current 'Highest') -and !(Test-ExactTask $current '{previous_level}')) {{ throw 'Task changed unexpectedly; it was preserved.' }}
+        if ($previousXml) {{
+            Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Xml $previousXml -Force | Out-Null
+            $restored=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName
+            if (!(Test-ExactTask $restored '{previous_level}')) {{ throw 'Previous task restoration failed readback.' }}
+            if ($wasRunning) {{ Start-ScheduledTask -InputObject $restored }}
+        }} elseif ($registered -and $current) {{
+            Unregister-ScheduledTask -InputObject $current -Confirm:$false
+        }}
+    }} catch {{ throw "$failure Rollback also failed: $($_.Exception.Message)" }}
+    throw $failure
+}}
+"#
+    )
+}
+
+#[cfg(windows)]
+fn windows_task_start_script(
+    expected_executable: &str,
+    expected_arguments: &str,
+    level: WindowsTaskRunLevel,
+) -> String {
+    windows_task_start_script_named(expected_executable, expected_arguments, level, "Discodex")
+}
+
+#[cfg(windows)]
+fn windows_task_start_script_named(
+    expected_executable: &str,
+    expected_arguments: &str,
+    level: WindowsTaskRunLevel,
+    task_name: &str,
+) -> String {
+    let contract = windows_task_contract_script(expected_executable, expected_arguments, task_name);
+    let level = level.powershell();
+    format!(
+        r#"{contract}
+$t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName
+if (!(Test-ExactTask $t '{level}')) {{ throw 'The registered task changed before startup; it was left unchanged.' }}
+Start-ScheduledTask -InputObject $t
+$limit=(Get-Date).AddSeconds(15)
+do {{ Start-Sleep -Milliseconds 200; $t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName }} while ($t.State -ne 'Running' -and (Get-Date) -lt $limit)
+if ($t.State -ne 'Running') {{ throw 'The Windows user task did not reach Running state.' }}"#
+    )
+}
+
+#[cfg(windows)]
+fn windows_task_unregistration_script(
+    expected_executable: &str,
+    expected_arguments: &str,
+    level: WindowsTaskRunLevel,
+    task_name: &str,
+) -> String {
+    let contract = windows_task_contract_script(expected_executable, expected_arguments, task_name);
+    let level = level.powershell();
+    format!(
+        r#"{contract}
+$t=Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+if ($t) {{
+    if (!(Test-ExactTask $t '{level}')) {{ throw 'The task no longer matches its ownership record; it was preserved.' }}
+    Stop-OwnedTask $t
+    Unregister-ScheduledTask -InputObject $t -Confirm:$false
+}}"#
+    )
+}
+
+/// Elevates only task management, leaving account/profile setup in the caller.
+/// Explicit paths and a same-SID check prevent using another administrator's profile.
+#[cfg(windows)]
+fn run_elevated_powershell(operation: &str) -> Result<()> {
+    let identity = command_without_console("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command",
+            "$i=[System.Security.Principal.WindowsIdentity]::GetCurrent(); $p=[System.Security.Principal.WindowsPrincipal]::new($i); @{sid=$i.User.Value; elevated=$p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)} | ConvertTo-Json -Compress"])
+        .stdin(Stdio::null()).output().context("read installer Windows identity")?;
+    if !identity.status.success() {
+        bail!("could not determine the installing Windows user; no elevated operation was started");
+    }
+    let identity: serde_json::Value =
+        serde_json::from_slice(&identity.stdout).context("decode installer Windows identity")?;
+    let sid = identity["sid"]
+        .as_str()
+        .context("installer Windows SID is missing")?;
+    if !valid_windows_sid(sid) {
+        bail!("invalid installer Windows SID; no elevated operation was started");
+    }
+    if identity["elevated"].as_bool() == Some(true) {
+        return run_powershell(operation);
+    }
+    let temp = tempfile::tempdir().context("prepare temporary Windows task operation")?;
+    set_private_dir(temp.path())?;
+    let script_path = temp.path().join("task-operation.ps1");
+    let result_path = temp.path().join("result.txt");
+    fs::write(&result_path, "")?;
+    set_private_file(&result_path)?;
+    let result = ps_single_quote(&result_path.display().to_string());
+    let script = format!(
+        r#"$ErrorActionPreference='Stop'
+try {{
+    $identity=[System.Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($identity.User.Value -cne '{sid}') {{ throw 'Use the same Windows account that started setup. Another administrator account cannot manage this user profile.' }}
+    $principal=[System.Security.Principal.WindowsPrincipal]::new($identity)
+    if (!$principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {{ throw 'This Windows account must have administrator rights to manage elevated automatic startup.' }}
+    & {{
+{operation}
+    }}
+    exit 0
+}} catch {{
+    [System.IO.File]::WriteAllText('{result}', $_.Exception.Message)
+    exit 1
+}}
+"#
+    );
+    // Windows PowerShell 5.1 requires a BOM for non-ASCII profile paths.
+    fs::write(&script_path, format!("\u{feff}{script}"))?;
+    set_private_file(&script_path)?;
+    let powershell = PathBuf::from(env::var_os("SystemRoot").context("SystemRoot is not set")?)
+        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let launcher = format!(
+        r#"$ErrorActionPreference='Stop'
+$p=Start-Process -FilePath '{}' -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','"{}"') -Wait -PassThru
+exit $p.ExitCode"#,
+        ps_single_quote(&powershell.display().to_string()),
+        ps_single_quote(&script_path.display().to_string())
+    );
+    let launched = command_without_console(&powershell)
+        .args(["-NoProfile", "-NonInteractive", "-Command", &launcher])
+        .stdin(Stdio::null())
+        .output()
+        .context("request Windows administrator consent")?;
+    if !launched.status.success() {
+        let detail = fs::read_to_string(&result_path).unwrap_or_default();
+        if detail.trim().is_empty() {
+            bail!(
+                "Windows administrator consent was cancelled or the task operation could not start: {}",
+                String::from_utf8_lossy(&launched.stderr).trim()
+            );
+        }
+        bail!("Windows task operation failed: {}", detail.trim());
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn valid_windows_sid(value: &str) -> bool {
+    let mut parts = value.split('-');
+    parts.next() == Some("S") && parts.next() == Some("1") && {
+        let numbers: Vec<_> = parts.collect();
+        numbers.len() >= 2
+            && numbers
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    }
+}
+
+fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Result<()> {
+    let service_kind = ownership.service_kind.as_deref().or_else(|| {
+        ownership
+            .windows_task_pending_run_level
+            .map(|_| "scheduled-task-user")
+    });
+    match service_kind {
+        Some("systemd-user") => {
+            let unit_path = ownership
+                .service_file
+                .as_deref()
+                .context("owned systemd service has no recorded unit path")?;
+            let unit_name = unit_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("owned systemd unit path has no valid service name")?;
+            let expected_service = if ownership
+                .config_file
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some(LEGACY_APP_NAME)
+            {
+                LEGACY_SERVICE_NAME
+            } else {
+                SERVICE_NAME
+            };
+            if unit_name != format!("{expected_service}.service") {
+                bail!(
+                    "owned systemd unit path does not name the expected {expected_service}.service; preserving configuration and ownership"
+                )
+            }
+            run_checked(
+                "systemctl",
+                &["--user", "disable", "--now", unit_name],
+            )
+                .context("could not stop and disable the owned user service; config and credentials were preserved")?;
+            if let Some(path) = &ownership.service_file {
+                remove_if_file(path)?;
+            }
+            ownership.service_kind = None;
+            ownership.service_file = None;
+            write_json_private(owner_file, ownership)?;
+            run_checked("systemctl", &["--user", "daemon-reload"])?;
+        }
+        #[cfg(windows)]
+        Some("scheduled-task-user") => {
+            let executable = ownership
+                .worker_executable
+                .as_deref()
+                .context("owned Windows task has no recorded worker executable; preserving config and ownership")?;
+            let task_executable = windows_task_executable_path(executable)?;
+            let expected_executable = ps_single_quote(&task_executable.display().to_string());
+            let expected_arguments = ps_single_quote(&format!(
+                "run --config \"{}\"",
+                ownership.config_file.display()
+            ));
+            let (state, level) =
+                inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+            if state == "different" {
+                bail!(
+                    "Windows task differs from this ownership record; config and credentials were preserved"
+                );
+            }
+            if state != "absent" {
+                run_elevated_powershell(&windows_task_unregistration_script(
+                    &expected_executable, &expected_arguments, level, windows_task_name_for_config(&ownership.config_file),
+                ))
+                .context("could not verify, stop, and unregister the owned Windows task; config and credentials were preserved")?;
+            }
+            ownership.windows_task_pending_run_level = None;
+            ownership.service_kind = None;
+            ownership.service_file = None;
+            write_json_private(owner_file, ownership)?;
+        }
+        #[cfg(target_os = "macos")]
+        Some("launchd-user") => {
+            let executable = ownership
+                .worker_executable
+                .as_deref()
+                .context("owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership")?;
+            let config_path = ownership
+                .config_file
+                .canonicalize()
+                .context("resolve the owned profile config before removing its LaunchAgent")?;
+            let service_name = if config_path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some(LEGACY_APP_NAME)
+            {
+                LEGACY_SERVICE_NAME
+            } else {
+                SERVICE_NAME
+            };
+            let (label, expected_plist_path) =
+                launchd_identity_for_service(&config_path, service_name)?;
+            let plist_path = ownership
+                .service_file
+                .as_deref()
+                .context("owned LaunchAgent has no recorded plist path")?;
+            if plist_path != expected_plist_path {
+                bail!(
+                    "owned LaunchAgent path does not match this profile identity; preserving configuration and ownership"
+                );
+            }
+            let executable = executable
+                .canonicalize()
+                .context("resolve the owned bridge executable before removing its LaunchAgent")?;
+            let expected_plist = launchd_plist(&label, &executable, &config_path);
+            existing_launchd_plist_matches(plist_path, &expected_plist, true)
+                .context("owned LaunchAgent plist changed outside this install; preserving configuration and ownership")?;
+            if launchd_is_loaded(&label, &executable, &config_path)? {
+                let domain = launchd_domain()?;
+                run_checked("launchctl", &["bootout", &format!("{domain}/{label}")])
+                    .context("could not stop the matching owned LaunchAgent; config and credentials were preserved")?;
+            }
+            if plist_path.exists() {
+                remove_if_file(plist_path)?;
+            }
+            let config_parent = config_path.parent().context("config path has no parent")?;
+            remove_if_file(&config_parent.join("worker.stdout.log"))?;
+            remove_if_file(&config_parent.join("worker.stderr.log"))?;
+            ownership.service_kind = None;
+            ownership.service_file = None;
+            write_json_private(owner_file, ownership)?;
+        }
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        Some("scheduled-task-user") => bail!(
+            "this installation owns a Windows task; uninstall it on Windows so its running process can be stopped safely"
+        ),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn remove_registered_commands(
+    config_path: &Path,
+    credential_path: &Path,
+    state_dir: &Path,
+) -> Result<()> {
+    if !config_path.is_file() || !credential_path.is_file() {
+        if state_dir.join("discord-command-id.json").exists() {
+            bail!("the owned Discord command marker exists, but its config or token is missing")
+        }
+        return Ok(());
+    }
+    let config: Config = read_json(config_path)?;
+    run_async(crate::commands::unregister_commands(&config)).with_context(|| {
+        format!(
+            "remove `/discodex` only from configured guild {}; token came from {}",
+            config.guild_id,
+            credential_path.display()
+        )
+    })
+}
+
+async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Result<()> {
+    let native = crate::native::Native::connect(config).await?;
+    let result = async {
+        let account = ensure_chatgpt_account(&native, config.language).await?;
+
+        let models = native.request("model/list", serde_json::json!({"includeHidden": false})).await
+            .context("read the official Codex model catalog")?;
+        if let Some(selected) = &config.model {
+            let found = models.get("data").and_then(serde_json::Value::as_array)
+                .is_some_and(|items| items.iter().any(|item| item.get("id").and_then(serde_json::Value::as_str) == Some(selected)));
+            if !found {
+                bail!("selected Codex model `{selected}` is absent from the current model/list: {}", serde_json::to_string(&models)?);
+            }
+        }
+
+        let profiles = native.permission_profiles().await.context("read permissionProfile/list")?;
+        let profile_id = choose_full_access_profile(&profiles, config.permissions.as_deref(), config.language)?;
+        config.permissions = Some(profile_id.clone());
+        write_json_private(config_path, config)?;
+        println!("The live permission catalog allows Full Access profile `{profile_id}`; its exact ID was saved for the runtime's first thread.");
+        Ok::<(), anyhow::Error>(())
+    }.await;
+    let shutdown = native.shutdown().await;
+    result?;
+    shutdown.context("shut down native installation probe")?;
+    Ok(())
+}
+
+async fn ensure_chatgpt_account(
+    native: &crate::native::Native,
+    language: Language,
+) -> Result<serde_json::Value> {
+    let account_read = || native.request("account/read", serde_json::json!({}));
+    let mut response = account_read()
+        .await
+        .context("query official Codex account/read")?;
+    let account_type = response
+        .pointer("/account/type")
+        .and_then(serde_json::Value::as_str);
+    if account_type == Some("chatgpt") {
+        println!("The selected Codex runtime is signed in with a ChatGPT account.");
+        return Ok(response);
+    }
+
+    let account_label = account_type.unwrap_or("none");
+    if let Some(existing_type) = account_type {
+        let answer = ask_text(
+            language,
+            &format!(
+                "This Codex home currently uses `{existing_type}` auth. Start official ChatGPT sign-in? It may replace the selected Codex home's current login"
+            ),
+            &format!(
+                "이 Codex 홈은 현재 `{existing_type}` 인증을 사용합니다. 공식 ChatGPT 로그인을 시작할까요? 선택한 Codex 홈의 기존 로그인이 바뀔 수 있습니다."
+            ),
+            &format!(
+                "此 Codex 主目录当前使用 `{existing_type}` 身份验证。是否开始官方 ChatGPT 登录？这可能替换所选 Codex 主目录的当前登录。"
+            ),
+            &format!(
+                "この Codex ホームは現在 `{existing_type}` 認証を使用しています。公式 ChatGPT サインインを開始しますか？選択した Codex ホームの現在のログインが置き換わる可能性があります。"
+            ),
+            "N",
+        )?;
+        if !matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes") {
+            bail!(
+                "ChatGPT account sign-in is required; the existing `{existing_type}` login was left unchanged"
+            )
+        }
+    } else {
+        println!(
+            "Codex reports account type `{account_label}`. This bridge requires an official ChatGPT account login; API-key-only auth is not supported."
+        );
+    }
+
+    let mut events = native.subscribe();
+    let login = native
+        .request(
+            "account/login/start",
+            serde_json::json!({"type": "chatgpt"}),
+        )
+        .await
+        .context("start the official ChatGPT account login")?;
+    let login_id = login
+        .get("loginId")
+        .and_then(serde_json::Value::as_str)
+        .context("official ChatGPT login did not return a login ID")?
+        .to_owned();
+    let auth_url = login
+        .get("authUrl")
+        .and_then(serde_json::Value::as_str)
+        .context("official ChatGPT login did not return an authorization URL")?;
+    println!(
+        "Complete ChatGPT sign-in in the official Codex login page. MFA and other identity checks remain user interactions."
+    );
+    println!("Official Codex authorization URL: {auth_url}");
+    if let Err(error) = open_login_url(auth_url) {
+        eprintln!("Could not open a browser automatically: {error:#}");
+    }
+
+    let completed = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), async {
+        loop {
+            match events.recv().await {
+                Ok(event)
+                    if event.get("method").and_then(serde_json::Value::as_str)
+                        == Some("account/login/completed") =>
+                {
+                    let params = event.get("params").unwrap_or(&serde_json::Value::Null);
+                    if params.get("loginId").and_then(serde_json::Value::as_str) != Some(&login_id)
+                    {
+                        continue;
+                    }
+                    if params.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+                        break Ok::<(), anyhow::Error>(());
+                    }
+                    let reason = params
+                        .get("error")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("login was not completed");
+                    break Err(anyhow!("official ChatGPT login failed: {reason}"));
+                }
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break Err(anyhow!(
+                        "Codex app-server connection closed during ChatGPT login"
+                    ));
+                }
+            }
+        }
+    })
+    .await
+    .context("timed out waiting for the official ChatGPT sign-in and MFA interaction")?;
+    completed?;
+
+    response = account_read()
+        .await
+        .context("verify official ChatGPT account/read after login")?;
+    if response
+        .pointer("/account/type")
+        .and_then(serde_json::Value::as_str)
+        != Some("chatgpt")
+    {
+        bail!(
+            "official login finished, but account/read still does not report a ChatGPT account: {}",
+            serde_json::to_string(&response)?
+        );
+    }
+    println!("Codex account/read now confirms a ChatGPT account.");
+    Ok(response)
+}
+
+#[cfg(target_os = "linux")]
+fn open_login_url(url: &str) -> Result<()> {
+    Command::new("xdg-open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("start xdg-open for the official ChatGPT login URL")?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn open_login_url(url: &str) -> Result<()> {
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("open the official ChatGPT login URL")?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn open_login_url(_url: &str) -> Result<()> {
+    bail!("automatic browser opening is supported on Linux and Windows")
+}
+
+fn choose_full_access_profile(
+    catalog: &serde_json::Value,
+    preferred_id: Option<&str>,
+    language: Language,
+) -> Result<String> {
+    let entries = catalog
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .context("permissionProfile/list returned no data array")?;
+    let is_full_access = |item: &serde_json::Value| {
+        item.get("allowed").and_then(serde_json::Value::as_bool) == Some(true)
+            && (item.get("id").and_then(serde_json::Value::as_str) == Some(":danger-full-access")
+                || ["name", "label", "description"].iter().any(|key| {
+                    item.get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|text| text.to_ascii_lowercase().contains("full access"))
+                }))
+    };
+    let preferred = preferred_id.and_then(|preferred_id| {
+        entries.iter().find(|item| {
+            item.get("id").and_then(serde_json::Value::as_str) == Some(preferred_id)
+                && is_full_access(item)
+        })
+    });
+    if let Some(item) = preferred.or_else(|| entries.iter().find(|item| is_full_access(item))) {
+        let id = item
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .context("Full Access permission profile has no native id")?;
+        println!("The current native catalog exposes allowed Full Access profile `{id}`.");
+        return Ok(id.to_owned());
+    }
+
+    println!(
+        "The native catalog did not label an allowed Full Access profile. Choose its exact ID from the entries below; no value outside this live catalog is accepted."
+    );
+    for item in entries {
+        println!(
+            "  id={} allowed={} description={}",
+            item.get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("(missing)"),
+            item.get("allowed")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            item.get("description")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+        );
+    }
+    loop {
+        let selected = ask_text(
+            language,
+            "Exact Full Access permission profile ID",
+            "Full Access 권한 프로필의 정확한 ID",
+            "Full Access 权限配置的准确 ID",
+            "Full Access 権限プロファイルの正確な ID",
+            "",
+        )?;
+        if let Some(item) = entries.iter().find(|item| {
+            item.get("id").and_then(serde_json::Value::as_str) == Some(selected.as_str())
+        }) {
+            if item.get("allowed").and_then(serde_json::Value::as_bool) == Some(true) {
+                return Ok(selected);
+            }
+            println!("That profile is not allowed by the current native catalog.");
+        } else {
+            println!("That ID is absent from the current native catalog.");
+        }
+    }
+}
+
+fn run_async<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>> + Send,
+    T: Send,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("create setup runtime")?
+            .block_on(future)
+    }
+}
+
+fn remove_if_file(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove owned file {}", path.display())),
+    }
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+}
+
+fn write_json_private<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let parent = path.parent().context("file has no parent directory")?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    set_private_dir(parent)?;
+    let bytes = serde_json::to_vec_pretty(value)?;
+    fs::write(path, bytes).with_context(|| format!("write {}", path.display()))?;
+    set_private_file(path)
+}
+
+fn write_secret(path: &Path, secret: &str) -> Result<()> {
+    if path.exists() {
+        fs::remove_file(path)
+            .with_context(|| format!("replace owned secret file {}", path.display()))?;
+    }
+    fs::write(path, format!("{secret}\n"))
+        .with_context(|| format!("write secret file {}", path.display()))?;
+    set_private_file(path)
+}
+
+fn create_private_dir(path: &Path) -> Result<()> {
+    fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
+    set_private_dir(path)
+}
+
+fn set_private_dir(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("restrict directory permissions for {}", path.display()))?;
+    }
+    #[cfg(windows)]
+    {
+        run_powershell(&format!(
+            "$ErrorActionPreference='Stop'; icacls.exe '{}' /inheritance:r /grant:r \"$($env:USERNAME):(OI)(CI)F\" | Out-Null; if ($LASTEXITCODE -ne 0) {{ throw 'Could not restrict directory permissions.' }}",
+            ps_single_quote(&path.display().to_string())
+        ))?;
+    }
+    Ok(())
+}
+
+fn set_private_file(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("restrict file permissions for {}", path.display()))?;
+    }
+    #[cfg(windows)]
+    {
+        run_powershell(&format!(
+            "$ErrorActionPreference='Stop'; icacls.exe '{}' /inheritance:r /grant:r \"$($env:USERNAME):F\" | Out-Null; if ($LASTEXITCODE -ne 0) {{ throw 'Could not restrict file permissions.' }}",
+            ps_single_quote(&path.display().to_string())
+        ))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("make {} executable", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_quote(path: &Path) -> String {
+    let value = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
+    format!("\"{value}\"")
+}
+
+#[cfg(windows)]
+fn run_powershell(script: &str) -> Result<()> {
+    run_checked(
+        "powershell.exe",
+        &["-NoProfile", "-NonInteractive", "-Command", script],
+    )
+}
+
+#[cfg(windows)]
+fn ps_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn run_checked(program: &str, args: &[&str]) -> Result<()> {
+    let output = command_without_console(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("start {program}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        bail!(
+            "{program} exited with {}{}",
+            output.status,
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        );
+    }
+    Ok(())
+}
+
+fn command_without_console(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+fn env_language() -> Option<Language> {
+    env::var("DISCODEX_LANGUAGE")
+        .ok()
+        .and_then(|value| value.parse::<Language>().ok())
+}
+
+fn configured_language(language: Language) -> Language {
+    env_language().unwrap_or(language)
+}
+
+fn saved_install_language(roots: &Roots) -> Result<Option<Language>> {
+    let config_path = roots.config.join("config.json");
+    if config_path.is_file() {
+        return Ok(Some(Config::load(&config_path)?.language));
+    }
+    let list_path = roots.config.join("installation-list.json");
+    if list_path.is_file() {
+        return Ok(Some(read_json::<InstallationList>(&list_path)?.language));
+    }
+    Ok(None)
+}
+
+fn choose_language(existing: Option<Language>) -> Result<Language> {
+    if let Some(language) = env_language().or(existing) {
+        return Ok(language);
+    }
+    println!("Choose language / 언어 선택 / 选择语言 / 言語を選択");
+    println!("  1) English (default)  2) 한국어  3) 简体中文  4) 日本語");
+    loop {
+        let choice = ask("Language", "1")?;
+        match choice.trim().to_ascii_lowercase().as_str() {
+            "1" | "en" | "english" => return Ok(Language::English),
+            "2" | "ko" | "korean" => return Ok(Language::Korean),
+            "3" | "zh" | "zh-cn" | "chinese" => return Ok(Language::Chinese),
+            "4" | "ja" | "japanese" => return Ok(Language::Japanese),
+            _ => println!("Choose 1, 2, 3, or 4."),
+        }
+    }
+}
+
+fn ask_text(
+    language: Language,
+    en: &str,
+    ko: &str,
+    zh: &str,
+    ja: &str,
+    default: &str,
+) -> Result<String> {
+    ask(language.text(en, ko, zh, ja), default)
+}
+
+fn ask(prompt: &str, default: &str) -> Result<String> {
+    print!("{prompt} [{default}]: ");
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let answer = answer.trim();
+    Ok(if answer.is_empty() {
+        default.to_owned()
+    } else {
+        answer.to_owned()
+    })
+}
+
+fn ask_u64(language: Language, en: &str, ko: &str, zh: &str, ja: &str) -> Result<u64> {
+    loop {
+        let value = ask_text(language, en, ko, zh, ja, "")?;
+        match value.parse() {
+            Ok(value) => return Ok(value),
+            Err(_) => println!(
+                "{}",
+                language.text(
+                    "Enter the numeric Discord ID.",
+                    "숫자 Discord ID를 입력하세요.",
+                    "请输入数字 Discord ID。",
+                    "Discord の数値 ID を入力してください。"
+                )
+            ),
+        }
+    }
+}
+
+fn ask_ids(language: Language, en: &str, ko: &str, zh: &str, ja: &str) -> Result<Vec<u64>> {
+    loop {
+        let line = ask_text(language, en, ko, zh, ja, "")?;
+        let mut ids = Vec::new();
+        let mut valid = true;
+        for item in line
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            match item.parse() {
+                Ok(id) => ids.push(id),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid && !ids.is_empty() {
+            return Ok(ids);
+        }
+        println!(
+            "{}",
+            language.text(
+                "Enter one or more numeric IDs separated by commas.",
+                "숫자 ID를 하나 이상 쉼표로 구분해 입력하세요.",
+                "请输入一个或多个数字 ID，并用逗号分隔。",
+                "数値 ID を1つ以上、カンマ区切りで入力してください。"
+            )
+        );
+    }
+}
+
+fn optional_value(
+    language: Language,
+    en: &str,
+    ko: &str,
+    zh: &str,
+    ja: &str,
+) -> Result<Option<String>> {
+    let value = ask_text(language, en, ko, zh, ja, "")?;
+    Ok((!value.is_empty()).then_some(value))
+}
+
+fn unix_time_string() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_args_require_explicit_source_and_config() {
+        let args = vec![
+            "--source".to_owned(),
+            "/tmp/discodex-new".to_owned(),
+            "--config".to_owned(),
+            "/profile/config.json".to_owned(),
+        ];
+        let parsed = parse_update_args(&args).unwrap();
+        assert_eq!(parsed.source, PathBuf::from("/tmp/discodex-new"));
+        assert_eq!(parsed.config, PathBuf::from("/profile/config.json"));
+        assert!(parse_update_args(&args[..2]).is_err());
+        let duplicate = vec![
+            "--source".to_owned(),
+            "one".to_owned(),
+            "--source".to_owned(),
+            "two".to_owned(),
+            "--config".to_owned(),
+            "config.json".to_owned(),
+        ];
+        assert!(parse_update_args(&duplicate).is_err());
+    }
+
+    #[test]
+    fn staged_update_replaces_and_restores_only_worker_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let install_dir = temp
+            .path()
+            .join("profile")
+            .join("data")
+            .join(APP_NAME)
+            .join("bin");
+        fs::create_dir_all(&install_dir).unwrap();
+        let installed = install_dir.join(worker_executable_name());
+        let source = temp.path().join("discodex-new");
+        fs::write(&installed, b"old worker").unwrap();
+        fs::write(&source, b"new worker").unwrap();
+        let old_permissions = fs::metadata(&installed).unwrap().permissions();
+        let staged = stage_update_binary(&source, &install_dir).unwrap();
+        assert_eq!(fs::read(&installed).unwrap(), b"old worker");
+        assert_eq!(fs::read(staged.path()).unwrap(), b"new worker");
+        staged.persist(&installed).unwrap();
+        assert_eq!(fs::read(&installed).unwrap(), b"new worker");
+        restore_worker_bytes(&installed, b"old worker", old_permissions).unwrap();
+        assert_eq!(fs::read(&installed).unwrap(), b"old worker");
+    }
+
+    #[test]
+    fn staged_migration_worker_is_selected_from_verified_marker() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy = temp
+            .path()
+            .join("profiles/alpha/config")
+            .join(LEGACY_APP_NAME);
+        let roots = Roots {
+            config: rename_legacy_path(&legacy),
+            data: rename_legacy_path(
+                &temp
+                    .path()
+                    .join("profiles/alpha/data")
+                    .join(LEGACY_APP_NAME),
+            ),
+        };
+        create_private_dir(&roots.config).unwrap();
+        create_private_dir(&roots.data).unwrap();
+        let old_config_root = legacy;
+        fs::write(
+            roots.config.join("migration-in-progress"),
+            serde_json::to_vec(&old_config_root).unwrap(),
+        )
+        .unwrap();
+        let source = temp.path().join("migration-worker-fixture");
+        fs::write(&source, b"migration worker fixture").unwrap();
+        let staged = stage_worker_file(&source, &roots.data).unwrap();
+        assert_eq!(staged_migration_worker(&roots).unwrap(), Some(staged));
+        fs::remove_file(roots.config.join("migration-in-progress")).unwrap();
+        assert_eq!(staged_migration_worker(&roots).unwrap(), None);
+    }
+
+    #[test]
+    fn migration_stages_worker_bytes_and_service_uses_recorded_owned_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_dir = temp.path().join("source");
+        let data_root = temp.path().join("profile").join("data").join(APP_NAME);
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(data_root.parent().unwrap()).unwrap();
+        let source = source_dir.join("discodex-build");
+        fs::write(&source, b"migration worker payload").unwrap();
+        let staged = stage_worker_file(&source, &data_root).unwrap();
+        assert_eq!(fs::read(&staged).unwrap(), b"migration worker payload");
+        assert!(is_owned_worker_executable(&staged, &data_root));
+        let ownership: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "profile": "alpha",
+            "configFile": data_root.join("config/config.json"),
+            "credentialsFile": data_root.join("config/discord-token"),
+            "installListFile": data_root.join("config/installation-list.json"),
+            "runtimeDir": data_root.join("codex-runtime"),
+            "runtimeExecutable": null,
+            "workerExecutable": staged,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "existing-cli",
+            "codexPath": "/native/codex",
+            "codexVersion": null,
+            "stateDir": data_root.join("state"),
+            "projectDir": "/project"
+        }))
+        .unwrap();
+        assert_eq!(
+            recorded_service_executable(&ownership).unwrap(),
+            Some(staged)
+        );
+    }
+
+    #[test]
+    fn migration_renames_exact_owned_components_and_stages_a_private_copy() {
+        let root = tempfile::tempdir().expect("temporary migration root");
+        let old_config = root
+            .path()
+            .join(LEGACY_SERVICE_NAME)
+            .join("profiles")
+            .join("profile-a")
+            .join("config")
+            .join(LEGACY_APP_NAME);
+        let old_data = root
+            .path()
+            .join(LEGACY_SERVICE_NAME)
+            .join("profiles")
+            .join("profile-a")
+            .join("data")
+            .join(LEGACY_APP_NAME);
+        let roots = Roots {
+            config: rename_legacy_path(&old_config),
+            data: rename_legacy_path(&old_data),
+        };
+        for name in ["config.json", "discord-token", "installation-list.json"] {
+            fs::create_dir_all(&old_config).unwrap();
+            fs::write(old_config.join(name), format!("{name} fixture")).unwrap();
+        }
+        let old_state = old_data.join("state");
+        fs::create_dir_all(&old_state).unwrap();
+        fs::write(old_state.join("thread.json"), b"thread fixture").unwrap();
+        let near_match = root.path().join("codex-worker-extra");
+        assert_eq!(rename_legacy_path(&near_match), near_match);
+
+        stage_legacy_profile(&old_config, &roots).unwrap();
+        copy_private_directory(&old_state, &roots.data.join("state")).unwrap();
+        assert_eq!(
+            fs::read(roots.config.join("discord-token")).unwrap(),
+            b"discord-token fixture"
+        );
+        assert_eq!(
+            fs::read(roots.data.join("state/thread.json")).unwrap(),
+            b"thread fixture"
+        );
+        assert_eq!(
+            fs::read(old_config.join("discord-token")).unwrap(),
+            b"discord-token fixture"
+        );
+
+        remove_migration_staging(&roots, &old_config).unwrap();
+        assert!(!roots.config.exists());
+        assert!(!roots.data.exists());
+        assert!(old_config.join("discord-token").is_file());
+        assert!(old_state.join("thread.json").is_file());
+    }
+
+    #[test]
+    fn official_cli_version_resolves_to_its_release_tag() {
+        assert_eq!(
+            official_codex_release_tag("rust-v0.160.1"),
+            Some("rust-v0.160.1".into())
+        );
+        assert_eq!(
+            official_codex_release_tag("codex-cli 0.160.1"),
+            Some("rust-v0.160.1".into())
+        );
+        assert_eq!(official_codex_release_tag("codex-cli 0..1"), None);
+        assert_eq!(official_codex_release_tag("codex-cli dev"), None);
+    }
+
+    #[test]
+    fn official_core_pair_repair_requires_recorded_tag_and_preserves_components() {
+        let root = tempfile::tempdir().expect("temporary official runtime");
+        let runtime = root.path().join("official-codex");
+        fs::create_dir(&runtime).expect("create official runtime");
+        let core = runtime.join(codex_executable_name());
+        let host = runtime.join(code_mode_host_executable_name());
+        let core_bytes = b"core fixture";
+        let host_bytes = b"host fixture";
+        fs::write(&core, core_bytes).expect("write core fixture");
+        fs::write(&host, host_bytes).expect("write host fixture");
+
+        ensure_official_core_pair(&runtime, None).expect("complete pair should be a no-op");
+        assert_eq!(fs::read(&core).unwrap(), core_bytes);
+        assert_eq!(fs::read(&host).unwrap(), host_bytes);
+
+        fs::remove_file(&core).expect("remove core fixture");
+        let missing_core = ensure_official_core_pair(&runtime, None)
+            .expect_err("missing core without a recorded tag must stop before download");
+        assert!(
+            missing_core
+                .to_string()
+                .contains("owned Codex install has no recorded release tag")
+        );
+        assert_eq!(fs::read(&host).unwrap(), host_bytes);
+
+        fs::write(&core, core_bytes).expect("restore core fixture");
+        fs::remove_file(&host).expect("remove host fixture");
+        let missing_host = ensure_official_core_pair(&runtime, None)
+            .expect_err("missing host without a recorded tag must stop before download");
+        assert!(
+            missing_host
+                .to_string()
+                .contains("owned Codex install has no recorded release tag")
+        );
+        assert_eq!(fs::read(&core).unwrap(), core_bytes);
+
+        fs::remove_file(&core).expect("remove remaining core fixture");
+        let missing_pair = ensure_official_core_pair(&runtime, None)
+            .expect_err("missing pair without a recorded tag must stop before download");
+        assert!(
+            missing_pair
+                .to_string()
+                .contains("owned Codex install has no recorded release tag")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_candidate_directory_does_not_block_valid_candidate() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("temporary candidate root");
+        let unreadable = root.path().join("unreadable");
+        let valid = root.path().join("valid");
+        fs::create_dir(&unreadable).expect("create unreadable candidate directory");
+        fs::create_dir(&valid).expect("create valid candidate directory");
+        let executable = valid.join(codex_executable_name());
+        fs::write(&executable, b"codex fixture").expect("write valid candidate");
+
+        let original_permissions = fs::metadata(&unreadable)
+            .expect("read unreadable candidate permissions")
+            .permissions();
+        let mut denied_permissions = original_permissions.clone();
+        denied_permissions.set_mode(0o000);
+        fs::set_permissions(&unreadable, denied_permissions)
+            .expect("make candidate directory unreadable");
+
+        let observation = {
+            let mut found = Vec::new();
+            let unreadable_result = add_candidate_paths_best_effort(
+                &mut found,
+                &unreadable,
+                NativeSource::DesktopApp,
+                "Unreadable candidate",
+            );
+            let valid_result = add_candidate_paths_best_effort(
+                &mut found,
+                &valid,
+                NativeSource::ExistingCli,
+                "Valid candidate",
+            );
+            (unreadable_result, valid_result, found)
+        };
+
+        fs::set_permissions(&unreadable, original_permissions)
+            .expect("restore candidate directory permissions");
+
+        assert!(!observation.0, "unreadable candidate should be skipped");
+        assert!(observation.1, "valid candidate should still be discovered");
+        assert!(
+            observation
+                .2
+                .iter()
+                .any(|candidate| candidate.path == executable)
+        );
+    }
+
+    #[test]
+    fn windows_task_level_preserves_legacy_and_elevated_ownership() {
+        let legacy = serde_json::json!({
+            "formatVersion": 1, "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": "/profile/runtime", "runtimeExecutable": null,
+            "serviceFile": null, "serviceKind": "scheduled-task-user",
+            "codexSource": "existing-cli", "codexPath": "/codex",
+            "codexVersion": null, "stateDir": "/profile/state", "projectDir": "/project"
+        });
+        let mut owner: Ownership = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            windows_task_recorded_levels(&owner),
+            vec![WindowsTaskRunLevel::Limited]
+        );
+        owner.windows_task_pending_run_level = Some(WindowsTaskRunLevel::Highest);
+        let interrupted: Ownership =
+            serde_json::from_value(serde_json::to_value(&owner).unwrap()).unwrap();
+        assert_eq!(
+            windows_task_recorded_levels(&interrupted),
+            vec![WindowsTaskRunLevel::Limited, WindowsTaskRunLevel::Highest,]
+        );
+        owner.windows_task_run_level = WindowsTaskRunLevel::Highest;
+        owner.windows_task_pending_run_level = None;
+        let persisted = serde_json::to_value(&owner).unwrap();
+        let restored: Ownership = serde_json::from_value(persisted).unwrap();
+        assert_eq!(
+            restored.windows_task_run_level,
+            WindowsTaskRunLevel::Highest
+        );
+        assert_eq!(restored.config_file, owner.config_file);
+        assert_eq!(restored.state_dir, owner.state_dir);
+        let mut invalid = legacy;
+        invalid["windowsTaskRunLevel"] = serde_json::json!("system");
+        assert!(serde_json::from_value::<Ownership>(invalid).is_err());
+    }
+
+    #[test]
+    fn windows_elevation_sid_accepts_only_numeric_components() {
+        assert!(valid_windows_sid("S-1-5-21-123456-789012-345678-1001"));
+        assert!(!valid_windows_sid(""));
+        assert!(!valid_windows_sid("S-1-5"));
+        assert!(!valid_windows_sid("S-1-5-"));
+        assert!(!valid_windows_sid("S-1-5-21'; exit 0; '"));
+        assert!(!valid_windows_sid("S-1-5-21\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_task_replacement_requires_both_a_matching_task_and_ownership_record() {
+        assert!(windows_task_may_be_replaced("absent", false));
+        assert!(windows_task_may_be_replaced("absent", true));
+        assert!(windows_task_may_be_replaced("matching", true));
+        assert!(!windows_task_may_be_replaced("matching", false));
+        assert!(!windows_task_may_be_replaced("different", true));
+        assert!(!windows_task_may_be_replaced("unexpected", true));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn task_names_follow_the_recorded_profile_layout() {
+        assert_eq!(
+            windows_task_name_for_config(Path::new(
+                r"C:\profiles\alpha\config\codex-worker\config.json"
+            )),
+            "CodexWorker Renewal"
+        );
+        assert_eq!(
+            windows_task_name_for_config(Path::new(
+                r"C:\profiles\alpha\config\discodex\config.json"
+            )),
+            "Discodex"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn migration_preserves_recorded_config_spelling_after_file_identity_check() {
+        let temp = tempfile::tempdir().unwrap();
+        let recorded = temp.path().join("config.json");
+        let other = temp.path().join("other.json");
+        fs::write(&recorded, b"config").unwrap();
+        fs::write(&other, b"other").unwrap();
+        let selected = recorded.canonicalize().unwrap();
+        assert_eq!(
+            checked_recorded_config_path(&recorded, &selected).unwrap(),
+            recorded
+        );
+        assert!(checked_recorded_config_path(&recorded, &other).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scheduled_task_executable_path_strips_only_a_local_verbatim_prefix() {
+        assert_eq!(
+            windows_task_executable_path(Path::new(
+                r"\\?\C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"
+            ))
+            .expect("normalize a local extended path"),
+            PathBuf::from(r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe")
+        );
+        assert_eq!(
+            windows_task_executable_path(Path::new(
+                r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"
+            ))
+            .expect("retain a local DOS path"),
+            PathBuf::from(r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe")
+        );
+        assert!(
+            windows_task_executable_path(Path::new(r"\\?\UNC\server\share\worker.exe")).is_err()
+        );
+        assert!(windows_task_executable_path(Path::new(r"\\server\share\worker.exe")).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn store_version_change_preserves_only_the_selected_openai_codex_app_source() {
+        let previous = Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.4958.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
+        );
+        let updated = Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.7945.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
+        );
+        let cli = Path::new(r"C:\Users\test\AppData\Local\Programs\Codex\codex.exe");
+        let other_store_app = Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Other_1.0.0.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
+        );
+        let different_publisher = Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.7945.0_x64__otherpublisher\app\resources\codex.exe",
+        );
+
+        assert!(same_windows_desktop_app_package(
+            "desktop-app",
+            &NativeSource::DesktopApp,
+            previous,
+            updated,
+        ));
+        assert!(!same_windows_desktop_app_package(
+            "existing-cli",
+            &NativeSource::DesktopApp,
+            previous,
+            updated,
+        ));
+        assert!(!same_windows_desktop_app_package(
+            "desktop-app",
+            &NativeSource::ExistingCli,
+            previous,
+            updated,
+        ));
+        assert!(!same_windows_desktop_app_package(
+            "desktop-app",
+            &NativeSource::DesktopApp,
+            previous,
+            cli,
+        ));
+        assert!(!same_windows_desktop_app_package(
+            "desktop-app",
+            &NativeSource::DesktopApp,
+            previous,
+            other_store_app,
+        ));
+        assert!(!same_windows_desktop_app_package(
+            "desktop-app",
+            &NativeSource::DesktopApp,
+            previous,
+            different_publisher,
+        ));
+    }
+
+    #[test]
+    fn reinstall_keeps_profile_preferences_and_allowed_full_access_selection() {
+        let native_home_dir = tempfile::tempdir().expect("temporary native home");
+        let native_home = native_home_dir.path().join("native-home");
+        let previous = Config {
+            language: Language::Korean,
+            profile: "alpha".into(),
+            name: "Alpha identity".into(),
+            token_env: "OLD_TOKEN_ENV".into(),
+            credentials_file: Some("old-token".into()),
+            guild_id: 1,
+            home_channel_id: 2,
+            transcript_channel_id: 3,
+            operator_ids: vec![4],
+            voice_channel_ids: vec![5],
+            codex_path: "old-codex".into(),
+            worker_path: None,
+            codex_home: Some(native_home.clone()),
+            project_dir: "/old/project".into(),
+            state_dir: "/old/state".into(),
+            model: Some("old-model".into()),
+            effort: Some("ultra".into()),
+            service_tier: Some("off".into()),
+            memory_enabled: Some(true),
+            permissions: Some(":danger-full-access".into()),
+            voice: Some("alpha".into()),
+            input_mode: InputMode::Steering,
+        };
+        let list = InstallationList {
+            format_version: 1,
+            language: Language::default(),
+            profile: "alpha".into(),
+            native_source: NativeSource::ExistingCli,
+            native_path: Some("/selected/codex".into()),
+            discord_app: "existing-app".into(),
+            guild_id: 11,
+            home_channel_id: 12,
+            transcript_channel_id: 13,
+            operator_ids: vec![14],
+            voice_channel_ids: vec![15],
+            project_dir: "/selected/project".into(),
+            model: Some("gpt-5.6-luna".into()),
+            requested_permission_profile: "Full Access".into(),
+            created_at: "now".into(),
+        };
+
+        let merged = merge_install_config(
+            Some(previous),
+            &list,
+            Path::new("/new/config/discord-token"),
+            Path::new("/selected/codex"),
+            Some(Path::new("/owned/bin/bridge")),
+            Path::new("/new/data/state"),
+            &native_home,
+        );
+
+        assert_eq!(merged.profile, "alpha");
+        assert_eq!(merged.name, "Alpha identity");
+        assert_eq!(merged.voice.as_deref(), Some("alpha"));
+        assert_eq!(merged.codex_home.as_deref(), Some(native_home.as_path()));
+        assert_eq!(merged.input_mode, InputMode::Steering);
+        assert_eq!(merged.permissions.as_deref(), Some(":danger-full-access"));
+        assert_eq!(merged.codex_path, Path::new("/selected/codex"));
+        assert_eq!(merged.project_dir, Path::new("/selected/project"));
+        assert_eq!(merged.model.as_deref(), Some("old-model"));
+        assert_eq!(merged.effort.as_deref(), Some("ultra"));
+        assert_eq!(merged.service_tier.as_deref(), Some("off"));
+        assert_eq!(merged.memory_enabled, Some(true));
+        assert_eq!(merged.guild_id, 11);
+        assert_eq!(
+            merged.credentials_file.as_deref(),
+            Some(Path::new("/new/config/discord-token"))
+        );
+        assert_eq!(merged.state_dir, Path::new("/new/data/state"));
+
+        let config_dir = tempfile::tempdir().expect("temporary config directory");
+        let config_path = config_dir.path().join("config.json");
+        write_json_private(&config_path, &merged).expect("write merged config");
+        let reloaded = Config::load(&config_path).expect("reload merged config");
+        assert_eq!(reloaded.codex_home, merged.codex_home);
+        assert_eq!(reloaded.effort, merged.effort);
+        assert_eq!(reloaded.service_tier, merged.service_tier);
+        assert_eq!(reloaded.memory_enabled, merged.memory_enabled);
+
+        let catalog = serde_json::json!({
+            "data": [
+                {"id": "custom-full", "name": "Full Access", "allowed": true},
+                {"id": ":danger-full-access", "allowed": true}
+            ]
+        });
+        assert_eq!(
+            choose_full_access_profile(&catalog, merged.permissions.as_deref(), Language::English)
+                .unwrap(),
+            ":danger-full-access"
+        );
+        assert_eq!(
+            choose_full_access_profile(&catalog, Some("no-longer-allowed"), Language::English)
+                .unwrap(),
+            "custom-full"
+        );
+    }
+
+    #[test]
+    fn fresh_codex_home_is_absolute_and_prefers_selected_environment() {
+        let project = tempfile::tempdir().expect("temporary project directory");
+        let default_home = project.path().join("default-home");
+        let selected = resolve_codex_home(
+            None,
+            Some(Path::new("env-home")),
+            project.path(),
+            Some(&default_home),
+        )
+        .expect("resolve selected CODEX_HOME");
+        assert_eq!(selected, project.path().join("env-home"));
+
+        let explicit = project.path().join("explicit-home");
+        assert_eq!(
+            resolve_codex_home(None, Some(&explicit), project.path(), Some(&default_home)).unwrap(),
+            explicit
+        );
+        assert_eq!(
+            resolve_codex_home(None, None, project.path(), Some(&default_home)).unwrap(),
+            default_home
+        );
+        assert_eq!(
+            resolve_codex_home(
+                Some(Path::new("legacy-home")),
+                Some(Path::new("ignored-env-home")),
+                project.path(),
+                Some(&default_home),
+            )
+            .unwrap(),
+            project.path().join("legacy-home")
+        );
+    }
+
+    #[test]
+    fn reinstall_rejects_existing_different_profile_identity() {
+        assert!(
+            validate_existing_profile_identity(true, "alpha", Some("beta"), Some("beta")).is_err()
+        );
+        assert!(validate_existing_profile_identity(true, "alpha", None, Some("beta")).is_err());
+        assert!(
+            validate_existing_profile_identity(true, "alpha", Some("alpha"), Some("alpha")).is_ok()
+        );
+        assert!(validate_existing_profile_identity(true, "alpha", None, None).is_err());
+    }
+
+    #[test]
+    fn partial_native_selection_failure_allows_explicit_reselection_before_service_registration() {
+        assert!(is_partial_install_reselection_allowed(true, None, false));
+        assert!(!is_partial_install_reselection_allowed(
+            true,
+            Some("launchd-user"),
+            true
+        ));
+        assert!(!is_partial_install_reselection_allowed(false, None, false));
+    }
+
+    #[test]
+    fn legacy_partial_core_cannot_adopt_existing_unowned_executable() {
+        let previous: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": "/profile/official-codex",
+            "runtimeExecutable": "/profile/official-codex/codex",
+            "workerExecutable": null,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "official-core-owned",
+            "codexPath": "/profile/official-codex/codex",
+            "codexVersion": null,
+            "stateDir": "/profile/state",
+            "projectDir": "/profile/project"
+        }))
+        .unwrap();
+        assert!(!previous_owns_completed_core(
+            &previous,
+            Path::new("/profile/official-codex/codex")
+        ));
+    }
+
+    #[test]
+    fn legacy_completed_core_with_registered_service_remains_reusable() {
+        let previous: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": "/profile/official-codex",
+            "runtimeExecutable": "/profile/official-codex/codex",
+            "workerExecutable": null,
+            "serviceFile": "/profile/LaunchAgent.plist",
+            "serviceKind": "launchd-user",
+            "codexSource": "official-core-owned",
+            "codexPath": "/profile/official-codex/codex",
+            "codexVersion": null,
+            "stateDir": "/profile/state",
+            "projectDir": "/profile/project"
+        }))
+        .unwrap();
+        assert!(previous_owns_completed_core(
+            &previous,
+            Path::new("/profile/official-codex/codex")
+        ));
+    }
+
+    #[test]
+    fn partial_reselection_requires_all_common_installation_paths_to_match() {
+        let previous: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": "/profile/official-codex",
+            "runtimeExecutable": null,
+            "workerExecutable": null,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "official-core-owned",
+            "codexPath": "/profile/official-codex/codex",
+            "codexVersion": null,
+            "stateDir": "/profile/state",
+            "projectDir": "/profile/project"
+        }))
+        .unwrap();
+        assert!(same_profile_installation_paths(
+            &previous,
+            Path::new("/profile/config.json"),
+            Path::new("/profile/discord-token"),
+            Path::new("/profile/installation-list.json"),
+            Path::new("/profile/state"),
+            Path::new("/profile/project"),
+        ));
+        assert!(!same_profile_installation_paths(
+            &previous,
+            Path::new("/profile/config.json"),
+            Path::new("/profile/discord-token"),
+            Path::new("/profile/installation-list.json"),
+            Path::new("/profile/state"),
+            Path::new("/other/project"),
+        ));
+    }
+
+    #[test]
+    fn legacy_ownership_without_profile_uses_readable_config_identity() {
+        let legacy: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": "/profile/runtime",
+            "runtimeExecutable": null,
+            "workerExecutable": null,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "existing-cli",
+            "codexPath": "/usr/local/bin/codex",
+            "codexVersion": null,
+            "stateDir": "/profile/state",
+            "projectDir": "/profile/project"
+        }))
+        .unwrap();
+        assert!(legacy.profile.is_none());
+        assert!(!legacy.runtime_owned);
+        assert!(validate_existing_profile_identity(true, "alpha", None, Some("alpha")).is_ok());
+    }
+
+    #[test]
+    fn proven_partial_owned_runtime_is_removed_at_reselection_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let previous = cleanup_fixture(root.path());
+        let runtime =
+            partial_owned_core_runtime_for_cleanup(Some(&previous), root.path(), false, None, &[])
+                .unwrap()
+                .unwrap();
+        assert_eq!(fs::read(&previous.codex_path).unwrap(), b"owned core");
+        assert_eq!(
+            fs::read(runtime.join(code_mode_host_executable_name())).unwrap(),
+            b"owned host"
+        );
+        fs::write(&previous.config_file, b"replacement config saved").unwrap();
+        remove_owned_core_runtime(&runtime).unwrap();
+        assert_eq!(
+            fs::read(&previous.config_file).unwrap(),
+            b"replacement config saved"
+        );
+        assert_eq!(
+            fs::read(&previous.credentials_file).unwrap(),
+            b"original credential"
+        );
+    }
+
+    fn cleanup_fixture(data_root: &Path) -> Ownership {
+        let runtime_dir = data_root.canonicalize().unwrap().join("official-codex");
+        fs::create_dir(&runtime_dir).unwrap();
+        let executable = runtime_dir.join(codex_executable_name());
+        fs::write(&executable, b"owned core").unwrap();
+        fs::write(
+            runtime_dir.join(code_mode_host_executable_name()),
+            b"owned host",
+        )
+        .unwrap();
+        let ownership: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "profile": "alpha",
+            "runtimeOwned": true,
+            "configFile": data_root.join("config.json"),
+            "credentialsFile": data_root.join("discord-token"),
+            "installListFile": data_root.join("installation-list.json"),
+            "runtimeDir": runtime_dir,
+            "runtimeExecutable": executable,
+            "workerExecutable": null,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "official-core-owned",
+            "codexPath": executable,
+            "codexVersion": "rust-v0.162.1",
+            "stateDir": data_root.join("state"),
+            "projectDir": data_root.join("project")
+        }))
+        .unwrap();
+        fs::write(&ownership.config_file, b"original config").unwrap();
+        fs::write(&ownership.credentials_file, b"original credential").unwrap();
+        fs::write(
+            data_root.join("ownership.json"),
+            serde_json::to_vec(&ownership).unwrap(),
+        )
+        .unwrap();
+        ownership
+    }
+
+    #[test]
+    fn owned_runtime_cleanup_preserves_nested_home_project_and_unrecorded_data() {
+        for kind in ["codex-home", "project", "unrecorded"] {
+            let root = tempfile::tempdir().unwrap();
+            let ownership = cleanup_fixture(root.path());
+            let preserved = ownership.runtime_dir.join(kind);
+            fs::create_dir(&preserved).unwrap();
+            let original = preserved.join("conversation.jsonl");
+            fs::write(&original, b"original user conversation").unwrap();
+            let config: Config = serde_json::from_value(serde_json::json!({
+                "profile": "alpha", "name": "Alpha", "tokenEnv": "TOKEN",
+                "guildId": 1, "homeChannelId": 2, "transcriptChannelId": 2,
+                "codexPath": ownership.codex_path,
+                "codexHome": if kind == "codex-home" { preserved.clone() } else { root.path().join("external-home") },
+                "projectDir": if kind == "project" { preserved.clone() } else { ownership.project_dir.clone() },
+                "stateDir": ownership.state_dir
+            })).unwrap();
+            let before_record = fs::read(root.path().join("ownership.json")).unwrap();
+            assert!(
+                owned_core_runtime_for_cleanup(&ownership, root.path(), Some(&config), &[])
+                    .is_err()
+            );
+            assert_eq!(fs::read(&original).unwrap(), b"original user conversation");
+            assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
+            assert_eq!(
+                fs::read(ownership.runtime_dir.join(code_mode_host_executable_name())).unwrap(),
+                b"owned host"
+            );
+            assert_eq!(
+                fs::read(&ownership.config_file).unwrap(),
+                b"original config"
+            );
+            assert_eq!(
+                fs::read(&ownership.credentials_file).unwrap(),
+                b"original credential"
+            );
+            assert_eq!(
+                fs::read(root.path().join("ownership.json")).unwrap(),
+                before_record
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_core_ownership_preserves_remaining_runtime_and_records() {
+        for marked in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut ownership = cleanup_fixture(root.path());
+            ownership.runtime_owned = marked;
+            ownership.runtime_executable = None;
+            let before_record = fs::read(root.path().join("ownership.json")).unwrap();
+            let error =
+                owned_core_runtime_for_cleanup(&ownership, root.path(), None, &[]).unwrap_err();
+            assert!(error.to_string().contains("incomplete ownership record"));
+            assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
+            assert_eq!(
+                fs::read(&ownership.config_file).unwrap(),
+                b"original config"
+            );
+            assert_eq!(
+                fs::read(&ownership.credentials_file).unwrap(),
+                b"original credential"
+            );
+            assert_eq!(
+                fs::read(root.path().join("ownership.json")).unwrap(),
+                before_record
+            );
+        }
+    }
+
+    #[test]
+    fn partial_reselection_preserves_unrecorded_file_and_selected_existing_cli() {
+        for protect_selected_cli in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let ownership = cleanup_fixture(root.path());
+            let sentinel = ownership.runtime_dir.join("owned-partial");
+            let retained_paths = if protect_selected_cli {
+                vec![ownership.codex_path.as_path()]
+            } else {
+                fs::write(&sentinel, b"unrecorded user file").unwrap();
+                Vec::new()
+            };
+            assert!(
+                partial_owned_core_runtime_for_cleanup(
+                    Some(&ownership),
+                    root.path(),
+                    false,
+                    None,
+                    &retained_paths,
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
+            if !protect_selected_cli {
+                assert_eq!(fs::read(&sentinel).unwrap(), b"unrecorded user file");
+            }
+            assert_eq!(
+                fs::read(&ownership.config_file).unwrap(),
+                b"original config"
+            );
+            assert_eq!(
+                fs::read(&ownership.credentials_file).unwrap(),
+                b"original credential"
+            );
+        }
+    }
+
+    #[test]
+    fn partial_reselection_preflight_keeps_core_when_replacement_secret_write_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ownership = cleanup_fixture(root.path());
+        let blocked_secret = root.path().join("blocked-secret");
+        fs::create_dir(&blocked_secret).unwrap();
+        ownership.credentials_file = blocked_secret;
+        assert!(partial_owned_core_runtime_for_cleanup(
+            Some(&ownership), root.path(), false, None, &[],
+        ).unwrap().is_some());
+        assert!(write_secret(&ownership.credentials_file, "test replacement credential").is_err());
+        assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
+        assert_eq!(
+            fs::read(ownership.runtime_dir.join(code_mode_host_executable_name())).unwrap(),
+            b"owned host"
+        );
+        assert_eq!(
+            fs::read(&ownership.config_file).unwrap(),
+            b"original config"
+        );
+    }
+
+    #[test]
+    fn legacy_completed_core_cleanup_preserves_external_user_data_after_service_unlink() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ownership = cleanup_fixture(root.path());
+        ownership.runtime_owned = false;
+        ownership.service_kind = Some("launchd-user".into());
+        ownership.service_file = Some(root.path().join("agent.plist"));
+        let home = root.path().join("external-home");
+        fs::create_dir(&home).unwrap();
+        fs::create_dir(&ownership.project_dir).unwrap();
+        fs::create_dir(&ownership.state_dir).unwrap();
+        let user_files = [
+            home.join("auth.json"),
+            ownership.project_dir.join("source.rs"),
+            ownership.state_dir.join("thread.json"),
+        ];
+        for path in &user_files {
+            fs::write(path, b"original user data").unwrap();
+        }
+        let runtime = prepare_owned_core_uninstall(&mut ownership, root.path(), None)
+            .unwrap()
+            .unwrap();
+        assert!(ownership.runtime_owned);
+        ownership.service_kind = None;
+        ownership.service_file = None;
+        let owner_file = root.path().join("ownership.json");
+        write_json_private(&owner_file, &ownership).unwrap();
+        let retry: Ownership = read_json(&owner_file).unwrap();
+        assert!(
+            owned_core_runtime_for_cleanup(&retry, root.path(), None, &[&home])
+                .unwrap()
+                .is_some()
+        );
+        remove_owned_core_runtime(&runtime).unwrap();
+        for path in &user_files {
+            assert_eq!(fs::read(path).unwrap(), b"original user data");
+        }
+    }
+
+    #[test]
+    fn external_cli_with_null_runtime_record_preserves_foreign_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ownership = cleanup_fixture(root.path());
+        ownership.codex_source = "existing-cli".into();
+        ownership.runtime_owned = false;
+        ownership.runtime_executable = None;
+        let sentinel = ownership.runtime_dir.join("auth.json");
+        fs::write(&sentinel, b"external account").unwrap();
+        assert!(
+            owned_core_runtime_for_cleanup(&ownership, root.path(), None, &[])
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"external account");
+        assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_partial_runtime_is_preserved_and_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let data_root = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let sentinel = external.path().join("foreign-sentinel");
+        fs::write(&sentinel, b"preserve").unwrap();
+        let runtime_dir = data_root.path().join("official-codex");
+        symlink(external.path(), &runtime_dir).unwrap();
+        let previous: Ownership = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1,
+            "profile": "alpha",
+            "runtimeOwned": true,
+            "configFile": "/profile/config.json",
+            "credentialsFile": "/profile/discord-token",
+            "installListFile": "/profile/installation-list.json",
+            "runtimeDir": runtime_dir,
+            "runtimeExecutable": null,
+            "workerExecutable": null,
+            "serviceFile": null,
+            "serviceKind": null,
+            "codexSource": "official-core-owned",
+            "codexPath": "/profile/official-codex/codex",
+            "codexVersion": null,
+            "stateDir": "/profile/state",
+            "projectDir": "/profile/project"
+        }))
+        .unwrap();
+        assert!(
+            partial_owned_core_runtime_for_cleanup(
+                Some(&previous),
+                data_root.path(),
+                false,
+                None,
+                &[]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn install_plan_rejects_different_existing_profile_before_plan_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        fs::write(
+            &config_path,
+            serde_json::to_vec(&serde_json::json!({
+                "profile": "beta",
+                "name": "Beta",
+                "tokenEnv": "TOKEN",
+                "guildId": 1,
+                "homeChannelId": 2,
+                "transcriptChannelId": 2,
+                "codexPath": "/codex",
+                "projectDir": "/project",
+                "stateDir": "/state"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            validate_existing_installation_plan(
+                &dir.path().join("ownership.json"),
+                &config_path,
+                "alpha"
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_extraction_accepts_the_single_expected_regular_file() {
+        use std::io::Cursor;
+        let dir = tempfile::tempdir().unwrap();
+        let archive_path = dir.path().join("codex.tar.gz");
+        let file = File::create(&archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let bytes = b"official executable fixture";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o700);
+        header.set_cksum();
+        archive
+            .append_data(
+                &mut header,
+                "codex-x86_64-unknown-linux-musl",
+                Cursor::new(bytes),
+            )
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let destination = dir.path().join("codex");
+        extract_linux_official_executable(
+            &archive_path,
+            &destination,
+            "codex-x86_64-unknown-linux-musl.tar.gz",
+        )
+        .unwrap();
+        assert_eq!(fs::read(destination).unwrap(), bytes);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_extraction_installs_the_code_mode_host_archive_member() {
+        use std::io::Cursor;
+
+        let dir = tempfile::tempdir().unwrap();
+        let asset_name = "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz";
+        let archive_path = dir.path().join(asset_name);
+        let file = File::create(&archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let bytes = b"official code-mode host fixture";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o700);
+        header.set_cksum();
+        archive
+            .append_data(
+                &mut header,
+                "codex-code-mode-host-x86_64-unknown-linux-musl",
+                Cursor::new(bytes),
+            )
+            .unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let destination = dir.path().join("codex-code-mode-host");
+        extract_linux_official_executable(&archive_path, &destination, asset_name).unwrap();
+
+        assert_eq!(destination.file_name().unwrap(), "codex-code-mode-host");
+        assert_eq!(fs::read(&destination).unwrap(), bytes);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_extraction_rejects_parent_traversal_member() {
+        use std::io::Cursor;
+        let dir = tempfile::tempdir().unwrap();
+        let archive_path = dir.path().join("codex.tar.gz");
+        let file = File::create(&archive_path).unwrap();
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let bytes = b"bad";
+        let mut header = tar::Header::new_gnu();
+        let member_path = b"../codex-x86_64-unknown-linux-musl";
+        header.as_mut_bytes()[..member_path.len()].copy_from_slice(member_path);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o700);
+        header.set_cksum();
+        archive.append(&header, Cursor::new(bytes)).unwrap();
+        archive.into_inner().unwrap().finish().unwrap();
+
+        let destination = dir.path().join("codex");
+        assert!(
+            extract_linux_official_executable(
+                &archive_path,
+                &destination,
+                "codex-x86_64-unknown-linux-musl.tar.gz"
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_official_core_and_code_mode_host_use_the_platform_release_assets() {
+        let arch = match env::consts::ARCH {
+            "aarch64" => "aarch64",
+            "x86_64" => "x86_64",
+            other => panic!("unexpected Mac test architecture: {other}"),
+        };
+
+        assert_eq!(
+            official_asset_names().expect("Mac official release assets"),
+            (
+                format!("codex-{arch}-apple-darwin.tar.gz"),
+                format!("codex-code-mode-host-{arch}-apple-darwin.tar.gz")
+            )
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_official_assets_extract_expected_bytes() {
+        use std::io::Cursor;
+
+        let root = tempfile::tempdir().expect("temporary official runtime");
+        let (core_asset, host_asset) = official_asset_names().expect("Mac release asset names");
+        for (asset_name, executable_stem) in [
+            (core_asset.as_str(), "codex"),
+            (host_asset.as_str(), "codex-code-mode-host"),
+        ] {
+            let archive_path = root.path().join(asset_name);
+            let file = File::create(&archive_path).expect("create archive fixture");
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut archive = tar::Builder::new(encoder);
+            let expected = format!("official {executable_stem} fixture").into_bytes();
+            let mut header = tar::Header::new_gnu();
+            header.set_size(expected.len() as u64);
+            header.set_mode(0o600);
+            header.set_cksum();
+            archive
+                .append_data(
+                    &mut header,
+                    asset_name.strip_suffix(".tar.gz").expect("tar.gz asset"),
+                    Cursor::new(&expected),
+                )
+                .expect("append expected archive member");
+            archive
+                .into_inner()
+                .expect("finish tar archive")
+                .finish()
+                .expect("finish gzip archive");
+
+            let destination =
+                install_official_asset(&archive_path, root.path(), asset_name, executable_stem)
+                    .expect("extract official Mac executable");
+            assert_eq!(
+                fs::read(&destination).expect("read extracted executable"),
+                expected
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_official_asset_extraction_rejects_unsafe_archive_members() {
+        use std::io::Cursor;
+
+        let root = tempfile::tempdir().expect("temporary official runtime");
+        let (asset_name, _) = official_asset_names().expect("Mac release asset names");
+        let archive_path = root.path().join(&asset_name);
+        let file = File::create(&archive_path).expect("create archive fixture");
+        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut archive = tar::Builder::new(encoder);
+        let bytes = b"expected";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o700);
+        header.set_cksum();
+        archive
+            .append_data(
+                &mut header,
+                asset_name.strip_suffix(".tar.gz").expect("tar.gz asset"),
+                Cursor::new(bytes),
+            )
+            .expect("append expected archive member");
+        let bytes = b"unsafe";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o700);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, "unexpected-member", Cursor::new(bytes))
+            .expect("append unexpected archive member");
+        archive
+            .into_inner()
+            .expect("finish tar archive")
+            .finish()
+            .expect("finish gzip archive");
+
+        assert!(install_official_asset(&archive_path, root.path(), &asset_name, "codex").is_err());
+    }
+}

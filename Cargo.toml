@@ -1,0 +1,47 @@
+[package]
+name = "discodex"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+
+[workspace]
+
+[lib]
+name = "discodex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "discodex"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+opus2 = "0.4.0"
+codex-uds = { git = "https://github.com/openai/codex", rev = "a956835d020762cb2b570053af06f643a11c0ecc" }
+futures-util = "0.3"
+flate2 = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serenity = { version = "0.12.4", default-features = false, features = ["builder", "client", "gateway", "http", "model", "rustls_backend"] }
+symphonia-core = "0.5.2"
+symphonia = { version = "0.5.2", default-features = false, features = ["pcm", "wav"] }
+sha2 = "0.10"
+songbird = { version = "0.6.0", default-features = false, features = ["driver", "gateway", "receive", "rustls", "serenity", "tungstenite"] }
+tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
+tar = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }
+rtc = "=0.20.5"
+webrtc = "=0.20.5"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.30", features = ["process", "signal"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Threading"] }
