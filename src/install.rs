@@ -450,10 +450,6 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
     let service_backup = validate_legacy_service(&legacy)?;
     let migration_language = choose_language(Some(Config::load(&source_config)?.language))?;
     #[cfg(target_os = "macos")]
-    let mut mac_identity_proven = false;
-    #[cfg(not(target_os = "macos"))]
-    let mac_identity_proven = false;
-    #[cfg(target_os = "macos")]
     if let Some(requirement) = legacy.mac_signing_requirement.as_deref() {
         let executable = legacy
             .worker_executable
@@ -463,7 +459,6 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
             .context("resolve legacy signed worker executable")?;
         crate::mac_signing::adopt_owned_binary_identifier(&executable, requirement)
             .context("preserve the verified legacy macOS signing identity")?;
-        mac_identity_proven = true;
     }
     stage_legacy_profile(&legacy_config_root, &roots)?;
     let staged_worker = match stage_worker_file(&env::current_exe()?, &roots.data) {
@@ -522,7 +517,11 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
         }
         return Err(error).context("could not copy the legacy state after stopping its service");
     }
-    match install_at(roots.clone(), migration_language, mac_identity_proven) {
+    match install_at(
+        roots.clone(),
+        migration_language,
+        legacy.worker_executable.as_deref(),
+    ) {
         Ok(()) => {
             if let Err(error) = remove_migration_marker(&roots) {
                 eprintln!(
@@ -1211,10 +1210,14 @@ fn rollback_new_migration_service(roots: &Roots) -> Result<()> {
 pub fn install() -> Result<()> {
     let roots = roots()?;
     let language = choose_language(saved_install_language(&roots)?)?;
-    install_at(roots, language, false)
+    install_at(roots, language, None)
 }
 
-fn install_at(roots: Roots, language: Language, mac_identity_proven: bool) -> Result<()> {
+fn install_at(
+    roots: Roots,
+    language: Language,
+    previous_worker_path_hint: Option<&Path>,
+) -> Result<()> {
     fs::create_dir_all(&roots.config)
         .with_context(|| format!("create {}", roots.config.display()))?;
     fs::create_dir_all(&roots.data).with_context(|| format!("create {}", roots.data.display()))?;
@@ -1339,6 +1342,16 @@ fn install_at(roots: Roots, language: Language, mac_identity_proven: bool) -> Re
             let executable = previous.worker_executable.as_ref()?.canonicalize().ok()?;
             is_owned_worker_executable(&executable, &roots.data).then_some(executable)
         });
+    let previous_worker_path = previous_worker_path_hint.or_else(|| {
+        previous_ownership
+            .as_ref()
+            .and_then(|ownership| ownership.worker_executable.as_deref())
+    });
+    #[cfg(target_os = "macos")]
+    let mac_worker_path_unchanged =
+        mac_worker_path_unchanged(previous_worker_path, worker_executable.as_deref());
+    #[cfg(not(target_os = "macos"))]
+    let _ = previous_worker_path;
     let mut ownership = Ownership {
         format_version: 1,
         profile: Some(list.profile.clone()),
@@ -1507,11 +1520,9 @@ fn install_at(roots: Roots, language: Language, mac_identity_proven: bool) -> Re
 
     write_json_private(&ownership_path, &ownership)?;
     #[cfg(target_os = "macos")]
-    if !mac_identity_proven {
+    if !mac_worker_path_unchanged {
         request_mac_fda_guidance(&ownership_path, language)?;
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = mac_identity_proven;
     let discord = run_async(crate::commands::validate_discord(&config))
         .context("Discord profile check failed; saved installation list and private config remain for correction")?;
     for id in [list.home_channel_id, list.transcript_channel_id] {
@@ -1888,6 +1899,17 @@ fn require_mac_fda_interactive_terminal(executable: &Path, operation: &str) -> R
 }
 
 #[cfg(target_os = "macos")]
+fn mac_worker_path_unchanged(previous: Option<&Path>, selected: Option<&Path>) -> bool {
+    let Some(previous) = previous.and_then(|path| path.canonicalize().ok()) else {
+        return false;
+    };
+    let Some(selected) = selected.and_then(|path| path.canonicalize().ok()) else {
+        return false;
+    };
+    previous == selected && fs::metadata(&selected).is_ok_and(|metadata| metadata.is_file())
+}
+
+#[cfg(target_os = "macos")]
 fn mac_fda_guidance_answer(read_count: usize, answer: &str) -> Result<bool> {
     ensure!(
         read_count != 0,
@@ -1925,17 +1947,28 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
             executable.display()
         )
     })?;
+    println!(
+        "{}",
+        language
+            .text(
+                "Selected signed worker executable: {}",
+                "선택한 서명 작업자 실행 파일: {}",
+                "选定的签名工作程序：{}",
+                "選択した署名済みワーカー実行ファイル: {}"
+            )
+            .replace("{}", &executable.display().to_string())
+    );
     println!("{}", language.text(
-        "Only if Full Disk Access is needed, add this signed executable selected in Finder to the list and enable it.",
-        "전체 디스크 접근이 필요한 경우에만 Finder에서 선택된 이 서명 실행 파일을 목록에 추가하고 켜세요.",
-        "仅在需要完全磁盘访问权限时，才将 Finder 中选定的此签名可执行文件添加到列表并启用。",
-        "フルディスクアクセスが必要な場合のみ、Finder で選択されたこの署名済み実行ファイルを一覧に追加して有効にしてください。"
+        "macOS may ask this executable for protected-folder access separately. Add this exact worker to Full Disk Access only if your workflow needs that broader permission.",
+        "macOS가 이 실행 파일에 보호된 폴더 접근을 별도로 요청할 수 있습니다. 더 넓은 권한이 필요한 작업에서만 이 실행 파일을 전체 디스크 접근에 추가하세요.",
+        "macOS 可能会单独询问此可执行文件是否可访问受保护的文件夹。只有工作流确实需要更广泛权限时，才将此准确路径的工作程序添加到“完全磁盘访问权限”。",
+        "macOS はこの実行ファイルに保護フォルダへのアクセスを別途求める場合があります。ワークフローにより広い権限が必要な場合に限り、このパスのワーカーをフルディスクアクセスに追加してください。"
     ));
     println!("{}", language.text(
-        "If access is already allowed or not needed, press Enter to continue, or q to cancel. This choice does not verify permission status.",
-        "이미 허용했거나 필요하지 않으면 Enter로 설치를 계속하고, q를 입력하면 취소합니다. 이 선택은 권한 허용 여부를 확인하지 않습니다.",
-        "如果已允许访问或不需要此权限，请按 Enter 继续，或按 q 取消。此选择不会检查权限状态。",
-        "すでに許可済みまたは不要な場合は Enter で続行、q でキャンセルしてください。この選択で権限状態は確認されません。"
+        "If you grant Full Disk Access, select the exact executable path shown above and enable it. Press Enter to continue or q to cancel. Continuing does not confirm that macOS granted access.",
+        "전체 디스크 접근을 허용하려면 위에 표시된 정확한 실행 파일을 선택하고 켜세요. Enter로 계속하거나 q로 취소할 수 있습니다. 계속해도 macOS가 권한을 허용했는지는 확인되지 않습니다.",
+        "如需授予“完全磁盘访问权限”，请选择上方显示的准确可执行文件并启用。按 Enter 继续，或按 q 取消。继续操作不会确认 macOS 已授予访问权限。",
+        "フルディスクアクセスを許可する場合は、上記の正確な実行ファイルを選択して有効にしてください。Enter で続行、q でキャンセルできます。続行しても macOS がアクセスを許可したことは確認されません。"
     ));
     print!(
         "{}",
@@ -2704,10 +2737,26 @@ pub fn update_mac(args: &[String]) -> Result<()> {
 #[cfg(all(test, target_os = "macos"))]
 mod mac_update_policy_tests {
     use super::{
-        MacUpdateArgs, mac_fda_guidance_answer, parse_mac_update_args, parse_update_args,
-        require_mac_fda_interactive_terminal_state, validate_mac_update_migration,
+        MacUpdateArgs, mac_fda_guidance_answer, mac_worker_path_unchanged,
+        parse_mac_update_args, require_mac_fda_interactive_terminal_state,
+        validate_mac_update_migration,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn fda_guidance_is_skipped_only_for_the_same_existing_worker_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_worker = temp.path().join("old").join("discodex");
+        let new_worker = temp.path().join("new").join("discodex");
+        std::fs::create_dir_all(old_worker.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(new_worker.parent().unwrap()).unwrap();
+        std::fs::write(&old_worker, b"old worker").unwrap();
+        std::fs::write(&new_worker, b"new worker").unwrap();
+
+        assert!(mac_worker_path_unchanged(Some(&old_worker), Some(&old_worker)));
+        assert!(!mac_worker_path_unchanged(Some(&old_worker), Some(&new_worker)));
+        assert!(!mac_worker_path_unchanged(None, Some(&new_worker)));
+    }
 
     #[test]
     fn parses_source_and_one_ownership_selector() {

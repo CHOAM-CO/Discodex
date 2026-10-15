@@ -178,12 +178,20 @@ fn attachment_manifest(files: &[DownloadedAttachment]) -> Value {
     )
 }
 
-pub fn native_input(text: &str, files: &[DownloadedAttachment]) -> Vec<Value> {
+/// Add the machine-readable local attachment manifest to text-only input.
+/// Realtime appendText accepts this representation; local image content
+/// blocks are only available on the ordinary turn input path below.
+pub fn native_input_text(text: &str, files: &[DownloadedAttachment]) -> String {
     let mut text_input = text.to_owned();
     if !files.is_empty() {
         text_input.push_str(ATTACHMENT_MANIFEST_MARKER);
         text_input.push_str(&attachment_manifest(files).to_string());
     }
+    text_input
+}
+
+pub fn native_input(text: &str, files: &[DownloadedAttachment]) -> Vec<Value> {
+    let text_input = native_input_text(text, files);
     let mut input = vec![json!({ "type": "text", "text": text_input })];
     input.extend(
         files
@@ -506,4 +514,34 @@ mod tests {
             json!({"type":"localImage", "path":"/state/attachments/4-image.png"})
         );
     }
+
+    #[test]
+    fn realtime_text_input_preserves_attachment_only_and_mixed_file_manifests() {
+        let files = vec![
+            DownloadedAttachment {
+                filename: "forwarded.png".to_owned(),
+                path: PathBuf::from("/state/attachments/forwarded.png"),
+                is_image: true,
+            },
+            DownloadedAttachment {
+                filename: "report.pdf".to_owned(),
+                path: PathBuf::from("/state/attachments/report.pdf"),
+                is_image: false,
+            },
+        ];
+
+        let text = native_input_text("", &files);
+        let (body, manifest_json) = text.rsplit_once(ATTACHMENT_MANIFEST_MARKER).unwrap();
+        assert_eq!(body, "");
+        assert_eq!(serde_json::from_str::<Value>(manifest_json).unwrap(), json!([
+            {"filename":"forwarded.png", "path":"/state/attachments/forwarded.png", "kind":"image"},
+            {"filename":"report.pdf", "path":"/state/attachments/report.pdf", "kind":"file"},
+        ]));
+
+        let ordinary = native_input("", &files);
+        assert_eq!(ordinary.len(), 2);
+        assert_eq!(ordinary[0]["text"], text);
+        assert_eq!(ordinary[1], json!({"type":"localImage", "path":"/state/attachments/forwarded.png"}));
+    }
+
 }

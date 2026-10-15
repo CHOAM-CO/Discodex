@@ -490,15 +490,15 @@ impl EventHandler for Handler {
         };
         let submission = async {
             if let crate::voice_input::InputRoute::Voice { call_id, thread_id } = &route {
-                if !message_attachments.is_empty() {
-                    bail!("{}", state.config.language.text(
-                        "Text input during a voice conversation does not support attachments. Send attachments to the home channel to process them after the call ends.",
-                        "음성 대화의 텍스트 입력은 첨부를 지원하지 않습니다. 첨부는 홈채널에 보내면 통화 종료 후 처리합니다.",
-                        "语音通话中的文本输入不支持附件。请将附件发送到主页频道，并在通话结束后处理。",
-                        "音声通話中のテキスト入力では添付ファイルを利用できません。通話終了後に処理するには、ホームチャンネルに添付ファイルを送信してください。"
-                    ));
+                let total_bytes: u64 = message_attachments.iter().map(|file| u64::from(file.size)).sum();
+                if total_bytes > 250 * 1024 * 1024 {
+                    bail!("Discord message attachments exceed 250 MiB");
                 }
-                return submit_voice_input(&state, &input, &target, *call_id, thread_id).await;
+                let mut attachments = Vec::with_capacity(message_attachments.len());
+                for attachment in &message_attachments {
+                    attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
+                }
+                return submit_voice_input(&state, &input, &attachments, &target, *call_id, thread_id).await;
             }
             // Only directly received, authorized messages reach this download path.
             // Retrieval tools return metadata and never invoke this ingress handler.
@@ -536,10 +536,10 @@ impl EventHandler for Handler {
                                 )
                             } else {
                                 state.config.language.text(
-                                    "Text input during a voice conversation does not support attachments. Send attachments to the home channel to process them after the call ends.",
-                                    "음성 대화의 텍스트 입력은 첨부를 지원하지 않습니다. 첨부는 홈채널에 보내면 통화 종료 후 처리합니다.",
-                                    "语音通话中的文本输入不支持附件。请将附件发送到主页频道，并在通话结束后处理。",
-                                    "音声通話中のテキスト入力では添付ファイルを利用できません。通話終了後に処理するには、ホームチャンネルに添付ファイルを送信してください。"
+                                    "Could not send this message and its attachments to the call. Check whether the call is still active.",
+                                    "이 메시지와 첨부 파일을 통화에 전달하지 못했습니다. 통화가 계속 중인지 확인해 주세요.",
+                                    "无法向此通话发送消息及附件。请确认通话是否仍在进行。",
+                                    "このメッセージと添付ファイルを通話に送信できませんでした。通話が継続中か確認してください。"
                                 )
                             },
                         ),
@@ -1012,6 +1012,7 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
 async fn submit_voice_input(
     state: &BridgeState,
     input: &str,
+    attachments: &[crate::attachments::DownloadedAttachment],
     target: &ReplyTarget,
     call_id: uuid::Uuid,
     thread_id: &str,
@@ -1033,7 +1034,7 @@ async fn submit_voice_input(
     record_input(
         state,
         input,
-        &[],
+        attachments,
         target,
         thread_id,
         QueueDelivery::Submitting,
@@ -1044,7 +1045,9 @@ async fn submit_voice_input(
         .request(
             "thread/realtime/appendText",
             serde_json::json!({
-                "threadId": thread_id, "text": input, "role": "user"
+                "threadId": thread_id,
+                "text": crate::attachments::native_input_text(input, attachments),
+                "role": "user"
             }),
         )
         .await;
