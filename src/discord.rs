@@ -497,10 +497,6 @@ impl EventHandler for Handler {
         };
         let submission = async {
             if let crate::voice_input::InputRoute::Voice { call_id, thread_id } = &route {
-                let total_bytes: u64 = message_attachments.iter().map(|file| u64::from(file.size)).sum();
-                if total_bytes > 250 * 1024 * 1024 {
-                    bail!("Discord message attachments exceed 250 MiB");
-                }
                 let mut attachments = Vec::with_capacity(message_attachments.len());
                 for attachment in &message_attachments {
                     attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
@@ -523,10 +519,6 @@ impl EventHandler for Handler {
             }
             // Only directly received, authorized messages reach this download path.
             // Retrieval tools return metadata and never invoke this ingress handler.
-            let total_bytes: u64 = message_attachments.iter().map(|file| u64::from(file.size)).sum();
-            if total_bytes > 250 * 1024 * 1024 {
-                bail!("Discord message attachments exceed 250 MiB");
-            }
             let mut attachments = Vec::with_capacity(message_attachments.len());
             for attachment in &message_attachments {
                 attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
@@ -2143,7 +2135,10 @@ async fn handle_native_event(
                 if let Some(target) = target {
                     if !text.is_empty() {
                         let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
-                        let chunks = split_content(&prepared.content, 1650);
+                        let mut chunks = split_content(&prepared.content, 1650);
+                        let file_batches = crate::reply_files::attachment_batches(&prepared.files);
+                        let pages = file_batches.len().max(chunks.len());
+                        chunks.resize(pages, "");
                         let mut publish_error = None;
                         for (index, chunk) in chunks.iter().enumerate() {
                             let content = (*chunk).to_owned();
@@ -2164,20 +2159,21 @@ async fn handle_native_event(
                                     &state.config.language,
                                 )
                             };
-                            let builder = if index == 0 {
-                                builder.add_files(prepared.files.iter().map(|file| {
+                            let builder = {
+                                let files = file_batches.get(index)
+                                    .map(|range| &prepared.files[range.clone()])
+                                    .unwrap_or(&[]);
+                                builder.add_files(files.iter().map(|file| {
                                     serenity::builder::CreateAttachment::bytes(
                                         file.data.clone(),
                                         file.filename.clone(),
                                     )
                                 }))
-                            } else {
-                                builder
                             };
                             if let Err(error) = channel.send_message(http, builder).await {
                                 warn!(%error, native_item_id = ?item_id, discord_message_id = %target.message_id, "failed to publish native assistant output");
                                 publish_error = Some(format!("{error:#}"));
-                                if index == 0 && !prepared.files.is_empty() {
+                                if index < file_batches.len() {
                                     let notice = state.config.language.text(
                                         "Could not confirm delivery of the attached files. Please try again.",
                                         "파일 첨부 전송을 확인하지 못했습니다. 다시 요청해 주세요.",

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -11,10 +11,6 @@ use serenity::all::{
 };
 
 use crate::config::Config;
-
-const MAX_SKIP: usize = 1000;
-const CHOICE_TTL: std::time::Duration = std::time::Duration::from_secs(1800);
-const SCAN_MAX: usize = 1000;
 
 #[derive(Clone, PartialEq, Eq)]
 enum Pick {
@@ -35,31 +31,22 @@ enum Pick {
     After(UserId),
 }
 #[derive(Default)]
-struct SelectionMap(HashMap<String, (Pick, std::time::Instant)>);
+struct SelectionMap(HashMap<String, Pick>);
 
 impl SelectionMap {
-    fn insert(&mut self, pick: Pick, now: std::time::Instant) -> Result<String> {
-        self.0
-            .retain(|_, (_, seen)| now.duration_since(*seen) < CHOICE_TTL);
-        for (key, (existing, seen)) in &mut self.0 {
+    fn insert(&mut self, pick: Pick) -> Result<String> {
+        for (key, existing) in &self.0 {
             if *existing == pick {
-                *seen = now;
                 return Ok(key.clone());
             }
         }
-        if self.0.len() >= 10_000 {
-            bail!("too many active name choices; unused choices expire after 30 minutes");
-        }
         let key = format!("choice_{}", uuid::Uuid::new_v4().simple());
-        self.0.insert(key.clone(), (pick, now));
+        self.0.insert(key.clone(), pick);
         Ok(key)
     }
 
-    fn lookup(&self, key: &str, now: std::time::Instant) -> Option<Pick> {
-        self.0
-            .get(key)
-            .filter(|(_, seen)| now.duration_since(*seen) < CHOICE_TTL)
-            .map(|(pick, _)| pick.clone())
+    fn lookup(&self, key: &str) -> Option<Pick> {
+        self.0.get(key).cloned()
     }
 }
 
@@ -138,16 +125,16 @@ impl DiscordTools {
             .selections
             .lock()
             .map_err(|_| anyhow::anyhow!("selection state lock poisoned"))?;
-        map.insert(pick, std::time::Instant::now())
+        map.insert(pick)
     }
 
     fn get_pick(&self, key: &str) -> Result<Pick> {
         self.selections
             .lock()
             .map_err(|_| anyhow::anyhow!("selection state lock poisoned"))?
-            .lookup(key, std::time::Instant::now())
+            .lookup(key)
             .ok_or_else(|| {
-                anyhow::anyhow!("selection expired; list current channels or users again")
+                anyhow::anyhow!("unknown selection; list current channels or users again")
             })
     }
 
@@ -308,7 +295,7 @@ impl DiscordTools {
         {
             bail!("page must be an opaque next_page string")
         }
-        let limit = bounded(args, "limit", 50, 1, 100)?;
+        let limit = bounded(args, "limit", 50, 1, 1000)?;
         let after = match args.get("page").and_then(Value::as_str) {
             Some(k) => match self.get_pick(k)? {
                 Pick::After(id) => Some(id),
@@ -424,9 +411,6 @@ impl DiscordTools {
             .unwrap_or("");
         let files = crate::reply_files::prepare_explicit_files(&self.config, &file_paths).await?;
         validate_send_payload(raw_content, files.len())?;
-        if raw_content.chars().count() > 2000 {
-            bail!("message content exceeds Discord's 2000-character limit")
-        }
         if args.get("mentions").is_some_and(|v| !v.is_array()) {
             bail!("mentions must be an array")
         }
@@ -456,7 +440,6 @@ impl DiscordTools {
         if !files.is_empty() && !perms.contains(Permissions::ATTACH_FILES) {
             bail!("bot lacks ATTACH_FILES permission in selected channel")
         }
-        let mut text = raw_content.to_owned();
         let mention_names = args.get("mentions").and_then(Value::as_array);
         let members = if mention_names.is_some_and(|names| !names.is_empty()) {
             self.list_all_members().await?
@@ -472,47 +455,187 @@ impl DiscordTools {
                 }
             }
         }
-        text = append_mentions(text, &users);
-        if text.chars().count() > 2000 {
-            bail!("message plus explicit mentions exceeds Discord's 2000-character limit")
-        }
-        let mentions = CreateAllowedMentions::new()
-            .everyone(false)
-            .all_roles(false)
-            .all_users(false)
-            .empty_roles()
-            .users(users);
+        let text_chunks = split_message_content(raw_content, &users);
         let server = self.guild().await?.name;
-        let uploads = files
-            .into_iter()
-            .map(|file| CreateAttachment::bytes(file.data, file.filename))
-            .collect::<Vec<_>>();
-        let sent = channel
-            .send_message(
-                &*self.http,
-                CreateMessage::new()
-                    .content(text)
-                    .allowed_mentions(mentions)
-                    .add_files(uploads),
-            )
-            .await
-            .context("send Discord message")?;
-        let attachments = sent
-            .attachments
+        let file_batch_lengths = crate::reply_files::attachment_batches(&files)
             .iter()
-            .map(|attachment| {
-                json!({
-                    "filename": attachment.filename,
-                    "size": attachment.size,
-                    "url": attachment.url,
-                })
-            })
+            .map(|range| range.len())
             .collect::<Vec<_>>();
-        let mut result = json!({"status":"sent","server":server,"channel":channel.name,"message_link":message_link(self.config.guild_id, channel.id.get(), sent.id.get()),"attachments":attachments});
+        let mut pending_files = files.into_iter();
+        let message_count = text_chunks.len().max(file_batch_lengths.len()).max(1);
+        let mut sent_messages = Vec::with_capacity(message_count);
+        let mut all_attachments = Vec::new();
+        let mut send_error = None;
+        for index in 0..message_count {
+            let body = text_chunks.get(index).cloned().unwrap_or_default();
+            let upload_count = file_batch_lengths.get(index).copied().unwrap_or_default();
+            let uploads = pending_files
+                .by_ref()
+                .take(upload_count)
+                .map(|file| CreateAttachment::bytes(file.data, file.filename))
+                .collect::<Vec<_>>();
+            let mentions = CreateAllowedMentions::new()
+                .everyone(false)
+                .all_roles(false)
+                .all_users(false)
+                .empty_roles()
+                .users(users.clone());
+            let sent = match channel
+                .send_message(
+                    &*self.http,
+                    CreateMessage::new()
+                        .content(body)
+                        .allowed_mentions(mentions)
+                        .add_files(uploads),
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "send Discord message chunk {} of {message_count}",
+                        index + 1
+                    )
+                }) {
+                Ok(sent) => sent,
+                Err(error) => {
+                    send_error = Some(error.to_string());
+                    break;
+                }
+            };
+            let link = message_link(self.config.guild_id, channel.id.get(), sent.id.get());
+            let attachments = sent
+                .attachments
+                .iter()
+                .map(|attachment| {
+                    let item = json!({
+                        "filename": attachment.filename,
+                        "size": attachment.size,
+                        "url": attachment.url,
+                        "message_link": link,
+                    });
+                    all_attachments.push(item.clone());
+                    item
+                })
+                .collect::<Vec<_>>();
+            sent_messages.push(json!({"message_link":link,"attachments":attachments}));
+        }
+        let first_link = sent_messages
+            .first()
+            .and_then(|message| message.get("message_link"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let status = match (send_error.is_some(), sent_messages.is_empty()) {
+            (false, _) => "sent",
+            (true, true) => "failed",
+            (true, false) => "partial",
+        };
+        let mut result = json!({"status":status,"server":server,"channel":channel.name,"message_link":first_link,"message_links":sent_messages.iter().filter_map(|message| message.get("message_link").cloned()).collect::<Vec<_>>(),"messages_sent":sent_messages.len(),"messages_requested":message_count,"messages":sent_messages,"attachments":all_attachments});
+        if let Some(error) = send_error {
+            result["error"] = json!(error);
+        }
         if thread(&channel) {
             result["thread"] = thread_context(&channel);
         }
         Ok(result)
+    }
+
+    async fn messages_before(
+        &self,
+        channel: &GuildChannel,
+        mut before: Option<MessageId>,
+        count: usize,
+    ) -> Result<Vec<Message>> {
+        let mut out = Vec::new();
+        while out.len() < count {
+            let page_limit = (count - out.len()).min(100) as u8;
+            let mut request = GetMessages::new().limit(page_limit);
+            if let Some(cursor) = before {
+                request = request.before(cursor);
+            }
+            let page = channel
+                .messages(&*self.http, request)
+                .await
+                .context("read Discord message page")?;
+            if page.is_empty() {
+                break;
+            }
+            let page_len = page.len();
+            before = page.last().map(|message| message.id);
+            out.extend(page);
+            if page_len < page_limit as usize {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    async fn messages_after(
+        &self,
+        channel: &GuildChannel,
+        after: MessageId,
+        count: usize,
+    ) -> Result<Vec<Message>> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let page_limit = count.min(100) as u8;
+        let page = channel
+            .messages(
+                &*self.http,
+                GetMessages::new().limit(page_limit).after(after),
+            )
+            .await
+            .context("read Discord messages after cursor")?;
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for message in page.iter() {
+            if message.id.get() > after.get() && seen.insert(message.id.get()) {
+                out.push(message.clone());
+            }
+        }
+        let mut after_cursor = page
+            .iter()
+            .map(|message| message.id.get())
+            .filter(|id| *id > after.get())
+            .max()
+            .map(MessageId::new);
+        if page.len() < page_limit as usize {
+            out.truncate(count);
+            return Ok(out);
+        }
+        while out.len() < count {
+            let Some(cursor) = after_cursor else {
+                break;
+            };
+            let n = (count - out.len()).min(100) as u8;
+            let page = channel
+                .messages(&*self.http, GetMessages::new().limit(n).after(cursor))
+                .await
+                .context("read next Discord messages after cursor")?;
+            if page.is_empty() {
+                break;
+            }
+            let page_len = page.len();
+            let ids: Vec<_> = page.iter().map(|message| message.id.get()).collect();
+            let progress = after_page_progress(cursor.get(), after.get(), &ids, &mut seen);
+            if !progress.advanced {
+                break;
+            }
+            for message in page {
+                if progress.accepted_ids.contains(&message.id.get()) {
+                    out.push(message);
+                    if out.len() == count {
+                        break;
+                    }
+                }
+            }
+            after_cursor = progress.next_after.map(MessageId::new);
+            if page_len < n as usize {
+                break;
+            }
+        }
+        out.sort_by_key(|message| std::cmp::Reverse(message.id.get()));
+        out.truncate(count);
+        Ok(out)
     }
 
     async fn get_messages(&self, args: &Value) -> Result<Value> {
@@ -530,7 +653,10 @@ impl DiscordTools {
             ],
         )?;
         validate_channel_selection(args)?;
-        let limit = bounded(args, "limit", 50, 1, 100)? as u8;
+        let limit = requested_count(args, "limit", 50)?;
+        if limit == 0 {
+            bail!("limit must be at least 1")
+        }
         let before_link = link_arg(args, "before")?;
         let after_link = link_arg(args, "after")?;
         let around_link = link_arg(args, "around")?;
@@ -542,7 +668,7 @@ impl DiscordTools {
         {
             bail!("choose at most one cursor: before, after, or around")
         }
-        let offset = bounded(args, "offset", 0, 0, MAX_SKIP as u64)? as usize;
+        let offset = requested_count(args, "offset", 0)?;
         if offset > 0 && (after_link.is_some() || around_link.is_some()) {
             bail!("offset cannot be combined with after or around")
         }
@@ -560,12 +686,12 @@ impl DiscordTools {
         require_read_permissions(c.kind, p)?;
         let mut offset = offset;
         let mut cursor = before;
-        let messages = if offset > 0 && after.is_none() && around.is_none() {
+        if offset > 0 && after.is_none() && around.is_none() {
             while offset > 0 {
                 let n = offset.min(100) as u8;
                 let mut req = GetMessages::new().limit(n);
                 if let Some(id) = cursor {
-                    req = req.before(id)
+                    req = req.before(id);
                 }
                 let page = c
                     .messages(&*self.http, req)
@@ -581,27 +707,52 @@ impl DiscordTools {
                 offset = offset.saturating_sub(page.len());
                 cursor = page.last().map(|m| m.id);
             }
-            let mut req = GetMessages::new().limit(limit);
-            if let Some(id) = cursor {
-                req = req.before(id)
-            }
-            c.messages(&*self.http, req)
+        }
+        let messages = if let Some(anchor) = around {
+            if limit <= 100 {
+                c.messages(
+                    &*self.http,
+                    GetMessages::new().limit(limit as u8).around(anchor),
+                )
                 .await
-                .context("read Discord messages")?
+                .context("read Discord messages around cursor")?
+            } else {
+                let seed = c
+                    .messages(&*self.http, GetMessages::new().limit(100).around(anchor))
+                    .await
+                    .context("read Discord messages around cursor")?;
+                if seed.is_empty() {
+                    Vec::new()
+                } else {
+                    let extra = limit.saturating_sub(seed.len());
+                    let older_count = extra.div_ceil(2);
+                    let newer_count = extra / 2;
+                    let older = if older_count > 0 {
+                        self.messages_before(&c, seed.last().map(|m| m.id), older_count)
+                            .await?
+                    } else {
+                        Vec::new()
+                    };
+                    let newer = if newer_count > 0 {
+                        match seed.first().map(|m| m.id) {
+                            Some(id) => self.messages_after(&c, id, newer_count).await?,
+                            None => Vec::new(),
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    newer
+                        .into_iter()
+                        .chain(seed)
+                        .chain(older)
+                        .take(limit)
+                        .collect()
+                }
+            }
+        } else if let Some(anchor) = after {
+            self.messages_after(&c, anchor, limit).await?
         } else {
-            let mut req = GetMessages::new().limit(limit);
-            if let Some(id) = before {
-                req = req.before(id)
-            }
-            if let Some(id) = after {
-                req = req.after(id)
-            }
-            if let Some(id) = around {
-                req = req.around(id)
-            }
-            c.messages(&*self.http, req)
-                .await
-                .context("read Discord messages")?
+            self.messages_before(&c, cursor, limit).await?
         };
         let mut result = message_cursors(
             messages.iter().map(|m| m.id),
@@ -636,8 +787,14 @@ impl DiscordTools {
             ],
         )?;
         validate_channel_selection(args)?;
-        let max = bounded(args, "max_scan", 100, 1, SCAN_MAX as u64)? as usize;
-        let result_limit = bounded(args, "limit", 1000, 1, SCAN_MAX as u64)? as usize;
+        let max = requested_count(args, "max_scan", 100)?;
+        if max == 0 {
+            bail!("max_scan must be at least 1")
+        }
+        let result_limit = requested_count(args, "limit", 1000)?;
+        if result_limit == 0 {
+            bail!("limit must be at least 1")
+        }
         let query = required(args, "query")?;
         if query.is_empty() {
             bail!("query cannot be empty")
@@ -822,9 +979,6 @@ fn explicit_file_paths(args: &Value) -> Result<Vec<String>> {
     let files = files
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("files must be an array of local path strings"))?;
-    if files.len() > 10 {
-        bail!("files may contain at most 10 paths");
-    }
     files
         .iter()
         .enumerate()
@@ -899,6 +1053,16 @@ fn bounded(v: &Value, k: &str, default: u64, min: u64, max: u64) -> Result<u64> 
     }
     Ok(n)
 }
+fn requested_count(v: &Value, key: &str, default: usize) -> Result<usize> {
+    let Some(raw) = v.get(key) else {
+        return Ok(default);
+    };
+    let value = raw
+        .as_u64()
+        .ok_or_else(|| anyhow::anyhow!("{key} must be a non-negative integer"))?;
+    usize::try_from(value).map_err(|_| anyhow::anyhow!("{key} is too large for this platform"))
+}
+
 fn link_arg<'a>(v: &'a Value, k: &str) -> Result<Option<&'a str>> {
     let Some(raw) = v.get(k) else { return Ok(None) };
     let link = raw
@@ -969,6 +1133,33 @@ fn permissions_in(
 fn label(m: &Member) -> String {
     m.display_name().to_owned()
 }
+
+struct AfterPageProgress {
+    accepted_ids: Vec<u64>,
+    next_after: Option<u64>,
+    advanced: bool,
+}
+
+fn after_page_progress(
+    cursor: u64,
+    anchor: u64,
+    page_ids: &[u64],
+    seen: &mut HashSet<u64>,
+) -> AfterPageProgress {
+    let mut accepted_ids = page_ids
+        .iter()
+        .copied()
+        .filter(|id| *id > anchor && *id > cursor && seen.insert(*id))
+        .collect::<Vec<_>>();
+    accepted_ids.sort_unstable_by(|left, right| right.cmp(left));
+    let next_after = page_ids.iter().copied().filter(|id| *id > cursor).max();
+    AfterPageProgress {
+        accepted_ids,
+        next_after,
+        advanced: next_after.is_some_and(|next| next > cursor),
+    }
+}
+
 fn matches_name(m: &Member, q: &str) -> bool {
     name_matches(
         &m.user.name,
@@ -982,20 +1173,42 @@ fn name_matches(username: &str, global: Option<&str>, nickname: Option<&str>, qu
         || global.is_some_and(|s| s.eq_ignore_ascii_case(query))
         || nickname.is_some_and(|s| s.eq_ignore_ascii_case(query))
 }
-fn append_mentions(mut content: String, users: &[UserId]) -> String {
-    if !users.is_empty() {
-        let tags = users
-            .iter()
-            .map(|id| format!("<@{}>", id.get()))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !content.is_empty() {
-            content.push(' ')
+fn split_message_content(content: &str, users: &[UserId]) -> Vec<String> {
+    const MAX_MESSAGE_CHARS: usize = 2000;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut chars = 0;
+    for (index, _) in content.char_indices() {
+        if chars == MAX_MESSAGE_CHARS {
+            chunks.push(content[start..index].to_owned());
+            start = index;
+            chars = 0;
         }
-        content.push_str(&tags)
+        chars += 1;
     }
-    content
+    if start < content.len() {
+        chunks.push(content[start..].to_owned());
+    }
+    for user in users {
+        let mention = format!("<@{}>", user.get());
+        if let Some(last) = chunks.last_mut() {
+            let separator = if last.is_empty() { "" } else { " " };
+            if last.chars().count() + separator.chars().count() + mention.chars().count()
+                <= MAX_MESSAGE_CHARS
+            {
+                last.push_str(separator);
+                last.push_str(&mention);
+                continue;
+            }
+        }
+        chunks.push(mention);
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
 }
+
 fn is_choice(value: &str) -> bool {
     value.strip_prefix("choice_").is_some_and(|suffix| {
         suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1048,17 +1261,17 @@ pub fn tool_definitions(language: crate::i18n::Language) -> Vec<Value> {
                 "使用不透明分页令牌列出已配置服务器中的用户。需要应用启用特权 GUILD_MEMBERS intent。",
                 "不透明なページトークンを使って設定済みサーバーのユーザーを一覧表示します。アプリケーションに特権 GUILD_MEMBERS intent が必要です。"
             ),
-            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":100,"description":language.text("Users per page", "페이지당 사용자 수", "每页用户数", "ページあたりのユーザー数")},"page":{"type":"string","description":language.text("Opaque next-page token returned by the previous result", "이전 결과가 반환한 불투명 다음 페이지 토큰", "上次结果返回的不透明下一页令牌", "前の結果で返された不透明な次ページトークン")}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":1000,"description":language.text("Users per page", "페이지당 사용자 수", "每页用户数", "ページあたりのユーザー数")},"page":{"type":"string","description":language.text("Opaque next-page token returned by the previous result", "이전 결과가 반환한 불투명 다음 페이지 토큰", "上次结果返回的不透明下一页令牌", "前の結果で返された不透明な次ページトークン")}},"additionalProperties":false}),
         ),
         def(
             "discord_send_message",
             language.text(
-                "For explicitly requested sends to another channel or thread; normal replies are posted automatically in the worker's home channel. Provide a channel name or channel_choice from discord_list_channels, or a thread_id from its result or message thread metadata. Optional exact user names for explicit mentions. Optional files is an array of local file paths to attach; files are bounded and checked before sending.",
+                "For explicitly requested sends to another channel or thread; normal replies are posted automatically in the worker's home channel. Provide a channel name or channel_choice from discord_list_channels, or a thread_id from its result or message thread metadata. Long content is split into Discord-sized messages. Optional exact user names for explicit mentions. Optional files is an array of local file paths to attach; files are checked before sending.",
                 "다른 채널이나 스레드로 명시적으로 요청된 메시지를 보냅니다. 일반 답변은 워커의 홈 채널에 자동 게시됩니다. discord_list_channels의 채널 이름·channel_choice 또는 결과나 메시지 thread 정보의 thread_id를 지정하세요. 명시적 멘션은 정확한 사용자 이름을 지정할 수 있습니다. 선택적 files 배열에는 첨부할 로컬 경로를 지정하며, 전송 전에 크기 제한과 경로를 검사합니다.",
-                "用于按明确要求向其他频道或线程发送消息；普通回复会自动发布在 worker 的主频道。提供 discord_list_channels 的频道名称、channel_choice，或其结果/消息 thread 信息中的 thread_id。可提供要明确提及的准确成员姓名。可选 files 数组指定本地附件路径；发送前会检查路径和大小限制。",
-                "明示的に依頼された別チャンネルまたはスレッドへの送信に使います。通常の返答は worker のホームチャンネルに投稿されます。discord_list_channels のチャンネル名・channel_choice、または一覧やメッセージ thread 情報の thread_id を指定します。明示的なメンションには正確なユーザー名を指定できます。任意の files 配列に添付するローカルパスを指定でき、送信前にサイズとパスを確認します。"
+                "用于按明确要求向其他频道或线程发送消息；普通回复会自动发布在 worker 的主频道。提供 discord_list_channels 的频道名称、channel_choice，或其结果/消息 thread 信息中的 thread_id。可提供要明确提及的准确成员姓名。较长内容会拆分成多条 Discord 消息；files 数组中的本地路径会经过检查，附件按 Discord 消息限制分批发送。",
+                "明示的に依頼された別チャンネルまたはスレッドへの送信に使います。通常の返答は worker のホームチャンネルに投稿されます。discord_list_channels のチャンネル名・channel_choice、または一覧やメッセージ thread 情報の thread_id を指定します。明示的なメンションには正確なユーザー名を指定できます。長文は複数のDiscordメッセージに分けます。files 配列のローカルパスを確認し、添付をDiscordメッセージ上限に合わせて分割送信します。"
             ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"content":{"type":"string","description":language.text("Message body", "메시지 내용", "消息正文", "メッセージ本文")},"mentions":{"type":"array","items":{"type":"string"},"description":language.text("Exact current guild-member names to mention explicitly", "명시적으로 멘션할 현재 서버 구성원의 정확한 이름", "要明确提及的服务器当前成员的准确姓名", "明示的にメンションする現在のサーバーメンバーの正確な名前")},"files":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string"},"description":language.text("Optional local file paths to attach (up to 10); files are size- and path-checked", "선택 사항: 첨부할 로컬 파일 경로(최대 10개); 파일 크기와 경로를 검사합니다", "可选：要附加的本地文件路径（最多 10 个）；会检查文件大小和路径", "任意：添付するローカルファイルのパス（最大10件）。サイズとパスを検査します")}},"anyOf":[{"required":["content"]},{"required":["files"]}],"additionalProperties":false}),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"content":{"type":"string","description":language.text("Message body; long content is sent as multiple Discord-sized messages", "메시지 내용; 긴 내용은 Discord 메시지 크기에 맞춰 여러 개로 나눠 보냅니다", "消息正文；较长内容会拆分为多条符合 Discord 限制的消息", "メッセージ本文。長文はDiscordの上限に合わせて複数のメッセージに分けて送ります")},"mentions":{"type":"array","items":{"type":"string"},"description":language.text("Exact current guild-member names to mention explicitly", "명시적으로 멘션할 현재 서버 구성원의 정확한 이름", "要明确提及的服务器当前成员的准确姓名", "明示的にメンションする現在のサーバーメンバーの正確な名前")},"files":{"type":"array","minItems":1,"items":{"type":"string"},"description":language.text("Optional local file paths to attach; files are checked and split into Discord-sized message batches", "선택 사항: 첨부할 로컬 파일 경로입니다. 파일을 검사하고 Discord 메시지 크기에 맞춰 나눠 보냅니다", "可选：要附加的本地文件路径；会检查文件并按 Discord 消息限制分批发送", "任意：添付するローカルファイルのパスです。ファイルを確認し、Discordメッセージ上限に合わせて分割送信します")}},"anyOf":[{"required":["content"]},{"required":["files"]}],"additionalProperties":false}),
         ),
         def(
             "discord_get_messages",
@@ -1068,17 +1281,17 @@ pub fn tool_definitions(language: crate::i18n::Language) -> Vec<Value> {
                 "从频道名称、channel_choice 或频道/消息元数据返回的 thread_id 读取消息；也支持通过 ID 查询已归档线程。before、after 或 around 游标使用 Discord 消息链接。",
                 "チャンネル名、channel_choice、またはチャンネル/メッセージ情報で返された thread_id から読み込みます。ID指定でアーカイブ済みスレッドも読めます。before、after、around にはDiscordメッセージリンクを使います。"
             ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"limit":{"type":"integer","minimum":1,"maximum":100,"description":language.text("Maximum number of messages to return", "반환할 최대 메시지 수", "最多返回的消息数", "返すメッセージの最大数")},"before":{"type":"string","description":language.text("Discord message link; return messages before this message", "Discord 메시지 링크; 이 메시지보다 이전 메시지를 반환합니다", "Discord 消息链接；返回此消息之前的消息", "Discordメッセージリンク。このメッセージより前を返します")},"after":{"type":"string","description":language.text("Discord message link; return messages after this message", "Discord 메시지 링크; 이 메시지보다 이후 메시지를 반환합니다", "Discord 消息链接；返回此消息之后的消息", "Discordメッセージリンク。このメッセージより後を返します")},"around":{"type":"string","description":language.text("Discord message link; return messages around this message", "Discord 메시지 링크; 이 메시지 주변의 메시지를 반환합니다", "Discord 消息链接；返回此消息附近的消息", "Discordメッセージリンク。このメッセージの前後を返します")},"offset":{"type":"integer","minimum":0,"maximum":1000,"description":language.text("Optional number of recent messages to skip", "선택 사항: 최근 메시지 중 건너뛸 수", "可选：跳过最近的消息数", "任意指定：直近のメッセージからスキップする件数")}},"additionalProperties":false}),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"limit":{"type":"integer","minimum":1,"description":language.text("Maximum number of messages to return; larger requests are paged automatically", "반환할 최대 메시지 수", "最多返回的消息数", "返すメッセージの最大数")},"before":{"type":"string","description":language.text("Discord message link; return messages before this message", "Discord 메시지 링크; 이 메시지보다 이전 메시지를 반환합니다", "Discord 消息链接；返回此消息之前的消息", "Discordメッセージリンク。このメッセージより前を返します")},"after":{"type":"string","description":language.text("Discord message link; return messages after this message", "Discord 메시지 링크; 이 메시지보다 이후 메시지를 반환합니다", "Discord 消息链接；返回此消息之后的消息", "Discordメッセージリンク。このメッセージより後を返します")},"around":{"type":"string","description":language.text("Discord message link; return messages around this message", "Discord 메시지 링크; 이 메시지 주변의 메시지를 반환합니다", "Discord 消息链接；返回此消息附近的消息", "Discordメッセージリンク。このメッセージの前後を返します")},"offset":{"type":"integer","minimum":0,"description":language.text("Optional number of recent messages to skip", "선택 사항: 최근 메시지 중 건너뛸 수", "可选：跳过最近的消息数", "任意指定：直近のメッセージからスキップする件数")}},"additionalProperties":false}),
         ),
         def(
             "discord_search_messages",
             language.text(
-                "Search bounded recent history in a channel name, channel_choice, or thread_id using literal substring matching.",
+                "Search recent history in a channel name, channel_choice, or thread_id using literal substring matching. Requested ranges are paged through Discord history.",
                 "채널 이름, channel_choice 또는 thread_id의 제한된 최근 기록에서 문자 그대로의 부분 문자열을 검색합니다.",
                 "在频道名称、channel_choice 或 thread_id 的有限近期历史记录中进行字面子串搜索。",
                 "チャンネル名、channel_choice、または thread_id の範囲を限定した最近の履歴から、文字どおりの部分文字列を検索します。"
             ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"query":{"type":"string","description":language.text("Literal substring to search for", "문자 그대로 검색할 부분 문자열", "要搜索的字面子串", "そのまま検索する部分文字列")},"max_scan":{"type":"integer","minimum":1,"maximum":1000,"description":language.text("Maximum number of recent messages to inspect", "확인할 최근 메시지의 최대 수", "最多检查的近期消息数", "確認する直近メッセージの最大数")},"limit":{"type":"integer","minimum":1,"maximum":1000,"description":language.text("Maximum number of matches to return", "반환할 최대 일치 수", "最多返回的匹配数", "返す一致件数の最大数")}},"required":["query"],"additionalProperties":false}),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; optional when channel_choice is provided", "채널 이름; channel_choice가 있으면 생략할 수 있습니다", "频道名称；提供 channel_choice 时可省略", "チャンネル名。channel_choice を指定する場合は省略可")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"query":{"type":"string","description":language.text("Literal substring to search for", "문자 그대로 검색할 부분 문자열", "要搜索的字面子串", "そのまま検索する部分文字列")},"max_scan":{"type":"integer","minimum":1,"description":language.text("Maximum number of recent messages to inspect; requests are paged automatically", "확인할 최근 메시지의 최대 수", "最多检查的近期消息数", "確認する直近メッセージの最大数")},"limit":{"type":"integer","minimum":1,"description":language.text("Maximum number of matches to return", "반환할 최대 일치 수", "最多返回的匹配数", "返す一致件数の最大数")}},"required":["query"],"additionalProperties":false}),
         ),
         def(
             "discord_download_attachment",
@@ -1111,7 +1324,12 @@ mod tests {
         );
         assert!(explicit_file_paths(&json!({"files":"/tmp/one.txt"})).is_err());
         assert!(explicit_file_paths(&json!({"files":["/tmp/one.txt", " "]})).is_err());
-        assert!(explicit_file_paths(&json!({"files":vec!["/tmp/x"; 11]})).is_err());
+        assert_eq!(
+            explicit_file_paths(&json!({"files":vec!["/tmp/x"; 11]}))
+                .unwrap()
+                .len(),
+            11
+        );
         assert!(validate_send_payload("", 0).is_err());
         assert!(validate_send_payload("", 1).is_ok());
         assert!(validate_send_payload("caption", 0).is_ok());
@@ -1132,7 +1350,7 @@ mod tests {
             .unwrap();
         assert_eq!(send["inputSchema"]["properties"]["files"]["type"], "array");
         assert_eq!(send["inputSchema"]["properties"]["files"]["minItems"], 1);
-        assert_eq!(send["inputSchema"]["properties"]["files"]["maxItems"], 10);
+        assert!(send["inputSchema"]["properties"]["files"]["maxItems"].is_null());
         assert_eq!(
             send["inputSchema"]["properties"]["thread_id"]["type"],
             "string"
@@ -1165,6 +1383,23 @@ mod tests {
                 .unwrap()
                 .contains("local saved path")
         );
+        let users = definitions
+            .iter()
+            .find(|tool| tool["name"] == "discord_list_users")
+            .unwrap();
+        assert_eq!(users["inputSchema"]["properties"]["limit"]["maximum"], 1000);
+        let history = definitions
+            .iter()
+            .find(|tool| tool["name"] == "discord_get_messages")
+            .unwrap();
+        assert!(history["inputSchema"]["properties"]["limit"]["maximum"].is_null());
+        assert!(history["inputSchema"]["properties"]["offset"]["maximum"].is_null());
+        let search = definitions
+            .iter()
+            .find(|tool| tool["name"] == "discord_search_messages")
+            .unwrap();
+        assert!(search["inputSchema"]["properties"]["max_scan"]["maximum"].is_null());
+        assert!(search["inputSchema"]["properties"]["limit"]["maximum"].is_null());
     }
 
     #[test]
@@ -1233,10 +1468,62 @@ mod tests {
         assert!(!is_choice("choice_nickname"));
     }
     #[test]
-    fn mention_content_appends_explicit_ids_and_preserves_body() {
-        let ids = [UserId::new(7), UserId::new(9)];
-        assert_eq!(append_mentions("hello".into(), &ids), "hello <@7> <@9>");
-        assert_eq!(append_mentions(String::new(), &[]), "");
+    fn long_message_content_is_chunked_at_the_discord_limit_and_mentions_stay_whole() {
+        let body = format!("{} ", "x".repeat(4005));
+        let chunks = split_message_content(&body, &[UserId::new(7), UserId::new(9)]);
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 2000));
+        assert!(chunks.last().unwrap().ends_with("<@7> <@9>"));
+        let combined = chunks.join("");
+        let recovered_body = combined
+            .strip_suffix("<@7> <@9>")
+            .unwrap()
+            .strip_suffix(' ')
+            .unwrap();
+        assert_eq!(recovered_body, body);
+    }
+
+    #[test]
+    fn after_pagination_advances_to_newer_pages_without_duplicates() {
+        let mut seen = HashSet::new();
+        for id in (101..=200).rev() {
+            seen.insert(id);
+        }
+        let next_page = vec![205, 204, 203, 202, 201];
+        let progress = after_page_progress(200, 100, &next_page, &mut seen);
+        assert_eq!(progress.accepted_ids, vec![205, 204, 203, 202, 201]);
+        assert_eq!(progress.next_after, Some(205));
+        assert!(progress.advanced);
+
+        let overlapping_page = vec![205, 204, 210, 209];
+        let progress = after_page_progress(205, 100, &overlapping_page, &mut seen);
+        assert_eq!(progress.accepted_ids, vec![210, 209]);
+        assert_eq!(progress.next_after, Some(210));
+        assert!(progress.advanced);
+    }
+
+    #[test]
+    fn after_pagination_stops_when_cursor_does_not_advance() {
+        let mut seen = HashSet::from([150, 149]);
+        let repeated_page = vec![150, 149];
+        let progress = after_page_progress(150, 100, &repeated_page, &mut seen);
+        assert!(progress.accepted_ids.is_empty());
+        assert_eq!(progress.next_after, None);
+        assert!(!progress.advanced);
+    }
+
+    #[test]
+    fn requested_counts_accept_values_larger_than_prior_tool_caps() {
+        assert_eq!(
+            requested_count(&json!({"offset":500_000}), "offset", 0).unwrap(),
+            500_000
+        );
+        assert_eq!(
+            requested_count(&json!({"max_scan":25_000}), "max_scan", 100).unwrap(),
+            25_000
+        );
+        assert!(requested_count(&json!({"limit":-1}), "limit", 50).is_err());
+        assert!(requested_count(&json!({"limit":"100"}), "limit", 50).is_err());
     }
     #[test]
     fn numeric_bounds_and_message_id_inputs_are_strict() {
@@ -1317,21 +1604,18 @@ mod tests {
     }
 
     #[test]
-    fn repeated_choices_reuse_identity_and_expired_choices_are_removed() {
-        let now = std::time::Instant::now();
+    fn repeated_choices_remain_usable_without_an_arbitrary_expiration() {
         let mut choices = SelectionMap::default();
         let pick = Pick::User {
             id: UserId::new(7),
             label: "Nick".to_owned(),
         };
-        let first = choices.insert(pick.clone(), now).unwrap();
-        assert_eq!(choices.insert(pick.clone(), now).unwrap(), first);
-        assert!(choices.lookup(&first, now).is_some());
+        let first = choices.insert(pick.clone()).unwrap();
+        assert_eq!(choices.insert(pick.clone()).unwrap(), first);
+        assert!(choices.lookup(&first).is_some());
         assert_eq!(choices.0.len(), 1);
-        let later = now + CHOICE_TTL;
-        assert!(choices.lookup(&first, later).is_none());
-        let second = choices.insert(pick, later).unwrap();
-        assert_ne!(first, second);
+        assert!(choices.lookup(&first).is_some());
+        assert_eq!(choices.insert(pick).unwrap(), first);
         assert_eq!(choices.0.len(), 1);
     }
 

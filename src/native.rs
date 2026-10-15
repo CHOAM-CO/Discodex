@@ -45,8 +45,6 @@ pub type VoiceLeaveHandler =
 pub type DiscordToolHandler =
     Arc<dyn Fn(String, Value) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
 
-const MAX_VOICE_IPC_MESSAGE_BYTES: usize = 64 * 1024;
-const MAX_VOICE_IPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 struct ServerRequestState {
     generation: u64,
@@ -1425,9 +1423,6 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
             break;
         }
         request_bytes.push(byte[0]);
-        if request_bytes.len() > MAX_VOICE_IPC_MESSAGE_BYTES {
-            bail!("voice tool IPC request exceeds message limit");
-        }
     }
     let request: Value =
         serde_json::from_slice(&request_bytes).context("parse voice tool IPC JSON-RPC request")?;
@@ -1435,8 +1430,7 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
         .get("id")
         .cloned()
         .context("voice tool IPC request has no JSON-RPC id")?;
-    let response_id = id.clone();
-    let mut response = if request.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+    let response = if request.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         voice_rpc_error(id, -32600, "JSON-RPC version must be 2.0")
     } else {
         match request.get("method").and_then(Value::as_str) {
@@ -1486,14 +1480,6 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
         }
     };
     let mut bytes = serde_json::to_vec(&response).context("serialize voice tool IPC response")?;
-    if bytes.len() > MAX_VOICE_IPC_RESPONSE_BYTES {
-        response = voice_rpc_error(
-            response_id,
-            -32000,
-            "Discord tool result exceeded the 4 MiB response limit",
-        );
-        bytes = serde_json::to_vec(&response).context("serialize bounded voice tool IPC error")?;
-    }
     bytes.push(b'\n');
     stream
         .write_all(&bytes)

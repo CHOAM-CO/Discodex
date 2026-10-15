@@ -13,7 +13,6 @@ use uuid::Uuid;
 
 use crate::config::Config;
 
-const MAX_ATTACHMENT_BYTES: u64 = 100 * 1024 * 1024;
 const ATTACHMENT_MANIFEST_MARKER: &str = "\n\nAttachment manifest:\n";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,9 +77,6 @@ pub async fn download_attachment(
     config: &Config,
     attachment: &Attachment,
 ) -> Result<DownloadedAttachment> {
-    if u64::from(attachment.size) > MAX_ATTACHMENT_BYTES {
-        bail!("Discord attachment exceeds the 100 MiB download limit");
-    }
     let url = validate_discord_cdn_url(&attachment.url)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -97,12 +93,6 @@ pub async fn download_attachment(
         .error_for_status()
         .map_err(|error| error.without_url())
         .context("Discord attachment download returned an error status")?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_ATTACHMENT_BYTES)
-    {
-        bail!("Discord attachment exceeds the 100 MiB download limit");
-    }
 
     let directory = private_attachment_dir(config)?;
     let temporary_path = directory.join(format!(".{}.part", Uuid::new_v4()));
@@ -120,9 +110,6 @@ pub async fn download_attachment(
         downloaded = downloaded
             .checked_add(chunk.len() as u64)
             .context("Discord attachment size overflow")?;
-        if downloaded > MAX_ATTACHMENT_BYTES {
-            bail!("Discord attachment exceeds the 100 MiB download limit");
-        }
         let prefix_bytes = 24usize.saturating_sub(prefix.len()).min(chunk.len());
         prefix.extend_from_slice(&chunk[..prefix_bytes]);
         file.write_all(&chunk)

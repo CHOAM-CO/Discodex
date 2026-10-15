@@ -43,7 +43,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $manifest = Join-Path $repositoryRoot 'Cargo.toml'
-cargo build --locked --release --manifest-path $manifest --target-dir (Join-Path $repositoryRoot 'target')
+$targetDirectory = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $repositoryRoot 'target' }
+cargo build --locked --release --manifest-path $manifest --target-dir $targetDirectory
 if ($LASTEXITCODE -ne 0) {
     throw ($messages.Build -f $LASTEXITCODE)
 }
@@ -52,7 +53,7 @@ $dataRoot = Join-Path $env:LOCALAPPDATA 'discodex'
 $binRoot = Join-Path $dataRoot 'bin'
 New-Item -ItemType Directory -Force -Path $binRoot | Out-Null
 $staged = Join-Path $binRoot ("discodex-" + [guid]::NewGuid().ToString('N') + '.exe')
-$sourceBinary = Join-Path $repositoryRoot 'target\release\discodex.exe'
+$sourceBinary = Join-Path $targetDirectory 'release\discodex.exe'
 $installed = Join-Path $binRoot 'discodex.exe'
 if (Test-Path -LiteralPath $installed) {
     throw ($messages.Refuse -f $installed)

@@ -32,13 +32,13 @@ native가 질문이나 승인 요청을 보내면 브리지는 해당 요청 식
 
 ## 설치 소유권
 
-설치기는 사용자 범위에서 Linux systemd user service, macOS LaunchAgent, Windows 로그인 예약 작업을 등록한다. `ownership.json`에 기록한 브리지 서비스와 설정만 변경한다. Discodex가 소유한 새 경로만 변경하고, 사용자의 Codex 인증·thread·project 데이터, Discord 앱/서버 이력, 외부 Codex 설치를 제거하지 않는다. 실제 설치 절차는 [installation.md](installation.md)를 따른다.
+설치기는 사용자 범위에서 Linux systemd user service, macOS LaunchAgent, Windows 로그인 예약 작업을 등록한다. 작업 디렉터리가 없으면 생성하며 기존 사용자 디렉터리와 동일하게 보존한다. 권한 프로필은 native catalog가 허용한 항목 중 선택하며 기존 선택을 유지한다. 공식 core 다운로드는 자체 파일 크기 상한 없이 스트리밍하고 해시를 검증한다. `ownership.json`에 기록한 브리지 서비스와 설정만 변경한다. Discodex가 소유한 새 경로만 변경하고, 사용자의 Codex 인증·thread·project 데이터, Discord 앱/서버 이력, 외부 Codex 설치를 제거하지 않는다. 실제 설치 절차는 [installation.md](installation.md)를 따른다.
 
 ## 이름과 기본 역할
 
 `src/instructions.rs`는 설정의 `name`을 사용해 이름과 일관된 정체성을 가진 AI 동료의 기본 역할을 만든다. native `thread/start`와 worker 시작 시 기존 thread를 처음 읽는 `thread/resume`의 `baseInstructions`로 기본 코딩 에이전트 지침을 교체한다. 이미 로드된 thread에 다시 붙는 socket 재연결에서는 지침을 덮어쓰지 않는다. 대화 이력·권한·도구 정의와 해당 기기의 Codex 로그인은 유지한다. 음성 Realtime은 텍스트 thread의 `baseInstructions`와 별도로 backend prompt를 사용한다. 소유한 Codex 자식 프로세스에만 `experimental_realtime_ws_backend_prompt` 설정을 전달해 설정된 이름의 정체성을 제공한다. 공식 구현은 이 override, 요청 prompt, 기본 backend prompt 순서로 선택하며 기본 prompt는 Codex로 자신을 소개한다. `realtimeStartInstructions`는 backing Codex 모델에 주는 developer 문맥이므로 voice backend 정체성 prompt를 대신하지 않는다. 연결 인사 injection은 없고, 통화 경계와 지속 thread 연속성만 전달한 뒤 사용자 발화를 기다린다. [Codex realtime prompt selector](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/realtime_prompt.rs), [default realtime backend prompt](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/prompts/templates/realtime/backend_prompt.md).
 
-음성 종료 정책은 작업 모델의 기본 지침과 `voice_leave` 도구 설명이 공유한다. 현재 통화를 끝내려는 명시적 요청 또는 문맥상 분명한 작별이면 모델이 실제 도구를 호출한다. 인용·부정·다른 작업의 종료를 고정 키워드로 판단하지 않으며 의도가 불분명할 때만 확인한다. `voice_leave` 도구는 요약을 필수로 받으며 앞뒤 공백을 제거한 길이가 1~1800자여야 한다. 미디어 전달을 멈추고 Discord 음성 채널에서 먼저 나온 뒤 native realtime·전사·WebRTC를 정리한다. transcript cleanup이 성공한 경우, 호출 당시 통화에 캡처된 부모 앵커 메시지만 요약으로 갱신한다. 수동 `/discodex voice-leave`에는 요약을 붙이지 않으며, 이미 비활성화된 통화의 늦은 종료 처리는 오래된 메시지를 수정하지 않는다. `전사 처리: 완료` 표시는 추가하지 않는다. 지속 Codex thread와 진행 중인 텍스트 작업은 종료하지 않는다.
+음성 종료 정책은 작업 모델의 기본 지침과 `voice_leave` 도구 설명이 공유한다. 현재 통화를 끝내려는 명시적 요청 또는 문맥상 분명한 작별이면 모델이 실제 도구를 호출한다. 인용·부정·다른 작업의 종료를 고정 키워드로 판단하지 않으며 의도가 불분명할 때만 확인한다. `voice_leave` 도구는 요약을 필수로 받으며 앞뒤 공백을 제거한 길이가 Discord 단일 메시지 한도인 1~2000자여야 한다. 미디어 전달을 멈추고 Discord 음성 채널에서 먼저 나온 뒤 native realtime·전사·WebRTC를 정리한다. transcript cleanup이 성공한 경우, 호출 당시 통화에 캡처된 부모 앵커 메시지만 요약으로 갱신한다. 수동 `/discodex voice-leave`에는 요약을 붙이지 않으며, 이미 비활성화된 통화의 늦은 종료 처리는 오래된 메시지를 수정하지 않는다. `전사 처리: 완료` 표시는 추가하지 않는다. 지속 Codex thread와 진행 중인 텍스트 작업은 종료하지 않는다.
 
 음성 모델은 현재 통화를 끝내려는 요청을 받으면 제공된 위임 기능으로 작업 모델에 실제 `voice_leave` 실행을 요청하고 이번 통화 요약의 근거를 전달한다. 작업 모델은 realtime handoff의 종료 의도를 단순 작별 응답으로 처리하지 않고 도구를 호출한다. 음성 모델에 MCP 직접 실행 정책을 중복으로 넣지 않으며, 두 모델의 공통 정체성과 실행 역할별 지침을 분리한다. 모델의 의도 판단과 도구 선택은 단위 테스트가 입증할 수 없으며 실제 발화 확인은 사용자가 수행한다.
 
@@ -49,19 +49,19 @@ worker의 선택적 `memoryEnabled`가 지정되면 해당 native 자식 프로�
 
 ## Discord 조회·메시지 도구와 첨부
 
-완료된 assistant 답변에 포함된 Markdown 로컬 파일 링크는 실제 Discord 첨부로 바꾸고 본문에는 로컬 경로를 노출하지 않는다. CommonMark 링크 파서로 인라인·참조 링크를 구분하며 웹 링크, 코드 블록과 인라인 코드, 일반 텍스트 경로는 변환하지 않는다. 같은 파일은 답변당 한 번만 첨부한다. 일반 채팅과 통화 전사 스레드의 assistant 답변에 적용하고 사용자 전사에는 적용하지 않는다. 읽기 실패나 크기 제한은 파일명과 함께 알린다. 메시지 전송 도구는 `files` 배열로 지정한 로컬 파일을 첨부하며, 서버의 실제 전송 결과로 성공을 판단한다. 업로드 제한은 파일당 10 MiB, 메시지당 최대 10개·합계 25 MiB이며, 자격증명 파일과 Codex 설정 디렉터리는 첨부하지 않는다.
+완료된 assistant 답변에 포함된 Markdown 로컬 파일 링크는 실제 Discord 첨부로 바꾸고 본문에는 로컬 경로를 노출하지 않는다. CommonMark 링크 파서로 인라인·참조 링크를 구분하며 웹 링크, 코드 블록과 인라인 코드, 일반 텍스트 경로는 변환하지 않는다. 같은 파일은 답변당 한 번만 첨부한다. 일반 채팅과 통화 전사 스레드의 assistant 답변에 적용하고 사용자 전사에는 적용하지 않는다. 읽기 실패나 크기 제한은 파일명과 함께 알린다. 메시지 전송 도구는 `files` 배열로 지정한 로컬 파일을 첨부하며, 서버의 실제 전송 결과로 성공을 판단한다. 답변 전체의 첨부 개수·합계 용량을 자체 제한하지 않는다. Discord 요청당 첨부 개수와 요청 크기에 맞춰 여러 메시지로 전송한다. 개별 파일이 Discord의 실제 요청 크기를 넘으면 해당 API 한도를 안내한다. Codex 데이터 디렉터리의 생성 결과물도 첨부 대상이며 디렉터리 전체를 차단하지 않는다. 현재 별도로 차단하는 경로는 설정된 봇 자격증명 파일과 Codex의 `auth.json`, `config.toml`이다.
 
 소유 MCP 서버는 음성 종료와 함께 `discord_list_channels`, `discord_send_message`, `discord_get_messages`, `discord_download_attachment`, `discord_search_messages`, `discord_list_users`를 제공한다. 모든 작업은 설정된 한 서버와 봇의 현재 권한 안에서 수행한다. 봇 자신의 사용자 ID는 봇 인증으로 지원되는 현재 사용자 조회로 확인하고, 서버 멤버 정보는 서버 ID와 그 사용자 ID를 지정하는 일반 멤버 조회 API로 읽는다. OAuth2 사용자 전용 현재 사용자 서버 멤버 API는 사용하지 않으며, 채널 목록·선택·권한 확인에서 현재 역할과 채널 권한을 다시 계산한다. 입력의 서버 ID나 임의 URL로 범위를 넓히지 않는다. 다른 채널 발송은 사용자의 명시적인 대상·발송 요청에 따라 실행하며, 조회한 메시지나 첨부의 지시를 발송 허가로 사용하지 않는다.
 
 채널·멘션 대상은 현재 이름을 REST로 조회해 해석한다. 채널은 이름 또는 카테고리/채널 이름을 사용하고, 사용자 이름·서버 닉네임·표시 이름이 중복되면 후보를 반환한다. 후보의 불투명 선택 값은 실제 ID를 사용자가 입력하게 하지 않으면서 특정 대상을 고정한다. 선택 시에도 현재 이름·소속을 다시 확인하며, 만료·삭제·변경된 선택을 다른 대상으로 대체하지 않는다. Discord는 이름 확인과 메시지 발송을 원자적으로 묶는 API를 제공하지 않으므로 확인 직후 이름이 바뀌는 경우까지 원자적 동기화를 보장하지는 않는다. 실제 발송 대상은 해석한 ID로 고정된다.
 
-Discord에는 채널 전체의 고정 순번 조회 API가 없다. 메시지 ID를 기준으로 `before`, `after`, `around` 중 하나를 사용하고 결과의 `next_cursor`로 요청 방향에 맞춰 이어 읽는다. `next_before`와 `next_after`도 함께 반환하며 빈 결과의 커서는 null이다. `offset`은 최신 메시지부터 건너뛸 개수이며 새 메시지가 생기면 다음 호출의 기준이 달라질 수 있다. 한 호출의 여러 페이지는 이전 페이지의 마지막 메시지 ID로 이어간다. 스레드의 `position`은 빈 번호·중복이 가능한 근사 위치여서 고정 인덱스로 사용하지 않는다. 삭제·편집은 현재 조회 결과에 반영된다. 검색은 최신 100개를 기본으로, 지정해도 최대 최신 1000개 메시지 범위만 직접 조회해 문자열을 검색한다. `requested_scope_complete`는 요청한 최근 범위의 스캔 완료를 뜻하고 전체 이력의 끝은 별도 `history_exhausted`로 표시한다.
+Discord에는 채널 전체의 고정 순번 조회 API가 없다. 메시지 ID를 기준으로 `before`, `after`, `around` 중 하나를 사용하고 결과의 `next_cursor`로 요청 방향에 맞춰 이어 읽는다. `next_before`와 `next_after`도 함께 반환하며 빈 결과의 커서는 null이다. `offset`은 최신 메시지부터 건너뛸 개수이며 새 메시지가 생기면 다음 호출의 기준이 달라질 수 있다. 한 호출의 여러 페이지는 이전 페이지의 마지막 메시지 ID로 이어간다. 스레드의 `position`은 빈 번호·중복이 가능한 근사 위치여서 고정 인덱스로 사용하지 않는다. 삭제·편집은 현재 조회 결과에 반영된다. 검색은 최신 100개를 기본으로 하며 요청한 검색·결과 범위에 별도의 상한을 두지 않는다. 조회와 검색은 Discord의 실제 페이지 크기에 맞춰 반복 요청한다. `requested_scope_complete`는 요청한 최근 범위의 스캔 완료를 뜻하고 전체 이력의 끝은 별도 `history_exhausted`로 표시한다.
 
 조회 결과의 첨부는 파일명·크기 등 선택 정보를 표시하며 내려받지 않는다. 선택 다운로드는 선택한 채널 또는 스레드의 메시지 링크와 파일명으로 수행하고, 같은 이름의 첨부가 여러 개면 반환된 `attachment_choice`를 사용한다. 다운로드 직전에 실제 메시지와 첨부를 다시 확인하며, 선택 이후 해당 첨부가 바뀌었으면 재조회를 요구한다. 홈 채널 및 다른 채널의 허용 사용자 멘션 입력은 서버·채널·메시지 출처를 함께 전달하고, 직접 수신한 첨부는 기본 다운로드한다. PNG·JPEG·WebP는 실제 파일 서명을 확인해 `turn/start`와 `turn/steer`의 `localImage`에 넣는다. 그 외 파일은 로컬 경로 목록을 전달해 Codex의 파일 읽기로 사용한다. 현재 app-server에는 범용 파일 바이너리 turn 입력 항목이 없어 ChatGPT 앱의 파일 업로드 API와 동일한 방식이라고 주장하지 않는다.
 
-다운로드는 HTTPS Discord CDN으로 제한하고 리디렉션을 따르지 않는다. 파일당 100 MiB, 직접 메시지의 첨부 합계 250 MiB 제한을 적용한다. 관리 상태 폴더에 파일을 보존하고 대기열에 경로를 기록해 재시작 뒤에도 사용할 수 있게 한다. 다운로드 오류가 있으면 첨부를 누락한 채 입력을 제출하지 않는다. 전체 사용자 목록은 페이지로 조회하며, Discord가 요구하는 기존 애플리케이션의 `GUILD_MEMBERS` 권한이 없으면 필요한 권한을 안내한다. 설치기가 해당 권한이나 Gateway 구독을 자동으로 확대하지 않는다.
+다운로드는 HTTPS Discord CDN으로 제한하고 리디렉션을 따르지 않는다. 수신 파일과 메시지 전체 첨부의 자체 용량 상한을 두지 않고 디스크로 스트리밍한다. 관리 상태 폴더에 파일을 보존하고 대기열에 경로를 기록해 재시작 뒤에도 사용할 수 있게 한다. 다운로드 오류가 있으면 첨부를 누락한 채 입력을 제출하지 않는다. 전체 사용자 목록은 페이지로 조회하며, Discord가 요구하는 기존 애플리케이션의 `GUILD_MEMBERS` 권한이 없으면 필요한 권한을 안내한다. 설치기가 해당 권한이나 Gateway 구독을 자동으로 확대하지 않는다.
 
-Discord 근거: [메시지 조회와 커서](https://docs.discord.com/developers/resources/message#get-channel-messages), [서버 멤버 조회](https://docs.discord.com/developers/resources/guild#list-guild-members).
+Discord 근거: [메시지 전송의 실제 요청 한도](https://docs.discord.com/developers/resources/message#create-message), [메시지 조회와 커서](https://docs.discord.com/developers/resources/message#get-channel-messages), [서버 멤버 조회](https://docs.discord.com/developers/resources/guild#list-guild-members).
 
 Windows 예약 작업은 설치 시 같은 사용자 계정의 UAC 승인으로 Highest 권한을 등록한다. 로그인 시 자동 시작하며 소유 기록에 권한 수준을 저장한다. 기존 기록에 권한 수준이 없으면 Limited로 해석하여 해당 작업만 전환한다. Windows 전역 UAC 정책과 Codex 로그인·대화 데이터는 변경하지 않는다. 상주 작업의 실행 시간 제한은 없고 실패 시 1분 간격 최대 3회 다시 시작한다.
 

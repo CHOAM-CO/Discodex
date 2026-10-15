@@ -2978,14 +2978,8 @@ fn server_request_messages_with_source_link_language(
     source_link: Option<&str>,
     language: crate::i18n::Language,
 ) -> Vec<CreateMessage> {
-    let mut content = describe_server_request_with_language(method, params, language);
-    let full_question = method == "item/tool/requestUserInput"
-        || (method == "mcpServer/elicitation/request"
-            && matches!(
-                params.get("mode").and_then(Value::as_str),
-                Some("form" | "openai/form" | "openaiForm")
-            ));
-    let chunks = if full_question && content.len() > 1800 {
+    let content = describe_server_request_with_language(method, params, language);
+    let chunks = if content.len() > 1800 {
         let mut chunks = Vec::new();
         let mut remaining = content.as_str();
         while !remaining.is_empty() {
@@ -2998,18 +2992,6 @@ fn server_request_messages_with_source_link_language(
         }
         chunks
     } else {
-        if content.len() > 1800 {
-            truncate_utf8(&mut content, 1780);
-            content.push_str(&format!(
-                "…\n{}",
-                language.text(
-                    "(Part of the request was omitted due to the length limit.)",
-                    "(요청 설명의 일부가 길이 제한으로 생략되었습니다.)",
-                    "（由于长度限制，部分请求说明已省略。）",
-                    "（長さ制限のため、リクエスト説明の一部を省略しました。）"
-                )
-            ));
-        }
         vec![content]
     };
     let last = chunks.len() - 1;
@@ -3731,14 +3713,6 @@ async fn remove_pending_if_same(
     }
 }
 
-fn truncate_utf8(text: &mut String, limit: usize) {
-    let mut end = limit.min(text.len());
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text.truncate(end);
-}
-
 pub(crate) async fn mark_request_resolved(
     http: &serenity::http::Http,
     state: &BridgeState,
@@ -4446,20 +4420,38 @@ mod display_tests {
             assert!(!reconstructed.contains(private));
         }
 
-        let command_params = json!({"reason": "x".repeat(1801)});
+        let command_reason = "명령理由🙂".repeat(401);
+        let command_params = json!({"reason": command_reason.clone()});
+        let command_expected = format!("{}\n아래에서 허용 범위를 선택해 주세요.", command_reason);
         let command_messages = server_request_messages_with_language(
             "item/commandExecution/requestApproval",
             key,
             &command_params,
             crate::i18n::Language::Korean,
         );
-        assert_eq!(command_messages.len(), 1);
+        assert!(command_messages.len() > 1);
+        let expected_command_actions = serde_json::to_value(approval_actions_with_language(
+            "item/commandExecution/requestApproval",
+            key,
+            &command_params,
+            crate::i18n::Language::Korean,
+        ))
+        .unwrap();
+        let mut reconstructed_command = String::new();
+        for (index, builder) in command_messages.iter().enumerate() {
+            let serialized = serde_json::to_value(builder).unwrap();
+            let content = serialized["content"].as_str().unwrap();
+            assert!(content.len() <= 1800);
+            reconstructed_command.push_str(content);
+            if index + 1 == command_messages.len() {
+                assert_eq!(serialized["components"], expected_command_actions);
+            } else {
+                assert!(serialized.get("components").is_none());
+            }
+        }
         assert_eq!(
-            serde_json::to_value(&command_messages[0]).unwrap()["content"],
-            json!(format!(
-                "{}…\n(요청 설명의 일부가 길이 제한으로 생략되었습니다.)",
-                "x".repeat(1780)
-            ))
+            reconstructed_command.as_bytes(),
+            command_expected.as_bytes()
         );
     }
 

@@ -18,3 +18,5 @@ The installation language defaults to English and can be selected as English, Ko
 - Preserve production settings, accounts, conversation history, and project data during product cleanup.
 
 Product documentation lives in `docs/design.md` and `docs/installation.md`.
+
+Do not introduce product restrictions that the user did not request, such as inferred path deny lists, artificial size/count/range caps, or forced permission profiles. Accommodate actual service and protocol limits through pagination and split delivery, and preserve the requested content instead of silently truncating it.

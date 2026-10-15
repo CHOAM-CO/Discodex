@@ -270,6 +270,16 @@ fn windows_task_executable_path(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(value))
 }
 
+fn prepare_project_directory(path: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(path)
+        .with_context(|| format!("create Codex project/work directory {}", path.display()))?;
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("resolve Codex project/work directory {}", path.display()))?;
+    ensure!(canonical.is_dir(), "Codex project/work path is not a directory");
+    Ok(canonical)
+}
+
 pub fn print_plan() -> Result<()> {
     let language = choose_language(None)?;
     print_plan_for_language(language)
@@ -335,16 +345,14 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         "オペレーターのユーザー ID（カンマ区切り）",
     )?;
     let project_default = env::current_dir().context("read current directory")?;
-    let project_dir = PathBuf::from(ask_text(
+    let project_dir = prepare_project_directory(&PathBuf::from(ask_text(
         language,
         "Codex project/work directory",
         "Codex 프로젝트/작업 디렉터리",
         "Codex 项目/工作目录",
         "Codex プロジェクト/作業ディレクトリ",
         &project_default.display().to_string(),
-    )?)
-    .canonicalize()
-    .context("Codex project/work directory must already exist")?;
+    )?))?;
     let model = optional_value(
         language,
         "Codex model (leave empty for native default)",
@@ -367,7 +375,7 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         voice_channel_ids,
         project_dir,
         model,
-        requested_permission_profile: "Full Access (resolve exact ID from native catalog)".into(),
+        requested_permission_profile: "Allowed profile (Full Access preferred)".into(),
         created_at: unix_time_string(),
     };
     validate_existing_installation_plan(
@@ -1590,10 +1598,10 @@ fn install_at(
     install_user_service(&config_path, &mut ownership, previous_ownership.as_ref())?;
     write_json_private(&ownership_path, &ownership)?;
     println!("{}", language.text(
-        "Codex account/read confirmed a ChatGPT account; the allowed Full Access profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
-        "Codex 계정 확인에서 ChatGPT 계정이 확인되었습니다. 허용된 Full Access 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
-        "Codex 账户检查已确认 ChatGPT 账户；已保存获准的 Full Access 配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
-        "Codex アカウント確認で ChatGPT アカウントを確認しました。許可された Full Access プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
+        "Codex account/read confirmed a ChatGPT account; the allowed permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
+        "Codex 계정 확인에서 ChatGPT 계정이 확인되었습니다. 허용된 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
+        "Codex 账户检查已确认 ChatGPT 账户；已保存获准的权限配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
+        "Codex アカウント確認で ChatGPT アカウントを確認しました。許可された権限プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
     ));
     confirm_installed_features(&config, previous_run)?;
     Ok(())
@@ -3740,17 +3748,12 @@ fn download_verified_asset(
         .with_context(|| format!("create {}", download_path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
-    let mut length = 0_u64;
     loop {
         let count = response
             .read(&mut buffer)
             .context("read official Codex download")?;
         if count == 0 {
             break;
-        }
-        length += count as u64;
-        if length > 600 * 1024 * 1024 {
-            bail!("official Codex release asset exceeded the 600 MiB download limit");
         }
         hasher.update(&buffer[..count]);
         output
@@ -4959,10 +4962,10 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
         }
 
         let profiles = native.permission_profiles().await.context("read permissionProfile/list")?;
-        let profile_id = choose_full_access_profile(&profiles, config.permissions.as_deref(), config.language)?;
+        let profile_id = choose_permission_profile(&profiles, config.permissions.as_deref(), config.language)?;
         config.permissions = Some(profile_id.clone());
         write_json_private(config_path, config)?;
-        println!("The live permission catalog allows Full Access profile `{profile_id}`; its exact ID was saved for the runtime's first thread.");
+        println!("The live permission catalog allows profile `{profile_id}`; its exact ID was saved for the runtime's first thread.");
         Ok::<(), anyhow::Error>(())
     }.await;
     let shutdown = native.shutdown().await;
@@ -5121,7 +5124,55 @@ fn open_login_url(_url: &str) -> Result<()> {
     bail!("automatic browser opening is supported on Linux and Windows")
 }
 
-fn choose_full_access_profile(
+fn permission_profile_is_allowed(item: &serde_json::Value) -> bool {
+    item.get("allowed").and_then(serde_json::Value::as_bool) == Some(true)
+        && item
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|id| !id.is_empty())
+}
+
+fn permission_profile_is_full_access(item: &serde_json::Value) -> bool {
+    permission_profile_is_allowed(item)
+        && (item.get("id").and_then(serde_json::Value::as_str) == Some(":danger-full-access")
+            || ["name", "label", "description"].iter().any(|key| {
+                item.get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|text| text.to_ascii_lowercase().contains("full access"))
+            }))
+}
+
+fn permission_profile_is_canonical_full_access(item: &serde_json::Value) -> bool {
+    permission_profile_is_allowed(item)
+        && item.get("id").and_then(serde_json::Value::as_str) == Some(":danger-full-access")
+}
+
+fn preferred_permission_profile_id(
+    entries: &[serde_json::Value],
+    preferred_id: Option<&str>,
+) -> Option<String> {
+    let preferred_id = preferred_id?;
+    entries
+        .iter()
+        .find(|item| {
+            item.get("id").and_then(serde_json::Value::as_str) == Some(preferred_id)
+                && permission_profile_is_allowed(item)
+        })
+        .and_then(|item| item.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+}
+
+fn default_permission_profile_id(entries: &[serde_json::Value]) -> Option<String> {
+    entries
+        .iter()
+        .find(|item| permission_profile_is_canonical_full_access(item))
+        .or_else(|| entries.iter().find(|item| permission_profile_is_full_access(item)))
+        .or_else(|| entries.iter().find(|item| permission_profile_is_allowed(item)))
+        .and_then(|item| item.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+}
+
+fn choose_permission_profile(
     catalog: &serde_json::Value,
     preferred_id: Option<&str>,
     language: Language,
@@ -5130,32 +5181,14 @@ fn choose_full_access_profile(
         .get("data")
         .and_then(serde_json::Value::as_array)
         .context("permissionProfile/list returned no data array")?;
-    let is_full_access = |item: &serde_json::Value| {
-        item.get("allowed").and_then(serde_json::Value::as_bool) == Some(true)
-            && (item.get("id").and_then(serde_json::Value::as_str) == Some(":danger-full-access")
-                || ["name", "label", "description"].iter().any(|key| {
-                    item.get(key)
-                        .and_then(serde_json::Value::as_str)
-                        .is_some_and(|text| text.to_ascii_lowercase().contains("full access"))
-                }))
-    };
-    let preferred = preferred_id.and_then(|preferred_id| {
-        entries.iter().find(|item| {
-            item.get("id").and_then(serde_json::Value::as_str) == Some(preferred_id)
-                && is_full_access(item)
-        })
-    });
-    if let Some(item) = preferred.or_else(|| entries.iter().find(|item| is_full_access(item))) {
-        let id = item
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .context("Full Access permission profile has no native id")?;
-        println!("The current native catalog exposes allowed Full Access profile `{id}`.");
-        return Ok(id.to_owned());
+    if let Some(id) = preferred_permission_profile_id(entries, preferred_id) {
+        println!("The current native catalog still allows saved permission profile `{id}`.");
+        return Ok(id);
     }
-
+    let default_id = default_permission_profile_id(entries)
+        .context("the current native catalog has no allowed permission profiles")?;
     println!(
-        "The native catalog did not label an allowed Full Access profile. Choose its exact ID from the entries below; no value outside this live catalog is accepted."
+        "Choose an allowed permission profile by its exact ID. Press Enter to use the default."
     );
     for item in entries {
         println!(
@@ -5163,9 +5196,7 @@ fn choose_full_access_profile(
             item.get("id")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("(missing)"),
-            item.get("allowed")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
+            permission_profile_is_allowed(item),
             item.get("description")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
@@ -5174,16 +5205,16 @@ fn choose_full_access_profile(
     loop {
         let selected = ask_text(
             language,
-            "Exact Full Access permission profile ID",
-            "Full Access 권한 프로필의 정확한 ID",
-            "Full Access 权限配置的准确 ID",
-            "Full Access 権限プロファイルの正確な ID",
-            "",
+            "Allowed permission profile ID",
+            "허용된 권한 프로필 ID",
+            "允许的权限配置 ID",
+            "許可された権限プロファイル ID",
+            &default_id,
         )?;
         if let Some(item) = entries.iter().find(|item| {
             item.get("id").and_then(serde_json::Value::as_str) == Some(selected.as_str())
         }) {
-            if item.get("allowed").and_then(serde_json::Value::as_bool) == Some(true) {
+            if permission_profile_is_allowed(item) {
                 return Ok(selected);
             }
             println!("That profile is not allowed by the current native catalog.");
@@ -5480,6 +5511,15 @@ fn unix_time_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_directory_is_created_and_canonicalized() {
+        let root = tempfile::tempdir().expect("temporary parent directory");
+        let selected = root.path().join("new").join("nested").join("project");
+        let prepared =
+            prepare_project_directory(&selected).expect("prepare project directory");
+        assert_eq!(prepared, selected.canonicalize().expect("canonical project path"));
+    }
 
     #[test]
     fn update_args_require_explicit_source_and_config() {
@@ -5932,7 +5972,7 @@ mod tests {
     }
 
     #[test]
-    fn reinstall_keeps_profile_preferences_and_allowed_full_access_selection() {
+    fn reinstall_keeps_profile_preferences_and_allowed_permission_selection() {
         let native_home_dir = tempfile::tempdir().expect("temporary native home");
         let native_home = native_home_dir.path().join("native-home");
         let previous = Config {
@@ -6017,19 +6057,31 @@ mod tests {
 
         let catalog = serde_json::json!({
             "data": [
+                {"id": "limited", "name": "Standard", "allowed": true},
                 {"id": "custom-full", "name": "Full Access", "allowed": true},
                 {"id": ":danger-full-access", "allowed": true}
             ]
         });
+        let entries = catalog["data"].as_array().unwrap();
         assert_eq!(
-            choose_full_access_profile(&catalog, merged.permissions.as_deref(), Language::English)
-                .unwrap(),
-            ":danger-full-access"
+            default_permission_profile_id(entries).as_deref(),
+            Some(":danger-full-access")
         );
         assert_eq!(
-            choose_full_access_profile(&catalog, Some("no-longer-allowed"), Language::English)
-                .unwrap(),
-            "custom-full"
+            preferred_permission_profile_id(entries, Some("limited")).as_deref(),
+            Some("limited")
+        );
+        assert_eq!(
+            preferred_permission_profile_id(entries, Some("no-longer-allowed")),
+            None
+        );
+        let without_full_access = serde_json::json!({
+            "data": [{"id": "limited", "name": "Standard", "allowed": true}]
+        });
+        assert_eq!(
+            default_permission_profile_id(without_full_access["data"].as_array().unwrap())
+                .as_deref(),
+            Some("limited")
         );
     }
 

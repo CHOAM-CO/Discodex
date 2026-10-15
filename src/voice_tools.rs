@@ -4,12 +4,11 @@ use anyhow::{Context, Result, bail};
 use codex_uds::UnixStream;
 use serde_json::{Value, json};
 use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+    AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
 
-const MAX_MESSAGE_BYTES: usize = 64 * 1024;
-const MAX_IPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const MAX_VOICE_LEAVE_SUMMARY_CHARS: usize = 1800;
+// The summary replaces one Discord message (no prefix is added).
+pub(crate) const MAX_VOICE_LEAVE_SUMMARY_CHARS: usize = 2000;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const DISCORD_TOOL_NAMES: [&str; 6] = [
     "discord_list_channels",
@@ -30,7 +29,7 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
 
     loop {
         line.clear();
-        if !read_bounded_line(&mut reader, &mut line).await? {
+        if !read_line(&mut reader, &mut line).await? {
             return Ok(());
         }
         while matches!(line.last(), Some(b'\r' | b'\n')) {
@@ -158,7 +157,7 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
     }
 }
 
-async fn read_bounded_line<R>(reader: &mut R, line: &mut Vec<u8>) -> Result<bool>
+async fn read_line<R>(reader: &mut R, line: &mut Vec<u8>) -> Result<bool>
 where
     R: AsyncBufRead + Unpin,
 {
@@ -175,9 +174,6 @@ where
                 .iter()
                 .position(|byte| *byte == b'\n')
                 .unwrap_or(available.len());
-            if line.len() + content_len > MAX_MESSAGE_BYTES {
-                bail!("MCP request exceeds {MAX_MESSAGE_BYTES} bytes");
-            }
             let found_newline = content_len < available.len();
             line.extend_from_slice(&available[..content_len]);
             (content_len + usize::from(found_newline), found_newline)
@@ -249,11 +245,6 @@ async fn invoke_parent(
                 .iter()
                 .position(|byte| *byte == b'\n')
                 .unwrap_or(available.len());
-            if response.len() + content_len > MAX_IPC_RESPONSE_BYTES {
-                return Err(ipc_error(format!(
-                    "Discord tool IPC response exceeds {MAX_IPC_RESPONSE_BYTES} bytes"
-                )));
-            }
             response.extend_from_slice(&available[..content_len]);
             let found_newline = content_len < available.len();
             (content_len + usize::from(found_newline), found_newline)

@@ -11,9 +11,11 @@ use url::Url;
 use crate::config::Config;
 use crate::i18n::Language;
 
-const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
-const MAX_FILES: usize = 10;
-const MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
+// Discord create-message requests are limited to 25 MiB. Keep each individual
+// read bounded by the largest possible request; callers batch complete messages.
+// https://docs.discord.com/developers/resources/message#create-message
+const MAX_REQUEST_BYTES: u64 = 25 * 1024 * 1024;
+const MAX_FILES_PER_REQUEST: usize = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplyFile {
@@ -25,6 +27,30 @@ pub(crate) struct ReplyFile {
 pub(crate) struct PreparedReply {
     pub(crate) content: String,
     pub(crate) files: Vec<ReplyFile>,
+}
+
+/// Split prepared files into Discord create-message request batches.
+/// Each request contains at most 10 files and 25 MiB of file payload.
+pub(crate) fn attachment_batches(files: &[ReplyFile]) -> Vec<Range<usize>> {
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut total_bytes = 0_u64;
+
+    for (index, file) in files.iter().enumerate() {
+        let file_bytes = file.data.len() as u64;
+        let full = index - start >= MAX_FILES_PER_REQUEST
+            || total_bytes.saturating_add(file_bytes) > MAX_REQUEST_BYTES;
+        if full {
+            batches.push(start..index);
+            start = index;
+            total_bytes = 0;
+        }
+        total_bytes = total_bytes.saturating_add(file_bytes);
+    }
+    if start < files.len() {
+        batches.push(start..files.len());
+    }
+    batches
 }
 
 #[derive(Clone, Debug)]
@@ -47,9 +73,7 @@ enum FileFailure {
     MissingOrUnreadable,
     NotRegularFile,
     Protected,
-    TooLarge,
-    TooManyFiles,
-    TotalTooLarge,
+    RequestTooLarge,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,17 +85,12 @@ enum LinkOutcome {
 #[derive(Default)]
 struct ReplyAccumulator {
     files: Vec<ReplyFile>,
-    total_bytes: u64,
     seen: HashMap<PathBuf, LinkOutcome>,
 }
 
 impl ReplyAccumulator {
     fn previous(&self, key: &Path) -> Option<LinkOutcome> {
         self.seen.get(key).cloned()
-    }
-
-    fn remaining_total(&self) -> u64 {
-        MAX_TOTAL_BYTES.saturating_sub(self.total_bytes)
     }
 
     fn accept(
@@ -84,15 +103,8 @@ impl ReplyAccumulator {
         }
         let outcome = match result {
             Err(failure) => LinkOutcome::Failed(failure),
-            Ok(_) if self.files.len() >= MAX_FILES => {
-                LinkOutcome::Failed(FileFailure::TooManyFiles)
-            }
-            Ok(file) if file.data.len() as u64 > self.remaining_total() => {
-                LinkOutcome::Failed(FileFailure::TotalTooLarge)
-            }
             Ok(mut file) => {
                 file.filename = unique_upload_filename(&self.files, &file.filename);
-                self.total_bytes += file.data.len() as u64;
                 let index = self.files.len();
                 self.files.push(file);
                 LinkOutcome::File(index)
@@ -329,12 +341,17 @@ fn is_protected_path(config: &Config, candidate: &Path, canonical: &Path) -> boo
 
     if let Some(home) = codex_home(config) {
         let configured = absolute_candidate(config, &home);
-        if candidate.starts_with(&configured)
-            || std::fs::canonicalize(&configured)
-                .ok()
-                .is_some_and(|path| canonical.starts_with(path))
-        {
-            return true;
+        // Generated artifacts share CODEX_HOME with account files. Only the
+        // actual account/settings files are covered by the retained guard.
+        for name in ["auth.json", "config.toml"] {
+            let account_file = configured.join(name);
+            if candidate == account_file
+                || std::fs::canonicalize(&account_file)
+                    .ok()
+                    .is_some_and(|path| path == canonical)
+            {
+                return true;
+            }
         }
     }
     false
@@ -357,7 +374,6 @@ async fn canonical_candidate(
 async fn read_canonical_file(
     canonical: &Path,
     filename: &str,
-    remaining_total: u64,
 ) -> std::result::Result<ReplyFile, FileFailure> {
     // Reject devices and FIFOs before opening: opening a pipe can block even
     // though it would fail the regular-file check below.
@@ -374,22 +390,16 @@ async fn read_canonical_file(
     if !metadata.is_file() {
         return Err(FileFailure::NotRegularFile);
     }
-    if metadata.len() > MAX_FILE_BYTES {
-        return Err(FileFailure::TooLarge);
-    }
-    if metadata.len() > remaining_total {
-        return Err(FileFailure::TotalTooLarge);
+    if metadata.len() > MAX_REQUEST_BYTES {
+        return Err(FileFailure::RequestTooLarge);
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_FILE_BYTES + 1)
+    file.take(MAX_REQUEST_BYTES + 1)
         .read_to_end(&mut bytes)
         .await
         .map_err(map_io_failure)?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err(FileFailure::TooLarge);
-    }
-    if bytes.len() as u64 > remaining_total {
-        return Err(FileFailure::TotalTooLarge);
+    if bytes.len() as u64 > MAX_REQUEST_BYTES {
+        return Err(FileFailure::RequestTooLarge);
     }
     Ok(ReplyFile {
         filename: safe_upload_filename(filename),
@@ -415,36 +425,32 @@ fn failure_text(language: Language, filename: &str, failure: FileFailure) -> Str
             FileFailure::MissingOrUnreadable => "file is missing or unreadable",
             FileFailure::NotRegularFile => "not a regular file",
             FileFailure::Protected => "protected credentials or Codex settings cannot be attached",
-            FileFailure::TooLarge => "exceeds the 10 MiB per-file limit",
-            FileFailure::TooManyFiles => "the reply attachment limit is 10 files",
-            FileFailure::TotalTooLarge => "the 25 MiB total attachment limit would be exceeded",
+            FileFailure::RequestTooLarge => "the file alone exceeds Discord's 25 MiB request limit",
         },
         match failure {
             FileFailure::InvalidPath => "로컬 파일 경로가 아닙니다",
             FileFailure::MissingOrUnreadable => "파일이 없거나 읽을 수 없습니다",
             FileFailure::NotRegularFile => "일반 파일이 아닙니다",
             FileFailure::Protected => "보호된 자격 증명 또는 Codex 설정 파일은 첨부할 수 없습니다",
-            FileFailure::TooLarge => "파일당 10 MiB 제한을 초과합니다",
-            FileFailure::TooManyFiles => "답변 첨부는 최대 10개입니다",
-            FileFailure::TotalTooLarge => "전체 첨부 용량 25 MiB 제한을 초과합니다",
+            FileFailure::RequestTooLarge => {
+                "파일 하나만으로 Discord의 25 MiB 요청 제한을 초과합니다"
+            }
         },
         match failure {
             FileFailure::InvalidPath => "不是本地文件路径",
             FileFailure::MissingOrUnreadable => "文件不存在或无法读取",
             FileFailure::NotRegularFile => "不是普通文件",
             FileFailure::Protected => "不能附加受保护的凭据或 Codex 设置文件",
-            FileFailure::TooLarge => "超过每个文件 10 MiB 的限制",
-            FileFailure::TooManyFiles => "每条回复最多附加 10 个文件",
-            FileFailure::TotalTooLarge => "超过附件总量 25 MiB 的限制",
+            FileFailure::RequestTooLarge => "单个文件就超过了 Discord 25 MiB 的请求上限",
         },
         match failure {
             FileFailure::InvalidPath => "ローカルファイルのパスではありません",
             FileFailure::MissingOrUnreadable => "ファイルがないか、読み取れません",
             FileFailure::NotRegularFile => "通常ファイルではありません",
             FileFailure::Protected => "保護された認証情報またはCodex設定ファイルは添付できません",
-            FileFailure::TooLarge => "ファイルごとの上限10 MiBを超えています",
-            FileFailure::TooManyFiles => "返信に添付できるファイルは最大10個です",
-            FileFailure::TotalTooLarge => "添付ファイルの合計上限25 MiBを超えています",
+            FileFailure::RequestTooLarge => {
+                "ファイル単体でDiscordの25 MiBリクエスト上限を超えています"
+            }
         },
     );
     let safe = display_filename(filename);
@@ -535,7 +541,7 @@ pub(crate) async fn prepare_explicit_files(
         if accumulator.previous(&canonical).is_some() {
             continue;
         }
-        let result = read_canonical_file(&canonical, &name, accumulator.remaining_total()).await;
+        let result = read_canonical_file(&canonical, &name).await;
         match accumulator.accept(canonical, result) {
             LinkOutcome::File(_) => {}
             LinkOutcome::Failed(issue) => {
@@ -583,11 +589,7 @@ pub(crate) async fn prepare_reply(config: &Config, text: &str) -> PreparedReply 
                     continue;
                 }
                 let name = link.filename.clone();
-                let result = if accumulator.files.len() >= MAX_FILES {
-                    Err(FileFailure::TooManyFiles)
-                } else {
-                    read_canonical_file(&canonical, &name, accumulator.remaining_total()).await
-                };
+                let result = read_canonical_file(&canonical, &name).await;
                 let outcome = accumulator.accept(canonical, result);
                 outcomes.push(outcome);
             }
@@ -599,6 +601,24 @@ pub(crate) async fn prepare_reply(config: &Config, text: &str) -> PreparedReply 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_artifact_path_is_not_an_account_file() {
+        let root = std::env::temp_dir().join("discodex-path-policy-example");
+        let home = root.join("codex");
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "profile":"example", "name":"Example", "tokenEnv":"EXAMPLE_TOKEN",
+            "guildId":1, "homeChannelId":2, "transcriptChannelId":3,
+            "codexPath":"codex", "codexHome":home,
+            "projectDir":root, "stateDir":root.join("state"),
+            "credentialsFile":root.join("discord-token")
+        })).unwrap();
+        let generated = home.join("generated").join("result.png");
+        assert!(!is_protected_path(&config, &generated, &generated));
+        for account_file in [home.join("auth.json"), home.join("config.toml"), root.join("discord-token")] {
+            assert!(is_protected_path(&config, &account_file, &account_file));
+        }
+    }
 
     #[test]
     fn markdown_planning_recognizes_local_link_forms_and_preserves_nonlinks() {
@@ -693,6 +713,34 @@ mod tests {
     }
 
     #[test]
+    fn attachment_batches_follow_discord_file_and_payload_limits() {
+        let mut files = (0..11)
+            .map(|index| ReplyFile {
+                filename: format!("file-{index}.txt"),
+                data: vec![b'x'],
+            })
+            .collect::<Vec<_>>();
+        files[10].data = vec![b'x'; (MAX_REQUEST_BYTES / 2) as usize];
+        files.push(ReplyFile {
+            filename: "large.txt".to_owned(),
+            data: vec![b'x'; (MAX_REQUEST_BYTES / 2) as usize + 1],
+        });
+
+        let batches = attachment_batches(&files);
+        assert_eq!(batches, [0..10, 10..11, 11..12]);
+        for batch in batches {
+            assert!(batch.len() <= MAX_FILES_PER_REQUEST);
+            assert!(
+                files[batch.clone()]
+                    .iter()
+                    .map(|file| file.data.len() as u64)
+                    .sum::<u64>()
+                    <= MAX_REQUEST_BYTES
+            );
+        }
+    }
+
+    #[test]
     fn failed_read_reports_only_safe_filename_in_selected_language() {
         let plan = plan_reply(
             "See [private name](<docs/missing file.txt>).",
@@ -719,29 +767,18 @@ mod tests {
     }
 
     #[test]
-    fn reply_accumulator_enforces_attachment_count_limit() {
+    fn reply_accumulator_accepts_more_than_ten_files() {
         let mut accumulator = ReplyAccumulator::default();
-        let mut last = LinkOutcome::Failed(FileFailure::InvalidPath);
-        for index in 0..=MAX_FILES {
-            let result = Ok(ReplyFile {
-                filename: format!("file-{index}.txt"),
-                data: vec![b'x'],
-            });
-            last = accumulator.accept(PathBuf::from(format!("canonical/{index}")), result);
+        for index in 0..12 {
+            let result = accumulator.accept(
+                PathBuf::from(format!("canonical/{index}")),
+                Ok(ReplyFile {
+                    filename: format!("file-{index}.txt"),
+                    data: vec![b'x'],
+                }),
+            );
+            assert_eq!(result, LinkOutcome::File(index));
         }
-        assert_eq!(accumulator.files.len(), MAX_FILES);
-        assert_eq!(last, LinkOutcome::Failed(FileFailure::TooManyFiles));
-
-        let mut total_limited = ReplyAccumulator::default();
-        total_limited.total_bytes = MAX_TOTAL_BYTES;
-        let result = total_limited.accept(
-            PathBuf::from("canonical/over-limit"),
-            Ok(ReplyFile {
-                filename: "over-limit.txt".to_owned(),
-                data: vec![b'x'],
-            }),
-        );
-        assert_eq!(result, LinkOutcome::Failed(FileFailure::TotalTooLarge));
-        assert!(total_limited.files.is_empty());
+        assert_eq!(accumulator.files.len(), 12);
     }
 }
