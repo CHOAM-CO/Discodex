@@ -34,6 +34,13 @@ pub(crate) struct ReplyTarget {
     pub message_id: serenity::all::MessageId,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct VoiceAttachmentAdmission {
+    call_id: uuid::Uuid,
+    thread_id: String,
+    transcript_channel_id: u64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct PendingApproval {
     pub native_id: serde_json::Value,
@@ -498,7 +505,21 @@ impl EventHandler for Handler {
                 for attachment in &message_attachments {
                     attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
                 }
-                return submit_voice_input(&state, &input, &attachments, &target, *call_id, thread_id).await;
+                if attachments.is_empty() {
+                    return submit_voice_input(&state, &input, &target, *call_id, thread_id).await;
+                }
+                return submit_input(
+                    &state,
+                    &input,
+                    &attachments,
+                    target.clone(),
+                    Some(VoiceAttachmentAdmission {
+                        call_id: *call_id,
+                        thread_id: thread_id.clone(),
+                        transcript_channel_id: target.channel_id.get(),
+                    }),
+                )
+                .await;
             }
             // Only directly received, authorized messages reach this download path.
             // Retrieval tools return metadata and never invoke this ingress handler.
@@ -510,7 +531,7 @@ impl EventHandler for Handler {
             for attachment in &message_attachments {
                 attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
             }
-            submit_input(&state, &input, &attachments, target.clone()).await
+            submit_input(&state, &input, &attachments, target.clone(), None).await
         }.await;
         match submission {
             Ok(()) => {}
@@ -1012,7 +1033,6 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
 async fn submit_voice_input(
     state: &BridgeState,
     input: &str,
-    attachments: &[crate::attachments::DownloadedAttachment],
     target: &ReplyTarget,
     call_id: uuid::Uuid,
     thread_id: &str,
@@ -1034,7 +1054,7 @@ async fn submit_voice_input(
     record_input(
         state,
         input,
-        attachments,
+        &[],
         target,
         thread_id,
         QueueDelivery::Submitting,
@@ -1045,9 +1065,7 @@ async fn submit_voice_input(
         .request(
             "thread/realtime/appendText",
             serde_json::json!({
-                "threadId": thread_id,
-                "text": crate::attachments::native_input_text(input, attachments),
-                "role": "user"
+                "threadId": thread_id, "text": input, "role": "user"
             }),
         )
         .await;
@@ -1072,17 +1090,51 @@ fn voice_input_matches(
     } if *active_call == call_id && active_thread == thread_id && *transcript_channel_id == channel_id)
 }
 
+fn voice_attachment_admission_matches(
+    phase: &crate::voice_input::VoiceInputPhase,
+    admission: &VoiceAttachmentAdmission,
+    channel_id: u64,
+    native_thread_id: &str,
+) -> bool {
+    admission.transcript_channel_id == channel_id
+        && admission.thread_id == native_thread_id
+        && voice_input_matches(
+            phase,
+            admission.call_id,
+            &admission.thread_id,
+            admission.transcript_channel_id,
+        )
+}
+
+fn should_queue_input_for_voice_phase(
+    phase: &crate::voice_input::VoiceInputPhase,
+    voice_attachment_admitted: bool,
+) -> bool {
+    !voice_attachment_admitted && !phase.allow_ordinary()
+}
+
 async fn submit_input(
     state: &BridgeState,
     input: &str,
     attachments: &[crate::attachments::DownloadedAttachment],
     target: ReplyTarget,
+    voice_attachment: Option<VoiceAttachmentAdmission>,
 ) -> anyhow::Result<()> {
     // Hold admission through the native write. Voice start/stop uses this same
-    // mutex, so no ordinary turn can slip across a realtime transition.
+    // mutex, so a captured voice attachment cannot cross a realtime transition.
     let phase = state.voice.input_gate.state.lock().await;
     let thread_id = state.native.thread_id();
-    if !phase.allow_ordinary() {
+    if let Some(admission) = voice_attachment.as_ref()
+        && !voice_attachment_admission_matches(&phase, admission, target.channel_id.get(), &thread_id)
+    {
+        bail!("{}", state.config.language.text(
+            "The voice call that received this message has ended or changed.",
+            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+            "接收此消息的语音通话已结束或发生变化。",
+            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+        ));
+    }
+    if should_queue_input_for_voice_phase(&phase, voice_attachment.is_some()) {
         return record_input(
             state,
             input,
@@ -1098,7 +1150,7 @@ async fn submit_input(
         state.queued_inputs.lock().await.iter().any(|item| {
             item.native_thread_id == thread_id && item.delivery == QueueDelivery::Queued
         });
-    if queued_before {
+    if voice_attachment.is_none() && queued_before {
         record_input(
             state,
             input,
@@ -1114,7 +1166,23 @@ async fn submit_input(
     // Serialize observation and admission with terminal events and thread replacement.
     // The reader resolves recovery RPCs independently of Discord event handling.
     let mut active = state.current_turn.lock().await;
-    if state.native.prepare_turn_input().await?.is_some() {
+    let recovery = state.native.prepare_turn_input().await?;
+    if let Some(admission) = voice_attachment.as_ref()
+        && !voice_attachment_admission_matches(
+            &phase,
+            admission,
+            target.channel_id.get(),
+            &state.native.thread_id(),
+        )
+    {
+        bail!("{}", state.config.language.text(
+            "The voice call that received this message has ended or changed.",
+            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+            "接收此消息的语音通话已结束或发生变化。",
+            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+        ));
+    }
+    if recovery.is_some() {
         // Another caller may have reconnected before this guard was acquired.
         // Read actual state instead of replaying its cached active-turn snapshot.
         let snapshot = read_recovery_turn_snapshot(&state.native).await?;
@@ -1141,8 +1209,18 @@ async fn submit_input(
         }
     }
     let thread_id = state.native.thread_id();
+    if let Some(admission) = voice_attachment.as_ref()
+        && !voice_attachment_admission_matches(&phase, admission, target.channel_id.get(), &thread_id)
+    {
+        bail!("{}", state.config.language.text(
+            "The voice call that received this message has ended or changed.",
+            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+            "接收此消息的语音通话已结束或发生变化。",
+            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+        ));
+    }
     if let Some(turn_id) = active.clone() {
-        if *state.input_mode.read().await == InputMode::Steering {
+        if voice_attachment.is_some() || *state.input_mode.read().await == InputMode::Steering {
             record_input(
                 state,
                 input,
@@ -3897,6 +3975,35 @@ mod tests {
                 .unwrap()
                 .unwrap();
         assert_eq!((second.channel_id, second.message_id), (20, 101));
+    }
+
+    #[test]
+    fn voice_attachment_submission_bypasses_queue_only_for_its_captured_call() {
+        use crate::voice_input::VoiceInputPhase;
+        let call_id = uuid::Uuid::new_v4();
+        let phase = VoiceInputPhase::Active {
+            call_id,
+            thread_id: "thread-a".into(),
+            transcript_channel_id: 30,
+        };
+        let admission = VoiceAttachmentAdmission {
+            call_id,
+            thread_id: "thread-a".into(),
+            transcript_channel_id: 30,
+        };
+
+        assert!(should_queue_input_for_voice_phase(&phase, false));
+        assert!(!should_queue_input_for_voice_phase(&phase, true));
+        assert!(voice_attachment_admission_matches(&phase, &admission, 30, "thread-a"));
+        assert!(!voice_attachment_admission_matches(&phase, &admission, 30, "thread-b"));
+        assert!(!voice_attachment_admission_matches(&phase, &admission, 31, "thread-a"));
+        assert!(should_queue_input_for_voice_phase(&VoiceInputPhase::Ending, false));
+        assert!(!voice_attachment_admission_matches(
+            &VoiceInputPhase::Ending,
+            &admission,
+            30,
+            "thread-a",
+        ));
     }
 
     #[test]
