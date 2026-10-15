@@ -1,7 +1,7 @@
 <p align="center"><img src="docs/assets/discodex-banner.png" alt="Discodex — 文字与语音对话" width="960" /></p>
 <p align="center"><strong>在 Discord 中交谈，并延续同一上下文。</strong><br />将文字和语音连接到官方 Codex app-server 持续对话的 Rust 桥接程序。</p>
 <p align="center"><a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · 简体中文 · <a href="README.ja.md">日本語</a></p>
-<p align="center"><a href="#快速开始">快速开始</a> · <a href="docs/installation.md">安装指南</a> · <a href="docs/design.md">设计</a> · <a href="docs/validation-status.md">验证状态</a></p>
+<p align="center"><a href="#快速开始">快速开始</a> · <a href="docs/installation.md">安装指南</a> · <a href="docs/design.md">设计</a></p>
 
 Discodex 将一个 Discord 应用配置连接到一个官方 Codex app-server 持续对话。文字和语音共用该对话；任务判断和工具执行由 Codex 负责。
 
@@ -54,4 +54,4 @@ Windows PowerShell：
 - `/discodex interrupt`：请求停止当前响应
 - `/discodex new`：开始新对话
 
-退出语音通话只会断开语音；持续对话仍可继续。文档：[安装与卸载](docs/installation.md) · [产品设计](docs/design.md) · [用户验证](docs/user-validation.md) · [验证状态](docs/validation-status.md)
+退出语音通话只会断开语音；持续对话仍可继续。文档：[安装与卸载](docs/installation.md) · [产品设计](docs/design.md)

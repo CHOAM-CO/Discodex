@@ -1,7 +1,7 @@
 <p align="center"><img src="docs/assets/discodex-banner.png" alt="Discodex — 텍스트와 음성 대화" width="960" /></p>
 <p align="center"><strong>Discord에서 대화하고 같은 문맥을 이어가세요.</strong><br />공식 Codex app-server의 지속 대화에 텍스트와 음성을 연결하는 Rust 브리지입니다.</p>
 <p align="center"><a href="README.md">English</a> · 한국어 · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a></p>
-<p align="center"><a href="#시작하기">시작하기</a> · <a href="docs/installation.md">설치 안내</a> · <a href="docs/design.md">설계</a> · <a href="docs/validation-status.md">검증 현황</a></p>
+<p align="center"><a href="#시작하기">시작하기</a> · <a href="docs/installation.md">설치 안내</a> · <a href="docs/design.md">설계</a></p>
 
 Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 대화 하나에 연결합니다. 채팅과 음성은 같은 대화를 사용하고, 작업 판단과 도구 실행은 Codex가 맡습니다.
 
@@ -54,4 +54,4 @@ Windows PowerShell에서는 다음을 실행합니다.
 - `/discodex interrupt`: 진행 중 응답 중단 요청
 - `/discodex new`: 새 대화 시작
 
-음성 통화를 끝내도 지속 대화는 유지됩니다. 문서: [설치와 제거](docs/installation.md) · [제품 설계](docs/design.md) · [사용자 확인](docs/user-validation.md) · [검증 현황](docs/validation-status.md)
+음성 통화를 끝내도 지속 대화는 유지됩니다. 문서: [설치와 제거](docs/installation.md) · [제품 설계](docs/design.md)

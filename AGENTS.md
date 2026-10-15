@@ -17,4 +17,4 @@ The installation language defaults to English and can be selected as English, Ko
 - Record unverified behavior and failures as observed.
 - Preserve production settings, accounts, conversation history, and project data during product cleanup.
 
-Product documentation lives in `docs/design.md`, `docs/installation.md`, `docs/user-validation.md`, and `docs/validation-status.md`.
+Product documentation lives in `docs/design.md` and `docs/installation.md`.

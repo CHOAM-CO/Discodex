@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">English · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a></p>
-<p align="center"><a href="#getting-started">Getting started</a> · <a href="docs/installation.md">Installation</a> · <a href="docs/design.md">Design</a> · <a href="docs/validation-status.md">Validation</a></p>
+<p align="center"><a href="#getting-started">Getting started</a> · <a href="docs/installation.md">Installation</a> · <a href="docs/design.md">Design</a></p>
 <p align="center"><sub>macOS · Linux · Windows</sub></p>
 
 ---
@@ -83,7 +83,3 @@ Leaving a voice call disconnects voice only; the persistent conversation remains
 
 - [Installation and removal](docs/installation.md)
 - [Product design](docs/design.md)
-- [User validation](docs/user-validation.md)
-- [Validation status](docs/validation-status.md)
-
-Development and user validation are ongoing. See the [validation status](docs/validation-status.md) for tested behavior and remaining manual checks.
