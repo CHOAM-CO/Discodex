@@ -436,6 +436,8 @@ pub(crate) struct BridgeState {
     voice_item_destinations: Mutex<HashMap<(String, String), ChannelId>>,
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
     pub approval_results: Mutex<ApprovalResults>,
+    pub settings_menus: Mutex<HashMap<String, commands::SettingsMenuState>>,
+    pub settings_change_lock: Mutex<()>,
 }
 
 pub(crate) struct StateKey;
@@ -730,6 +732,8 @@ pub async fn run(
         voice_item_destinations: Mutex::new(HashMap::new()),
         pending_approvals: Mutex::new(HashMap::new()),
         approval_results: Mutex::new(ApprovalResults::default()),
+        settings_menus: Mutex::new(HashMap::new()),
+        settings_change_lock: Mutex::new(()),
     });
 
     let voice_tool = Arc::downgrade(&state.voice);

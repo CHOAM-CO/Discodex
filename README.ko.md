@@ -47,6 +47,10 @@ Windows PowerShell에서는 다음을 실행합니다.
 
 ## Discord 명령
 
+설정 패널에서 현재 값을 확인하고 모델·추론 강도·Fast 모드·권한 프로필·입력 전달 방식·음성 프로필을 버튼으로 선택합니다. 음성 프로필 변경은 다음 통화부터 적용됩니다.
+
+- `/discodex settings`: 버튼으로 설정 선택
+- `/discodex voice`: 음성 프로필 선택
 - `/discodex status`: 대화와 설정 확인
 - `/discodex models`: 사용 가능한 모델 확인
 - `/discodex voice-join channel:<허용 음성 채널>`: 음성 입장

@@ -6,6 +6,10 @@ Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 th
 
 ## 대화와 설정
 
+`/discodex settings`는 현재 설정과 선택형 항목의 버튼을 제공한다. 모델·추론 강도·서비스 등급·권한 프로필은 공식 native catalog와 기존 update 경로를 사용하고, 입력 전달 방식과 음성 프로필도 버튼으로 선택한다. 값 없이 개별 설정 명령을 실행해도 선택 패널이 열린다. Discord의 행·버튼 한도에 맞춰 페이지를 나누되 선택지를 임의로 누락하지 않는다. 버튼은 표시한 선택값을 유지하고 현재 native catalog로 다시 확인한다.
+
+음성 목록은 `thread/realtime/listVoices` 응답을 사용한다. 현재 연결 버전 V3는 공식 `voices.v1` 선택지를 따른다. Codex 기본 설정을 선택하면 명시적인 voice를 전달하지 않으므로 native의 기존 음성 설정과 기본값이 적용된다. 선택한 voice는 worker 상태의 `voice-settings.json`에 저장한다. 파일이 없으면 기존 프로필 설정을 사용하며, 명시적 null은 native 기본값을 선택한다. 진행 중 통화는 유지하고 다음 연결에 적용한다.
+
 브리지는 소유한 Codex 자식 app-server와 비공개 Unix WebSocket IPC로 통신하고 thread ID를 저장해 재시작 뒤 이어간다. 정상 재시작은 저장 thread를 resume한다. 새 thread는 `/discodex new`로 사용자가 명시해 시작한다. 이 연결은 진행 중 응답이나 음성 통화를 무중단으로 유지한다는 뜻은 아니다.
 
 홈 텍스트 채널은 에이전트의 대화와 작업 응답을 모으는 상주 채널이다.

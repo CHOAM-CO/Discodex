@@ -20,6 +20,36 @@ use uuid::Uuid;
 
 use crate::discord::{BridgeState, PendingApproval, ReplyTarget, StateKey};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsKind {
+    Hub,
+    Model,
+    Effort,
+    Fast,
+    Permissions,
+    Input,
+    Voice,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SettingsChoice {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SettingsMenuState {
+    pub requester_id: u64,
+    pub connection_generation: u64,
+    pub thread_id: String,
+    pub kind: SettingsKind,
+    pub page: usize,
+    pub choices: Vec<SettingsChoice>,
+    pub current: String,
+    pub current_value: Option<String>,
+    pub model_scope: Option<String>,
+}
+
 pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
     let mut command = CreateCommand::new("discodex").description(language.text(
         "Manage the current Discodex conversation and settings",
@@ -28,7 +58,7 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         "現在の Discodex 会話と設定を管理します",
     ));
     let string = |name: &'static str, description: &'static str| {
-        CreateCommandOption::new(CommandOptionType::String, name, description).required(true)
+        CreateCommandOption::new(CommandOptionType::String, name, description).required(false)
     };
     for (name, desc, opt_name, opt_desc) in [
         (
@@ -66,17 +96,17 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         (
             "fast",
             language.text(
-                "Set or clear the service tier",
-                "서비스 등급을 설정하거나 해제합니다",
-                "设置或清除服务等级",
-                "サービスティアを設定または解除します",
+                "Set or clear Fast mode",
+                "Fast 모드를 설정하거나 해제합니다",
+                "设置或关闭 Fast 模式",
+                "Fastモードを設定または解除します",
             ),
             "tier",
             language.text(
-                "Service tier for the current model, or off",
-                "현재 모델에서 사용할 서비스 등급 또는 off",
-                "当前模型的服务等级，或 off",
-                "現在のモデルで使うサービスティア、または off",
+                "Fast mode for the current model, or off",
+                "현재 모델의 Fast 모드 또는 off",
+                "当前模型的 Fast 模式，或关闭",
+                "現在のモデルのFastモード、またはオフ",
             ),
         ),
         (
@@ -123,7 +153,7 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
                     "入力の送信方法",
                 ),
             )
-            .required(true)
+            .required(false)
             .add_string_choice(
                 language.text(
                     "Send to the current response",
@@ -145,6 +175,26 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         ),
     );
     command = command
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "settings",
+            language.text(
+                "Choose conversation settings with buttons",
+                "버튼으로 대화 설정을 선택합니다",
+                "使用按钮选择对话设置",
+                "ボタンで会話設定を選択します",
+            ),
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "voice",
+            language.text(
+                "Choose a voice profile with buttons",
+                "버튼으로 음성 프로필을 선택합니다",
+                "使用按钮选择语音配置",
+                "ボタンで音声プロファイルを選択します",
+            ),
+        ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "status",
@@ -269,16 +319,18 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
         interaction.user.id,
         state.config.language,
     ) {
+        let chunks = split_discord_content(&format!("{error:#}"));
         interaction
             .create_response(
                 ctx,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .content(limit(&format!("{error:#}")))
+                        .content(chunks[0].clone())
                         .ephemeral(true),
                 ),
             )
             .await?;
+        send_command_followups(ctx, interaction, &chunks[1..]).await?;
         return Ok(());
     }
     interaction
@@ -289,6 +341,37 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
             ),
         )
         .await?;
+    if settings_ui_requested(interaction) {
+        let response = match settings_menu_from_command(interaction, &state).await {
+            Ok((content, rows)) => {
+                send_command_settings_panel(ctx, interaction, &content, rows).await
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, "failed to build Discord settings menu");
+                interaction
+                    .edit_response(
+                        ctx,
+                        serenity::builder::EditInteractionResponse::new().content(
+                            state.config.language.text(
+                                "Could not load the current settings choices.",
+                                "현재 설정 선택지를 불러오지 못했습니다.",
+                                "无法加载当前设置选项。",
+                                "現在の設定候補を読み込めませんでした。",
+                            ),
+                        ),
+                    )
+                    .await
+                    .map(|_| ())
+            }
+        };
+        if let Some(checks) = &state.installation_checks {
+            let error = response.as_ref().err().map(|error| format!("{error:#}"));
+            checks.settings_response(interaction.id.get(), error.as_deref());
+        }
+        response?;
+        return Ok(());
+    }
+
     let content = match handle_authorized(ctx, interaction, state.clone()).await {
         Ok(content) => content,
         Err(error) => {
@@ -321,11 +404,12 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
                 .to_owned()
         }
     };
+    let chunks = split_discord_content(&content);
     let response = interaction
         .edit_response(
             ctx,
             serenity::builder::EditInteractionResponse::new()
-                .content(limit(&content))
+                .content(chunks[0].clone())
                 .allowed_mentions(no_mentions()),
         )
         .await;
@@ -334,6 +418,24 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
         checks.settings_response(interaction.id.get(), error.as_deref());
     }
     response?;
+    send_command_followups(ctx, interaction, &chunks[1..]).await?;
+    Ok(())
+}
+
+async fn send_command_followups(
+    ctx: &Context,
+    interaction: &CommandInteraction,
+    chunks: &[String],
+) -> anyhow::Result<()> {
+    for chunk in chunks {
+        interaction.create_followup(
+            ctx,
+            serenity::builder::CreateInteractionResponseFollowup::new()
+                .content(chunk)
+                .ephemeral(true)
+                .allowed_mentions(no_mentions()),
+        ).await?;
+    }
     Ok(())
 }
 
@@ -467,149 +569,26 @@ async fn handle_authorized(
         }
         "model" | "effort" | "fast" | "permissions" => {
             let requested = arg_string().ok_or_else(|| anyhow!("선택값이 없습니다"))?;
-            let thread = state.native.refresh_thread_state().await?;
-            let current_model = thread
-                .get("model")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let catalog = if sub == "permissions" {
-                full_catalog(
-                    &state,
-                    "permissionProfile/list",
-                    json!({"cwd":state.config.project_dir.to_string_lossy()}),
-                )
-                .await?
-            } else {
-                full_catalog(&state, "model/list", json!({"includeHidden":false})).await?
+            let kind = match sub {
+                "model" => SettingsKind::Model,
+                "effort" => SettingsKind::Effort,
+                "fast" => SettingsKind::Fast,
+                _ => SettingsKind::Permissions,
             };
-            if sub == "permissions" {
-                let (profile_id, display_name) =
-                    resolve_permission_profile_with_language(&catalog, &requested, language)?;
-                let settings = state
-                    .native
-                    .set_permissions_and_confirm(&profile_id)
+            output =
+                apply_setting_choice(state.as_ref(), interaction.id.get(), kind, &requested, None)
                     .await?;
-                let active_turn = state.current_turn.lock().await.is_some();
-                if let Some(checks) = &state.installation_checks {
-                    checks.settings_confirmed(
-                        interaction.id.get(),
-                        &state.native.thread_id(),
-                        settings
-                            .pointer("/activePermissionProfile/id")
-                            .and_then(Value::as_str)
-                            == Some(profile_id.as_str()),
-                        !active_turn,
-                        None,
-                    );
-                }
-                return Ok(format_permission_settings_result_with_language(
-                    &display_name,
-                    &settings,
-                    active_turn,
-                    language,
-                ));
-            }
-            validate_setting_choice(sub, &requested, &catalog, &current_model).await?;
-            let (field, value) = match sub {
-                "model" => ("model", Value::String(requested.clone())),
-                "effort" => ("effort", Value::String(requested.clone())),
-                "fast" => (
-                    "serviceTier",
-                    if requested.eq_ignore_ascii_case("off") {
-                        Value::Null
-                    } else {
-                        Value::String(requested.clone())
-                    },
-                ),
-                _ => bail!("지원되지 않는 설정입니다: {sub}"),
-            };
-            let mut params = json!({"threadId":state.native.thread_id()});
-            params[field] = value.clone();
-            let _result = state
-                .native
-                .request("thread/settings/update", params)
-                .await?;
-            let live_result = if matches!(sub, "model" | "effort" | "fast") {
-                if let Some(turn_id) = state.current_turn.lock().await.clone() {
-                    let mut live = json!({"threadId":state.native.thread_id(),"turnId":turn_id});
-                    live[field] = if sub == "fast" && requested.eq_ignore_ascii_case("off") {
-                        Value::Null
-                    } else {
-                        Value::String(requested.clone())
-                    };
-                    Some(state.native.request("turn/settings/update", live).await)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            let snapshot = state.native.refresh_thread_state().await;
-            if let Some(Err(error)) = live_result.as_ref() {
-                tracing::warn!(error = ?error, "failed to update settings for active native turn");
-            }
-            if let Err(error) = snapshot.as_ref() {
-                tracing::warn!(error = ?error, "failed to refresh settings for Discord response");
-            }
-            if let Some(checks) = &state.installation_checks {
-                let defaults_match = snapshot
-                    .as_ref()
-                    .ok()
-                    .and_then(|snapshot| snapshot.get(field))
-                    == Some(&value);
-                let current_applied = live_result.as_ref().is_none_or(|result| {
-                    result
-                        .as_ref()
-                        .ok()
-                        .and_then(|result| result.get("status"))
-                        .and_then(Value::as_str)
-                        == Some("applied")
-                });
-                let error = snapshot
-                    .as_ref()
-                    .err()
-                    .map(|error| format!("{error:#}"))
-                    .or_else(|| {
-                        live_result
-                            .as_ref()
-                            .and_then(|result| result.as_ref().err())
-                            .map(|error| format!("{error:#}"))
-                    });
-                checks.settings_confirmed(
-                    interaction.id.get(),
-                    &state.native.thread_id(),
-                    defaults_match,
-                    current_applied,
-                    error.as_deref(),
-                );
-            }
-            output = format_settings_update_result_with_language(
-                &requested,
-                snapshot.as_ref().ok(),
-                live_result.as_ref(),
-                language,
-            );
         }
         "input" => {
             let value = arg_string().ok_or_else(|| anyhow!("입력 전달 방식을 선택하세요"))?;
-            let mode = match value.as_str() {
-                "steering" => crate::config::InputMode::Steering,
-                "next-turn" => crate::config::InputMode::NextTurn,
-                _ => bail!("사용할 수 없는 입력 전달 방식입니다"),
-            };
-            *state.input_mode.write().await = mode;
-            crate::discord::save_input_mode(&state.input_mode_path, mode)?;
-            output = format!(
-                "{} `{}`{}",
-                language.text(
-                    "Set input delivery to",
-                    "입력 전달 방식을",
-                    "已将输入传递方式设为",
-                    "入力の送信方法を"
-                ),
-                input_mode(mode, language),
-                language.text(".", "로 설정했습니다.", "。", "に設定しました。")
-            );
+            output = apply_setting_choice(
+                state.as_ref(),
+                interaction.id.get(),
+                SettingsKind::Input,
+                &value,
+                None,
+            )
+            .await?;
         }
         "interrupt" => {
             let turn_id = state
@@ -691,6 +670,7 @@ async fn handle_authorized(
                     "音声通話の終了を確認してから新しい会話を始めてください。"
                 ));
             }
+            let _settings_change = state.settings_change_lock.lock().await;
             let previous_thread_id = state.native.thread_id();
             if state.queued_inputs.lock().await.iter().any(|input| {
                 input.native_thread_id == previous_thread_id
@@ -787,6 +767,1009 @@ async fn handle_authorized(
     Ok(output)
 }
 
+const SETTINGS_PAGE_SIZE: usize = 20;
+
+fn settings_ui_requested(interaction: &CommandInteraction) -> bool {
+    let Some(subcommand) = interaction.data.options.first() else {
+        return false;
+    };
+    let options = match &subcommand.value {
+        CommandDataOptionValue::SubCommand(options) => options,
+        _ => return false,
+    };
+    match subcommand.name.as_str() {
+        "settings" | "models" | "permission-profiles" | "voice" => true,
+        "model" | "effort" | "fast" | "permissions" | "input" => options.is_empty(),
+        _ => false,
+    }
+}
+
+async fn send_command_settings_panel(
+    ctx: &Context,
+    interaction: &CommandInteraction,
+    content: &str,
+    rows: Vec<CreateActionRow>,
+) -> serenity::Result<()> {
+    let chunks = split_discord_content(content);
+    interaction
+        .edit_response(
+            ctx,
+            serenity::builder::EditInteractionResponse::new()
+                .content(chunks.first().cloned().unwrap_or_default())
+                .components(rows)
+                .allowed_mentions(no_mentions()),
+        )
+        .await?;
+    for chunk in chunks.iter().skip(1) {
+        interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(chunk)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+async fn settings_menu_from_command(
+    interaction: &CommandInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<(String, Vec<CreateActionRow>)> {
+    let subcommand = interaction
+        .data
+        .options
+        .first()
+        .ok_or_else(|| anyhow!("setting command is missing"))?;
+    let kind = match subcommand.name.as_str() {
+        "settings" => SettingsKind::Hub,
+        "models" | "model" => SettingsKind::Model,
+        "permission-profiles" | "permissions" => SettingsKind::Permissions,
+        "effort" => SettingsKind::Effort,
+        "fast" => SettingsKind::Fast,
+        "input" => SettingsKind::Input,
+        "voice" => SettingsKind::Voice,
+        _ => bail!("unsupported settings menu"),
+    };
+    let id = Uuid::new_v4().simple().to_string();
+    let menu = build_settings_menu(
+        state,
+        kind,
+        0,
+        interaction.user.id.get(),
+        state.native.current_generation(),
+    )
+    .await?;
+    let response = render_settings_menu(&id, &menu, state.config.language);
+    let current_generation = state.native.current_generation();
+    let current_thread_id = state.native.thread_id();
+    let mut menus = state.settings_menus.lock().await;
+    menus.retain(|_, previous| {
+        previous.connection_generation == current_generation
+            && previous.thread_id == current_thread_id
+    });
+    menus.insert(id, menu);
+    drop(menus);
+    Ok(response)
+}
+
+async fn build_settings_menu(
+    state: &BridgeState,
+    kind: SettingsKind,
+    page: usize,
+    requester_id: u64,
+    connection_generation: u64,
+) -> anyhow::Result<SettingsMenuState> {
+    let language = state.config.language;
+    if state.native.current_generation() != connection_generation {
+        bail!("Codex connection changed while settings were opening");
+    }
+    let target_thread_id = state.native.thread_id();
+    let thread = state.native.refresh_thread_state().await?;
+    let model_scope = thread
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let (current_value, current, choices) = match kind {
+        SettingsKind::Hub => {
+            let mut current = format_settings_with_language(&settings_snapshot(&thread), language);
+            let mode = *state.input_mode.read().await;
+            current.push_str(&format!(
+                "\n{}: {}",
+                language.text(
+                    "Input delivery",
+                    "입력 전달 방식",
+                    "输入传递方式",
+                    "入力の送信方法"
+                ),
+                input_mode(mode, language)
+            ));
+            let selected_voice = state.voice.selected_voice()?;
+            let voice = selected_voice.unwrap_or_else(|| {
+                language
+                    .text(
+                        "Codex default",
+                        "Codex 기본 설정",
+                        "Codex 默认设置",
+                        "Codex の既定設定",
+                    )
+                    .to_owned()
+            });
+            current.push_str(&format!(
+                "\n{}: {voice}",
+                language.text(
+                    "Voice profile",
+                    "음성 프로필",
+                    "语音配置",
+                    "音声プロファイル"
+                )
+            ));
+            let choices = [
+                ("model", "Model", "모델", "模型", "モデル"),
+                (
+                    "effort",
+                    "Reasoning effort",
+                    "추론 강도",
+                    "推理强度",
+                    "推論の強さ",
+                ),
+                ("fast", "Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
+                (
+                    "permissions",
+                    "Permission profile",
+                    "권한 프로필",
+                    "权限配置",
+                    "権限プロファイル",
+                ),
+                (
+                    "input",
+                    "Input delivery",
+                    "입력 전달 방식",
+                    "输入传递方式",
+                    "入力の送信方法",
+                ),
+                (
+                    "voice",
+                    "Voice profile",
+                    "음성 프로필",
+                    "语音配置",
+                    "音声プロファイル",
+                ),
+            ]
+            .into_iter()
+            .map(|(value, en, ko, zh, ja)| SettingsChoice {
+                value: value.to_owned(),
+                label: language.text(en, ko, zh, ja).to_owned(),
+            })
+            .collect();
+            (None, current, choices)
+        }
+        SettingsKind::Model => {
+            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+            let choices = catalog
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|model| {
+                    let value = model.get("id")?.as_str()?;
+                    let label = model
+                        .get("displayName")
+                        .and_then(Value::as_str)
+                        .or_else(|| model.get("name").and_then(Value::as_str))
+                        .unwrap_or(value);
+                    Some(SettingsChoice {
+                        value: value.to_owned(),
+                        label: label.to_owned(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let selected = model_scope.clone();
+            let current = choice_current_label(&choices, selected.as_deref(), language);
+            (selected, current, choices)
+        }
+        SettingsKind::Effort | SettingsKind::Fast => {
+            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+            let model = selected_model(&catalog, &model_scope)?;
+            if kind == SettingsKind::Effort {
+                let choices = model
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| {
+                        item.get("reasoningEffort")
+                            .and_then(Value::as_str)
+                            .or_else(|| item.as_str())
+                            .map(|value| SettingsChoice {
+                                value: value.to_owned(),
+                                label: value.to_owned(),
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let selected = thread
+                    .get("effort")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let current = choice_current_label(&choices, selected.as_deref(), language);
+                (selected, current, choices)
+            } else {
+                let mut choices = vec![SettingsChoice {
+                    value: "off".to_owned(),
+                    label: language.text("Off", "끔", "关闭", "オフ").to_owned(),
+                }];
+                choices.extend(
+                    model
+                        .get("serviceTiers")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|item| {
+                            let value = item
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .or_else(|| item.as_str())?;
+                            let label = item.get("name").and_then(Value::as_str).unwrap_or(value);
+                            Some(SettingsChoice {
+                                value: value.to_owned(),
+                                label: label.to_owned(),
+                            })
+                        }),
+                );
+                let selected = thread
+                    .get("serviceTier")
+                    .filter(|value| !value.is_null())
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| "off".to_owned());
+                let current = choice_current_label(&choices, Some(&selected), language);
+                (Some(selected), current, choices)
+            }
+        }
+        SettingsKind::Permissions => {
+            let catalog = full_catalog(
+                state,
+                "permissionProfile/list",
+                json!({"cwd":state.config.project_dir.to_string_lossy()}),
+            )
+            .await?;
+            let choices = catalog
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter(|(_, profile)| {
+                    profile.get("allowed").and_then(Value::as_bool) == Some(true)
+                })
+                .filter_map(|(index, profile)| {
+                    Some(SettingsChoice {
+                        value: profile.get("id")?.as_str()?.to_owned(),
+                        label: permission_profile_display_name_with_language(
+                            profile, index, language,
+                        ),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let selected = thread
+                .pointer("/activePermissionProfile/id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let current = choice_current_label(&choices, selected.as_deref(), language);
+            (selected, current, choices)
+        }
+        SettingsKind::Input => {
+            let mode = *state.input_mode.read().await;
+            let (selected, label) = match mode {
+                crate::config::InputMode::Steering => ("steering", input_mode(mode, language)),
+                crate::config::InputMode::NextTurn => ("next-turn", input_mode(mode, language)),
+            };
+            let choices = [
+                crate::config::InputMode::Steering,
+                crate::config::InputMode::NextTurn,
+            ]
+            .into_iter()
+            .map(|mode| SettingsChoice {
+                value: match mode {
+                    crate::config::InputMode::Steering => "steering",
+                    crate::config::InputMode::NextTurn => "next-turn",
+                }
+                .to_owned(),
+                label: input_mode(mode, language).to_owned(),
+            })
+            .collect();
+            (Some(selected.to_owned()), label.to_owned(), choices)
+        }
+        SettingsKind::Voice => {
+            let voices = state
+                .native
+                .request("thread/realtime/listVoices", json!({}))
+                .await?;
+            let default_label = language
+                .text(
+                    "Codex default",
+                    "Codex 기본 설정",
+                    "Codex 默认设置",
+                    "Codex の既定設定",
+                )
+                .to_owned();
+            let mut choices = vec![SettingsChoice {
+                value: String::new(),
+                label: default_label,
+            }];
+            choices.extend(
+                voices
+                    .pointer("/voices/v1")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(|voice| SettingsChoice {
+                        value: voice.to_owned(),
+                        label: voice.to_owned(),
+                    }),
+            );
+            let selected = state.voice.selected_voice()?;
+            let current_value = selected.clone().unwrap_or_default();
+            let current = if let Some(voice) = selected {
+                choice_current_label(&choices, Some(&voice), language)
+            } else {
+                choices[0].label.clone()
+            };
+            (Some(current_value), current, choices)
+        }
+    };
+    if state.native.current_generation() != connection_generation
+        || state.native.thread_id() != target_thread_id
+    {
+        bail!("Codex connection changed while settings were loading");
+    }
+    let page = if choices.is_empty() {
+        0
+    } else {
+        page.min((choices.len() - 1) / SETTINGS_PAGE_SIZE)
+    };
+    Ok(SettingsMenuState {
+        requester_id,
+        connection_generation,
+        thread_id: target_thread_id,
+        kind,
+        page,
+        choices,
+        current,
+        current_value,
+        model_scope,
+    })
+}
+
+fn choice_current_label(
+    choices: &[SettingsChoice],
+    current: Option<&str>,
+    language: crate::i18n::Language,
+) -> String {
+    current
+        .and_then(|value| choices.iter().find(|choice| choice.value == value))
+        .map(|choice| choice.label.clone())
+        .or_else(|| current.map(str::to_owned))
+        .unwrap_or_else(|| {
+            language
+                .text("Not reported", "확인할 수 없음", "未报告", "未取得")
+                .to_owned()
+        })
+}
+
+fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &'static str {
+    match kind {
+        SettingsKind::Hub => language.text("Settings", "설정", "设置", "設定"),
+        SettingsKind::Model => language.text("Model", "모델", "模型", "モデル"),
+        SettingsKind::Effort => {
+            language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ")
+        }
+        SettingsKind::Fast => language.text("Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
+        SettingsKind::Permissions => language.text(
+            "Permission profile",
+            "권한 프로필",
+            "权限配置",
+            "権限プロファイル",
+        ),
+        SettingsKind::Input => language.text(
+            "Input delivery",
+            "입력 전달 방식",
+            "输入传递方式",
+            "入力の送信方法",
+        ),
+        SettingsKind::Voice => language.text(
+            "Voice profile",
+            "음성 프로필",
+            "语音配置",
+            "音声プロファイル",
+        ),
+    }
+}
+
+fn render_settings_menu(
+    menu_id: &str,
+    menu: &SettingsMenuState,
+    language: crate::i18n::Language,
+) -> (String, Vec<CreateActionRow>) {
+    let mut content = format!(
+        "{}\n{}: {}",
+        settings_kind_title(menu.kind, language),
+        language.text("Current", "현재", "当前", "現在"),
+        menu.current
+    );
+    if menu.kind != SettingsKind::Hub {
+        let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
+        content.push_str(&format!(
+            "\n{} {}/{}",
+            language.text(
+                "Choose an option · page",
+                "선택지 · 페이지",
+                "选择一项 · 页码",
+                "選択肢 · ページ"
+            ),
+            menu.page + 1,
+            pages
+        ));
+    } else {
+        content.push_str(&format!(
+            "\n{}",
+            language.text(
+                "Choose a setting",
+                "설정을 선택하세요",
+                "请选择设置",
+                "設定を選んでください"
+            )
+        ));
+    }
+
+    if menu.kind != SettingsKind::Hub {
+        let start = menu.page * SETTINGS_PAGE_SIZE;
+        let end = (start + SETTINGS_PAGE_SIZE).min(menu.choices.len());
+        for choice in &menu.choices[start..end] {
+            content.push_str(&format!("\n• {} — {}", choice.label, choice.value));
+        }
+    }
+
+    let start = if menu.kind == SettingsKind::Hub {
+        0
+    } else {
+        menu.page * SETTINGS_PAGE_SIZE
+    };
+    let end = (start
+        + if menu.kind == SettingsKind::Hub {
+            menu.choices.len()
+        } else {
+            SETTINGS_PAGE_SIZE
+        })
+    .min(menu.choices.len());
+    let mut rows = Vec::new();
+    for (offset, group) in menu.choices[start..end].chunks(5).enumerate() {
+        let buttons = group
+            .iter()
+            .enumerate()
+            .map(|(within, choice)| {
+                let index = start + offset * 5 + within;
+                let is_hub = menu.kind == SettingsKind::Hub;
+                let marker =
+                    if !is_hub && menu.current_value.as_deref() == Some(choice.value.as_str()) {
+                        "✓ "
+                    } else {
+                        ""
+                    };
+                let custom_id = if is_hub {
+                    format!("codex:settings:{menu_id}:o{index}")
+                } else {
+                    format!("codex:settings:{menu_id}:c{index}")
+                };
+                let label = discord_button_label(&format!("{marker}{}", choice.label));
+                CreateButton::new(custom_id)
+                    .label(label)
+                    .style(if marker.is_empty() {
+                        ButtonStyle::Secondary
+                    } else {
+                        ButtonStyle::Success
+                    })
+            })
+            .collect();
+        rows.push(CreateActionRow::Buttons(buttons));
+    }
+    if menu.kind != SettingsKind::Hub {
+        let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
+        let nav = vec![
+            CreateButton::new(format!(
+                "codex:settings:{menu_id}:p{}",
+                menu.page.saturating_sub(1)
+            ))
+            .label(language.text("Previous", "이전", "上一页", "前へ"))
+            .style(ButtonStyle::Secondary)
+            .disabled(menu.page == 0),
+            CreateButton::new(format!("codex:settings:{menu_id}:h"))
+                .label(language.text("Settings", "설정", "设置", "設定"))
+                .style(ButtonStyle::Primary),
+            CreateButton::new(format!(
+                "codex:settings:{menu_id}:p{}",
+                (menu.page + 1).min(pages - 1)
+            ))
+            .label(language.text("Next", "다음", "下一页", "次へ"))
+            .style(ButtonStyle::Secondary)
+            .disabled(menu.page + 1 >= pages),
+        ];
+        rows.push(CreateActionRow::Buttons(nav));
+    }
+    (content, rows)
+}
+
+fn split_discord_content(content: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut count = 0;
+    for character in content.chars() {
+        if count == 2000 {
+            chunks.push(std::mem::take(&mut current));
+            count = 0;
+        }
+        current.push(character);
+        count += 1;
+    }
+    if !current.is_empty() || chunks.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn discord_button_label(value: &str) -> String {
+    let mut chars = value.chars();
+    let label = chars.by_ref().take(80).collect::<String>();
+    if chars.next().is_some() {
+        label.chars().take(77).collect::<String>() + "…"
+    } else {
+        label
+    }
+}
+
+fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
+    match value {
+        "model" => Some(SettingsKind::Model),
+        "effort" => Some(SettingsKind::Effort),
+        "fast" => Some(SettingsKind::Fast),
+        "permissions" => Some(SettingsKind::Permissions),
+        "input" => Some(SettingsKind::Input),
+        "voice" => Some(SettingsKind::Voice),
+        _ => None,
+    }
+}
+
+async fn handle_settings_component(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<()> {
+    let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "codex" || parts[1] != "settings" {
+        bail!("알 수 없는 settings component id");
+    }
+    let menu_id = parts[2];
+    let action = parts[3];
+    let menu = {
+        let mut menus = state.settings_menus.lock().await;
+        match menus.get(menu_id) {
+            Some(menu) if menu.requester_id == interaction.user.id.get() => menus
+                .remove(menu_id)
+                .expect("menu was checked while locked"),
+            Some(_) => {
+                drop(menus);
+                interaction
+                    .create_response(
+                        ctx,
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(state.config.language.text(
+                                    "Only the person who opened this settings panel can use it.",
+                                    "이 설정 화면을 연 사용자만 사용할 수 있습니다.",
+                                    "只有打开此设置面板的用户可以使用它。",
+                                    "この設定パネルを開いたユーザーだけが操作できます。",
+                                ))
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                return Ok(());
+            }
+            None => {
+                drop(menus);
+                interaction.create_response(
+                    ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(state.config.language.text(
+                                "This settings panel has already been updated. Use its latest buttons.",
+                                "설정 화면이 이미 갱신되었습니다. 최신 버튼을 사용하세요.",
+                                "此设置面板已更新，请使用最新按钮。",
+                                "設定パネルは更新済みです。新しいボタンを使ってください。",
+                            ))
+                            .ephemeral(true),
+                    ),
+                ).await?;
+                return Ok(());
+            }
+        }
+    };
+    let mut menu = menu;
+    interaction
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await?;
+
+    if menu.connection_generation != state.native.current_generation()
+        || menu.thread_id != state.native.thread_id()
+    {
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(state.config.language.text(
+                        "The Codex connection changed. Open settings again.",
+                        "Codex 연결이 변경되었습니다. 설정을 다시 여세요.",
+                        "Codex 连接已更改，请重新打开设置。",
+                        "Codex 接続が変わりました。設定を開き直してください。",
+                    ))
+                    .components(Vec::new()),
+            )
+            .await?;
+        return Ok(());
+    }
+
+    let prefix = action
+        .chars()
+        .next()
+        .ok_or_else(|| anyhow!("empty settings action"))?;
+    let suffix = action
+        .strip_prefix(prefix)
+        .ok_or_else(|| anyhow!("invalid settings action"))?;
+    let index = if suffix.is_empty() {
+        None
+    } else {
+        suffix.parse::<usize>().ok()
+    };
+    if prefix == 'o' && menu.kind == SettingsKind::Hub {
+        let index = index.ok_or_else(|| anyhow!("invalid settings choice"))?;
+        let selected = menu
+            .choices
+            .get(index)
+            .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        menu.kind = settings_kind_from_key(&selected.value)
+            .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        menu.page = 0;
+    } else if prefix == 'h' && suffix.is_empty() {
+        menu.kind = SettingsKind::Hub;
+        menu.page = 0;
+    } else if prefix == 'p' {
+        menu.page = index.unwrap_or(0);
+    } else if prefix == 'c' {
+        let index = index.ok_or_else(|| anyhow!("invalid settings choice"))?;
+        let selected = menu
+            .choices
+            .get(index)
+            .cloned()
+            .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        let fresh = build_settings_menu(
+            state,
+            menu.kind,
+            menu.page,
+            menu.requester_id,
+            menu.connection_generation,
+        )
+        .await?;
+        if matches!(menu.kind, SettingsKind::Effort | SettingsKind::Fast)
+            && fresh.model_scope != menu.model_scope
+        {
+            return update_settings_panel(ctx, interaction, state, fresh).await;
+        }
+        if !fresh
+            .choices
+            .iter()
+            .any(|choice| choice.value == selected.value)
+        {
+            let stale = state.config.language.text(
+                "That choice is no longer available. Current choices were refreshed.",
+                "선택한 항목을 더 이상 사용할 수 없어 최신 선택지를 표시했습니다.",
+                "此选项已不可用，已刷新当前选项。",
+                "選んだ項目は利用できなくなったため、選択肢を更新しました。",
+            );
+            return update_settings_panel_with_notice(ctx, interaction, state, fresh, stale).await;
+        }
+        let result = match apply_setting_choice(
+            state,
+            interaction.id.get(),
+            menu.kind,
+            &selected.value,
+            Some(&menu.thread_id),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!(error = ?error, "failed to apply Discord settings choice");
+                state
+                    .config
+                    .language
+                    .text(
+                        "Could not apply that setting. The current choices are shown below.",
+                        "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
+                        "无法应用该设置。当前选项如下。",
+                        "設定を適用できませんでした。現在の選択肢を表示します。",
+                    )
+                    .to_owned()
+            }
+        };
+        let refreshed = build_settings_menu(
+            state,
+            menu.kind,
+            menu.page,
+            menu.requester_id,
+            menu.connection_generation,
+        )
+        .await?;
+        return update_settings_panel_with_notice(ctx, interaction, state, refreshed, &result)
+            .await;
+    } else {
+        bail!("unknown settings action");
+    }
+
+    let refreshed = build_settings_menu(
+        state,
+        menu.kind,
+        menu.page,
+        menu.requester_id,
+        menu.connection_generation,
+    )
+    .await?;
+    update_settings_panel(ctx, interaction, state, refreshed).await
+}
+
+async fn update_settings_panel(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    menu: SettingsMenuState,
+) -> anyhow::Result<()> {
+    update_settings_panel_with_notice(ctx, interaction, state, menu, "").await
+}
+
+async fn update_settings_panel_with_notice(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    menu: SettingsMenuState,
+    notice: &str,
+) -> anyhow::Result<()> {
+    let menu_id = Uuid::new_v4().simple().to_string();
+    let (content, rows) = render_settings_menu(&menu_id, &menu, state.config.language);
+    let content = if notice.is_empty() {
+        content
+    } else {
+        format!("{notice}\n\n{content}")
+    };
+    let chunks = split_discord_content(&content);
+    state
+        .settings_menus
+        .lock()
+        .await
+        .insert(menu_id.clone(), menu);
+    interaction
+        .edit_response(
+            ctx,
+            serenity::builder::EditInteractionResponse::new()
+                .content(chunks.first().cloned().unwrap_or_default())
+                .components(rows)
+                .allowed_mentions(no_mentions()),
+        )
+        .await?;
+    for chunk in chunks.iter().skip(1) {
+        interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(chunk)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+    }
+    Ok(())
+}
+
+async fn apply_setting_choice(
+    state: &BridgeState,
+    interaction_id: u64,
+    kind: SettingsKind,
+    requested: &str,
+    expected_thread_id: Option<&str>,
+) -> anyhow::Result<String> {
+    let _settings_change = state.settings_change_lock.lock().await;
+    if expected_thread_id.is_some_and(|thread| thread != state.native.thread_id()) {
+        bail!("Codex conversation changed before the setting could be applied");
+    }
+    let thread_id = expected_thread_id
+        .map(str::to_owned)
+        .unwrap_or_else(|| state.native.thread_id());
+    let language = state.config.language;
+    match kind {
+        SettingsKind::Permissions => {
+            let catalog = full_catalog(
+                state,
+                "permissionProfile/list",
+                json!({"cwd":state.config.project_dir.to_string_lossy()}),
+            )
+            .await?;
+            let (profile_id, display_name) =
+                resolve_permission_profile_with_language(&catalog, requested, language)?;
+            let settings = state
+                .native
+                .set_permissions_and_confirm(&profile_id)
+                .await?;
+            let active_turn = state.current_turn.lock().await.is_some();
+            if let Some(checks) = &state.installation_checks {
+                checks.settings_confirmed(
+                    interaction_id,
+                    &state.native.thread_id(),
+                    settings
+                        .pointer("/activePermissionProfile/id")
+                        .and_then(Value::as_str)
+                        == Some(profile_id.as_str()),
+                    !active_turn,
+                    None,
+                );
+            }
+            Ok(format_permission_settings_result_with_language(
+                &display_name,
+                &settings,
+                active_turn,
+                language,
+            ))
+        }
+        SettingsKind::Input => {
+            let mode = match requested {
+                "steering" => crate::config::InputMode::Steering,
+                "next-turn" => crate::config::InputMode::NextTurn,
+                _ => bail!("unsupported input mode"),
+            };
+            let mut current_mode = state.input_mode.write().await;
+            crate::discord::save_input_mode(&state.input_mode_path, mode)?;
+            *current_mode = mode;
+            Ok(format!(
+                "{} `{}`",
+                language.text(
+                    "Input delivery set to",
+                    "입력 전달 방식:",
+                    "输入传递方式已设为",
+                    "入力の送信方法:"
+                ),
+                input_mode(mode, language)
+            ))
+        }
+        SettingsKind::Voice => {
+            let voices = state
+                .native
+                .request("thread/realtime/listVoices", json!({}))
+                .await?;
+            let allowed = voices
+                .pointer("/voices/v1")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|voice| voice == requested);
+            if !requested.is_empty() && !allowed {
+                bail!("voice is no longer available");
+            }
+            let selected = if requested.is_empty() {
+                None
+            } else {
+                Some(requested)
+            };
+            state.voice.set_voice(selected)?;
+            Ok(language.text(
+                "Voice profile saved for the next call; the active call is unchanged.",
+                "음성 프로필을 저장했습니다. 현재 통화에는 적용되지 않고 다음 통화부터 적용됩니다.",
+                "语音配置已保存，将用于下次通话；当前通话不变。",
+                "音声プロファイルを保存しました。現在の通話は変わらず、次回の通話から適用されます。",
+            ).to_owned())
+        }
+        SettingsKind::Model | SettingsKind::Effort | SettingsKind::Fast => {
+            let sub = match kind {
+                SettingsKind::Model => "model",
+                SettingsKind::Effort => "effort",
+                SettingsKind::Fast => "fast",
+                _ => unreachable!(),
+            };
+            let thread = state.native.refresh_thread_state().await?;
+            let current_model = thread
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+            validate_setting_choice(sub, requested, &catalog, &current_model).await?;
+            let (field, value) = match kind {
+                SettingsKind::Model => ("model", Value::String(requested.to_owned())),
+                SettingsKind::Effort => ("effort", Value::String(requested.to_owned())),
+                SettingsKind::Fast => (
+                    "serviceTier",
+                    if requested.eq_ignore_ascii_case("off") {
+                        Value::Null
+                    } else {
+                        Value::String(requested.to_owned())
+                    },
+                ),
+                _ => unreachable!(),
+            };
+            let mut params = json!({"threadId":thread_id});
+            params[field] = value.clone();
+            state
+                .native
+                .request("thread/settings/update", params)
+                .await?;
+            let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
+                let mut live = json!({"threadId":thread_id,"turnId":turn_id});
+                live[field] = if kind == SettingsKind::Fast && requested.eq_ignore_ascii_case("off")
+                {
+                    Value::Null
+                } else {
+                    Value::String(requested.to_owned())
+                };
+                Some(state.native.request("turn/settings/update", live).await)
+            } else {
+                None
+            };
+            let snapshot = state.native.refresh_thread_state().await;
+            if let Some(Err(error)) = live_result.as_ref() {
+                tracing::warn!(error = ?error, "failed to update settings for active native turn");
+            }
+            if let Err(error) = snapshot.as_ref() {
+                tracing::warn!(error = ?error, "failed to refresh settings for Discord response");
+            }
+            if let Some(checks) = &state.installation_checks {
+                let defaults_match =
+                    snapshot.as_ref().ok().and_then(|value| value.get(field)) == Some(&value);
+                let current_applied = live_result.as_ref().is_none_or(|result| {
+                    result
+                        .as_ref()
+                        .ok()
+                        .and_then(|result| result.get("status"))
+                        .and_then(Value::as_str)
+                        == Some("applied")
+                });
+                let error = snapshot
+                    .as_ref()
+                    .err()
+                    .map(|error| format!("{error:#}"))
+                    .or_else(|| {
+                        live_result
+                            .as_ref()
+                            .and_then(|result| result.as_ref().err())
+                            .map(|error| format!("{error:#}"))
+                    });
+                checks.settings_confirmed(
+                    interaction_id,
+                    &state.native.thread_id(),
+                    defaults_match,
+                    current_applied,
+                    error.as_deref(),
+                );
+            }
+            Ok(format_settings_update_result_with_language(
+                requested,
+                snapshot.as_ref().ok(),
+                live_result.as_ref(),
+                language,
+            ))
+        }
+        SettingsKind::Hub => bail!("Choose a setting first."),
+    }
+}
+
 fn option_string(option: &CommandDataOption) -> Option<&str> {
     match &option.value {
         CommandDataOptionValue::String(value) => Some(value),
@@ -812,6 +1795,9 @@ pub(crate) async fn handle_component(
         interaction.user.id,
         state.config.language,
     )?;
+    if interaction.data.custom_id.starts_with("codex:settings:") {
+        return handle_settings_component(ctx, interaction, &state).await;
+    }
     let parts: Vec<_> = interaction.data.custom_id.split(':').collect();
     if parts.len() != 4 || parts[0] != "codex" || parts[1] != "approval" {
         bail!("알 수 없는 component id");
@@ -3988,17 +4974,6 @@ fn no_mentions() -> CreateAllowedMentions {
         .replied_user(false)
 }
 
-fn limit(content: &str) -> String {
-    if content.len() <= 1900 {
-        return content.to_owned();
-    }
-    let mut end = 1900;
-    while !content.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &content[..end])
-}
-
 fn input_mode_korean(mode: crate::config::InputMode) -> &'static str {
     input_mode(mode, crate::i18n::Language::English)
 }
@@ -5556,6 +6531,118 @@ mod display_tests {
             validate_setting_choice("fast", "standard", &catalog, &current)
                 .await
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn settings_menu_paginates_choices_and_serializes_opaque_button_ids() {
+        let choices = (0..45)
+            .map(|index| SettingsChoice {
+                value: format!("native-model-choice-{index:02}"),
+                label: if index == 3 {
+                    format!("A long display label {} {}", "label".repeat(18), index)
+                } else {
+                    format!("Model display {index:02}")
+                },
+            })
+            .collect::<Vec<_>>();
+        let menu_for_page = |page| SettingsMenuState {
+            requester_id: 31,
+            connection_generation: 7,
+            thread_id: "thread-opaque".to_owned(),
+            kind: SettingsKind::Model,
+            page,
+            choices: choices.clone(),
+            current: "Model display 20".to_owned(),
+            current_value: Some("native-model-choice-20".to_owned()),
+            model_scope: Some("native-model-choice-20".to_owned()),
+        };
+
+        for page in 0..3 {
+            let menu = menu_for_page(page);
+            let (content, rows) =
+                render_settings_menu("menu-opaque", &menu, crate::i18n::Language::English);
+            assert!(content.contains("Model display 20"));
+            assert!(rows.len() <= 5);
+            let payload = serde_json::to_value(&rows).unwrap();
+            let rows_payload = payload.as_array().unwrap();
+            assert!(rows_payload.iter().all(|row| {
+                row["components"]
+                    .as_array()
+                    .is_some_and(|buttons| buttons.len() <= 5)
+            }));
+            let choice_start = page * SETTINGS_PAGE_SIZE;
+            let choice_end = (choice_start + SETTINGS_PAGE_SIZE).min(choices.len());
+            let choice_ids = rows_payload
+                .iter()
+                .flat_map(|row| row["components"].as_array().unwrap())
+                .filter_map(|button| button["custom_id"].as_str())
+                .filter(|id| id.contains(":c"))
+                .collect::<Vec<_>>();
+            assert_eq!(choice_ids.len(), choice_end - choice_start);
+            if page == 1 {
+                let selected = rows_payload
+                    .iter()
+                    .flat_map(|row| row["components"].as_array().unwrap())
+                    .find(|button| button["custom_id"] == "codex:settings:menu-opaque:c20")
+                    .unwrap();
+                assert_eq!(selected["style"], 3);
+            }
+            for id in choice_ids {
+                assert!(id.len() <= 100);
+                assert!(id.starts_with("codex:settings:menu-opaque:c"));
+                assert!(!choices.iter().any(|choice| id.contains(&choice.value)));
+            }
+        }
+
+        let last_page = menu_for_page(2);
+        let (content, rows) =
+            render_settings_menu("menu-opaque", &last_page, crate::i18n::Language::English);
+        assert!(content.contains("Model display 20"));
+        assert!(rows.len() <= 5);
+
+        let mut long = menu_for_page(0);
+        long.choices[0].value = format!("native-value-{}", "x".repeat(120));
+        long.choices[0].label = format!("Display label {}", "y".repeat(100));
+        let (content, _) =
+            render_settings_menu("menu-opaque", &long, crate::i18n::Language::English);
+        assert!(content.contains(&long.choices[0].value));
+        assert!(content.contains(&long.choices[0].label));
+    }
+
+    #[test]
+    fn settings_content_chunks_recombine_without_losing_unicode() {
+        let content = "한🙂日本語".repeat(1_200);
+        let chunks = split_discord_content(&content);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 2_000));
+        assert_eq!(chunks.concat(), content);
+    }
+
+    #[test]
+    fn generated_settings_commands_expose_optional_choices_and_voice_panel() {
+        let commands = definitions(crate::i18n::Language::English);
+        let payload = serde_json::to_value(commands).unwrap();
+        let options = payload[0]["options"].as_array().unwrap();
+        let find = |name: &str| {
+            options
+                .iter()
+                .find(|option| option["name"].as_str() == Some(name))
+                .unwrap()
+        };
+
+        for name in ["model", "effort", "fast", "permissions"] {
+            let value_option = &find(name)["options"][0];
+            assert_eq!(value_option["required"], false);
+        }
+        let input_mode = &find("input")["options"][0];
+        assert_eq!(input_mode["required"], false);
+        assert_eq!(find("settings")["type"], 1);
+        assert_eq!(find("voice")["type"], 1);
+        assert!(
+            find("voice")
+                .get("options")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|options| options.is_empty())
         );
     }
 }

@@ -47,6 +47,10 @@ Windows PowerShell：
 
 ## Discordコマンド
 
+設定パネルには現在の値と、モデル、推論の強さ、Fastモード、権限プロファイル、入力の送信方法、音声の選択ボタンが表示されます。音声の変更は次の通話から適用されます。
+
+- `/discodex settings`：ボタンで設定を選択
+- `/discodex voice`：音声プロファイルを選択
 - `/discodex status`：会話と設定を表示
 - `/discodex models`：利用可能なモデルを表示
 - `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加

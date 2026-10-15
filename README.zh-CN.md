@@ -47,6 +47,10 @@ Windows PowerShell：
 
 ## Discord 命令
 
+设置面板显示当前选项，可通过按钮选择模型、推理强度、Fast 模式、权限配置、输入传递方式和语音。语音更改从下一次通话开始生效。
+
+- `/discodex settings`：使用按钮选择设置
+- `/discodex voice`：选择语音配置
 - `/discodex status`：查看当前对话和设置
 - `/discodex models`：查看可用模型
 - `/discodex voice-join channel:<允许的语音频道>`：加入语音频道

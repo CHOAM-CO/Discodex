@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    fs,
     future::Future,
+    io::Write,
+    path::Path,
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
@@ -21,7 +24,7 @@ use rtc::{
         RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind,
     },
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use serenity::{
     all::{
@@ -73,6 +76,53 @@ const OPUS_OUTPUT_CAPACITY: usize = 4_000;
 const REALTIME_SDP_TIMEOUT: Duration = Duration::from_secs(30);
 const CANONICAL_DRAIN_IDLE: Duration = Duration::from_millis(500);
 const RECEIVED_RTP_CACHE_CAPACITY: usize = 512;
+const VOICE_SETTINGS_FILE: &str = "voice-settings.json";
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct VoiceSettings {
+    #[serde(default)]
+    voice: Option<String>,
+}
+
+fn selected_voice_from_file(path: &Path, configured: Option<&str>) -> Result<Option<String>> {
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<VoiceSettings>(&bytes)
+            .map(|settings| settings.voice)
+            .with_context(|| format!("parse voice selection {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(configured.map(str::to_owned))
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("read voice selection {}", path.display()))
+        }
+    }
+}
+
+fn persist_voice_selection(path: &Path, voice: Option<&str>) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("voice selection path has no parent")?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create voice settings directory {}", parent.display()))?;
+    let settings = VoiceSettings {
+        voice: voice.map(str::to_owned),
+    };
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("create temporary voice settings in {}", parent.display()))?;
+    serde_json::to_writer_pretty(&mut temporary, &settings).context("serialize voice selection")?;
+    temporary
+        .write_all(b"\n")
+        .context("finish voice settings file")?;
+    temporary
+        .as_file()
+        .sync_all()
+        .context("sync voice settings file")?;
+    temporary
+        .persist(path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("replace voice settings {}", path.display()))?;
+    Ok(())
+}
 
 fn received_before_start(params: &Value, start_order: u64) -> bool {
     crate::native::state_observation_order(params).is_some_and(|(_, order)| order < start_order)
@@ -2166,6 +2216,16 @@ impl VoiceBridge {
         }
     }
 
+    pub fn selected_voice(&self) -> Result<Option<String>> {
+        let path = self.config.state_dir.join(VOICE_SETTINGS_FILE);
+        selected_voice_from_file(&path, self.config.voice.as_deref())
+    }
+
+    pub fn set_voice(&self, voice: Option<&str>) -> Result<()> {
+        let path = self.config.state_dir.join(VOICE_SETTINGS_FILE);
+        persist_voice_selection(&path, voice)
+    }
+
     pub fn with_installation_checks(mut self, checks: Arc<Checks>) -> Self {
         self.installation_checks = Some(checks);
         self
@@ -2240,6 +2300,7 @@ impl VoiceBridge {
     }
 
     async fn join_locked(&self, guild_id: GuildId, channel_id: ChannelId) -> Result<()> {
+        let selected_voice = self.selected_voice()?;
         let language = self.config.language;
         let thread_id = self.native.thread_id();
         let call_instance_id = Uuid::new_v4();
@@ -2276,7 +2337,7 @@ impl VoiceBridge {
         ) = match negotiate_realtime(
             &self.native,
             &thread_id,
-            self.config.voice.as_deref(),
+            selected_voice.as_deref(),
             playback.clone(),
             audio_stats.clone(),
             &self.transcript_calls,
@@ -5422,6 +5483,46 @@ impl VoiceEventHandler for PlaybackErrorObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_settings_absence_falls_back_to_configured_voice() {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        let path = directory.path().join(VOICE_SETTINGS_FILE);
+        assert_eq!(
+            selected_voice_from_file(&path, Some("configured-voice")).unwrap(),
+            Some("configured-voice".to_owned())
+        );
+        assert_eq!(selected_voice_from_file(&path, None).unwrap(), None);
+    }
+
+    #[test]
+    fn voice_settings_override_and_explicit_null_survive_reopen() {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        let path = directory.path().join(VOICE_SETTINGS_FILE);
+        persist_voice_selection(&path, Some("selected-voice")).unwrap();
+        assert_eq!(
+            selected_voice_from_file(&path, Some("configured-voice")).unwrap(),
+            Some("selected-voice".to_owned())
+        );
+
+        persist_voice_selection(&path, None).unwrap();
+        assert_eq!(
+            selected_voice_from_file(&path, Some("configured-voice")).unwrap(),
+            None
+        );
+        assert_eq!(
+            serde_json::from_slice::<VoiceSettings>(&fs::read(path).unwrap()).unwrap(),
+            VoiceSettings { voice: None }
+        );
+    }
+
+    #[test]
+    fn malformed_voice_settings_report_an_error_instead_of_silently_falling_back() {
+        let directory = tempfile::tempdir().expect("temporary state directory");
+        let path = directory.path().join(VOICE_SETTINGS_FILE);
+        fs::write(&path, b"{ invalid json }").unwrap();
+        assert!(selected_voice_from_file(&path, Some("configured-voice")).is_err());
+    }
 
     fn receiver_report_packet(blocks: &[(u32, u32)]) -> Vec<u8> {
         assert!(blocks.len() <= 31);

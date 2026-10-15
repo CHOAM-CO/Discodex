@@ -70,12 +70,16 @@ The updater fast-forwards the checkout only when tracked files have no local cha
 
 | Action | Command |
 | --- | --- |
+| Choose settings with buttons | `/discodex settings` |
+| Choose a voice profile | `/discodex voice` |
 | Show the current conversation and settings | `/discodex status` |
 | List available models | `/discodex models` |
 | Join an allowed voice channel | `/discodex voice-join channel:<voice channel>` |
 | Leave the voice call | `/discodex voice-leave` |
 | Request that the current response stop | `/discodex interrupt` |
 | Start a new conversation | `/discodex new` |
+
+Settings panels show the current selection and buttons for models, reasoning effort, Fast mode, permission profiles, input delivery, and voice profiles. Voice changes apply to the next call.
 
 Leaving a voice call disconnects voice only; the persistent conversation remains available. Use `/discodex new` to start a new conversation.
 
