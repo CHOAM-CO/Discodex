@@ -839,6 +839,8 @@ dependencies = [
  "futures-util",
  "nix 0.30.1",
  "opus2",
+ "percent-encoding",
+ "pulldown-cmark",
  "reqwest",
  "rpassword",
  "rtc",
@@ -855,6 +857,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "webrtc",
  "windows-sys 0.61.2",
@@ -2802,6 +2805,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]

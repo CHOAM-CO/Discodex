@@ -1,0 +1,747 @@
+use std::collections::HashMap;
+use std::io::ErrorKind;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Result, bail};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use tokio::io::AsyncReadExt;
+use url::Url;
+
+use crate::config::Config;
+use crate::i18n::Language;
+
+const MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_FILES: usize = 10;
+const MAX_TOTAL_BYTES: u64 = 25 * 1024 * 1024;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReplyFile {
+    pub(crate) filename: String,
+    pub(crate) data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PreparedReply {
+    pub(crate) content: String,
+    pub(crate) files: Vec<ReplyFile>,
+}
+
+#[derive(Clone, Debug)]
+struct LocalLink {
+    range: Range<usize>,
+    path: PathBuf,
+    filename: String,
+}
+
+#[derive(Clone, Debug)]
+struct ReplyPlan {
+    text: String,
+    links: Vec<LocalLink>,
+    reference_definition_ranges: Vec<Range<usize>>,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+enum FileFailure {
+    InvalidPath,
+    MissingOrUnreadable,
+    NotRegularFile,
+    Protected,
+    TooLarge,
+    TooManyFiles,
+    TotalTooLarge,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LinkOutcome {
+    File(usize),
+    Failed(FileFailure),
+}
+
+#[derive(Default)]
+struct ReplyAccumulator {
+    files: Vec<ReplyFile>,
+    total_bytes: u64,
+    seen: HashMap<PathBuf, LinkOutcome>,
+}
+
+impl ReplyAccumulator {
+    fn previous(&self, key: &Path) -> Option<LinkOutcome> {
+        self.seen.get(key).cloned()
+    }
+
+    fn remaining_total(&self) -> u64 {
+        MAX_TOTAL_BYTES.saturating_sub(self.total_bytes)
+    }
+
+    fn accept(
+        &mut self,
+        key: PathBuf,
+        result: std::result::Result<ReplyFile, FileFailure>,
+    ) -> LinkOutcome {
+        if let Some(previous) = self.seen.get(&key) {
+            return previous.clone();
+        }
+        let outcome = match result {
+            Err(failure) => LinkOutcome::Failed(failure),
+            Ok(_) if self.files.len() >= MAX_FILES => {
+                LinkOutcome::Failed(FileFailure::TooManyFiles)
+            }
+            Ok(file) if file.data.len() as u64 > self.remaining_total() => {
+                LinkOutcome::Failed(FileFailure::TotalTooLarge)
+            }
+            Ok(mut file) => {
+                file.filename = unique_upload_filename(&self.files, &file.filename);
+                self.total_bytes += file.data.len() as u64;
+                let index = self.files.len();
+                self.files.push(file);
+                LinkOutcome::File(index)
+            }
+        };
+        self.seen.insert(key, outcome.clone());
+        outcome
+    }
+}
+
+fn unique_upload_filename(existing: &[ReplyFile], requested: &str) -> String {
+    let is_used = |candidate: &str| {
+        existing
+            .iter()
+            .any(|file| file.filename.eq_ignore_ascii_case(candidate))
+    };
+    if !is_used(requested) {
+        return requested.to_owned();
+    }
+
+    let path = Path::new(requested);
+    let stem = path
+        .file_stem()
+        .map(|part| part.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "attachment".to_owned());
+    let extension = path.extension().map(|part| part.to_string_lossy());
+    for suffix in 2_u64.. {
+        let candidate = match &extension {
+            Some(extension) if !extension.is_empty() => {
+                format!("{stem}-{suffix}.{extension}")
+            }
+            _ => format!("{stem}-{suffix}"),
+        };
+        if !is_used(&candidate) {
+            return candidate;
+        }
+    }
+    requested.to_owned()
+}
+
+fn plan_reply(text: &str, project_dir: &Path) -> ReplyPlan {
+    let parser = Parser::new(text);
+    let reference_definition_ranges = parser
+        .reference_definitions()
+        .iter()
+        .filter_map(|(_, definition)| {
+            local_link_path(&definition.dest, project_dir).map(|_| definition.span.clone())
+        })
+        .collect();
+    let mut links = Vec::new();
+    let mut pending: Option<(usize, String)> = None;
+
+    for (event, range) in parser.into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                pending = Some((range.start, dest_url.into_string()));
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((start, destination)) = pending.take() {
+                    if let Some(path) = local_link_path(&destination, project_dir) {
+                        let end = range.end.max(start);
+                        if start <= end && end <= text.len() {
+                            links.push(LocalLink {
+                                range: start..end,
+                                filename: safe_basename(&path),
+                                path,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    links.sort_by_key(|link| link.range.start);
+    ReplyPlan {
+        text: text.to_owned(),
+        links,
+        reference_definition_ranges,
+    }
+}
+
+fn local_link_path(destination: &str, project_dir: &Path) -> Option<PathBuf> {
+    if is_windows_drive_path(destination) {
+        let decoded = percent_encoding::percent_decode_str(destination)
+            .decode_utf8()
+            .ok()?;
+        return Some(PathBuf::from(decoded.as_ref()));
+    }
+    if destination.starts_with("//") || has_uri_scheme(destination) && !is_file_scheme(destination)
+    {
+        return None;
+    }
+
+    if is_file_scheme(destination) {
+        let mut url = Url::parse(destination).ok()?;
+        if url.scheme() != "file"
+            || url
+                .host_str()
+                .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+        {
+            return None;
+        }
+        if url.fragment().is_some_and(is_line_anchor) {
+            return None;
+        }
+        url.set_fragment(None);
+        url.set_query(None);
+        return url.to_file_path().ok();
+    }
+
+    let (path_text, fragment) = destination
+        .split_once('#')
+        .map_or((destination, None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    if fragment.is_some_and(is_line_anchor) || path_text.is_empty() {
+        return None;
+    }
+    let decoded = percent_encoding::percent_decode_str(path_text)
+        .decode_utf8()
+        .ok()?;
+    let path = PathBuf::from(decoded.as_ref());
+    Some(if path.is_absolute() {
+        path
+    } else {
+        project_dir.join(path)
+    })
+}
+
+fn is_windows_drive_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+}
+
+fn has_uri_scheme(value: &str) -> bool {
+    let Some((scheme, _)) = value.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-'))
+}
+
+fn is_file_scheme(value: &str) -> bool {
+    value
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+}
+
+fn is_line_anchor(fragment: &str) -> bool {
+    fragment
+        .strip_prefix('L')
+        .is_some_and(|rest| rest.as_bytes().first().is_some_and(u8::is_ascii_digit))
+}
+
+fn safe_basename(path: &Path) -> String {
+    let value = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let value = value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(240)
+        .collect::<String>();
+    if value.is_empty() || value == "." || value == ".." {
+        "attachment".to_owned()
+    } else {
+        value
+    }
+}
+
+fn display_filename(filename: &str) -> String {
+    let mut escaped = String::new();
+    for ch in filename.chars() {
+        if ch == '@' {
+            escaped.push('@');
+            escaped.push('\u{200b}');
+        } else {
+            if matches!(
+                ch,
+                '`' | '\\' | '*' | '_' | '~' | '|' | '[' | ']' | '<' | '>'
+            ) {
+                escaped.push('\\');
+            }
+            escaped.push(ch);
+        }
+    }
+    format!("`{escaped}`")
+}
+
+fn absolute_candidate(config: &Config, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_owned()
+    } else {
+        config.project_dir.join(path)
+    }
+}
+
+fn codex_home(config: &Config) -> Option<PathBuf> {
+    config
+        .codex_home
+        .clone()
+        .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
+        .or_else(|| {
+            #[cfg(windows)]
+            let home = std::env::var_os("USERPROFILE");
+            #[cfg(not(windows))]
+            let home = std::env::var_os("HOME");
+            home.map(PathBuf::from).map(|home| home.join(".codex"))
+        })
+}
+
+fn is_protected_path(config: &Config, candidate: &Path, canonical: &Path) -> bool {
+    if let Some(credentials) = &config.credentials_file {
+        let configured = absolute_candidate(config, credentials);
+        if candidate == configured
+            || std::fs::canonicalize(&configured)
+                .ok()
+                .is_some_and(|path| path == canonical)
+        {
+            return true;
+        }
+    }
+
+    if let Some(home) = codex_home(config) {
+        let configured = absolute_candidate(config, &home);
+        if candidate.starts_with(&configured)
+            || std::fs::canonicalize(&configured)
+                .ok()
+                .is_some_and(|path| canonical.starts_with(path))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+async fn canonical_candidate(
+    config: &Config,
+    path: &Path,
+) -> std::result::Result<PathBuf, FileFailure> {
+    let candidate = absolute_candidate(config, path);
+    let canonical = tokio::fs::canonicalize(&candidate)
+        .await
+        .map_err(map_io_failure)?;
+    if is_protected_path(config, &candidate, &canonical) {
+        return Err(FileFailure::Protected);
+    }
+    Ok(canonical)
+}
+
+async fn read_canonical_file(
+    canonical: &Path,
+    filename: &str,
+    remaining_total: u64,
+) -> std::result::Result<ReplyFile, FileFailure> {
+    // Reject devices and FIFOs before opening: opening a pipe can block even
+    // though it would fail the regular-file check below.
+    let path_metadata = tokio::fs::metadata(canonical)
+        .await
+        .map_err(map_io_failure)?;
+    if !path_metadata.is_file() {
+        return Err(FileFailure::NotRegularFile);
+    }
+    let file = tokio::fs::File::open(canonical)
+        .await
+        .map_err(map_io_failure)?;
+    let metadata = file.metadata().await.map_err(map_io_failure)?;
+    if !metadata.is_file() {
+        return Err(FileFailure::NotRegularFile);
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(FileFailure::TooLarge);
+    }
+    if metadata.len() > remaining_total {
+        return Err(FileFailure::TotalTooLarge);
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(map_io_failure)?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(FileFailure::TooLarge);
+    }
+    if bytes.len() as u64 > remaining_total {
+        return Err(FileFailure::TotalTooLarge);
+    }
+    Ok(ReplyFile {
+        filename: safe_upload_filename(filename),
+        data: bytes,
+    })
+}
+
+fn map_io_failure(error: std::io::Error) -> FileFailure {
+    match error.kind() {
+        ErrorKind::NotFound => FileFailure::MissingOrUnreadable,
+        _ => FileFailure::MissingOrUnreadable,
+    }
+}
+
+fn safe_upload_filename(filename: &str) -> String {
+    safe_basename(Path::new(filename))
+}
+
+fn failure_text(language: Language, filename: &str, failure: FileFailure) -> String {
+    let reason = language.text(
+        match failure {
+            FileFailure::InvalidPath => "not a local file path",
+            FileFailure::MissingOrUnreadable => "file is missing or unreadable",
+            FileFailure::NotRegularFile => "not a regular file",
+            FileFailure::Protected => "protected credentials or Codex settings cannot be attached",
+            FileFailure::TooLarge => "exceeds the 10 MiB per-file limit",
+            FileFailure::TooManyFiles => "the reply attachment limit is 10 files",
+            FileFailure::TotalTooLarge => "the 25 MiB total attachment limit would be exceeded",
+        },
+        match failure {
+            FileFailure::InvalidPath => "로컬 파일 경로가 아닙니다",
+            FileFailure::MissingOrUnreadable => "파일이 없거나 읽을 수 없습니다",
+            FileFailure::NotRegularFile => "일반 파일이 아닙니다",
+            FileFailure::Protected => "보호된 자격 증명 또는 Codex 설정 파일은 첨부할 수 없습니다",
+            FileFailure::TooLarge => "파일당 10 MiB 제한을 초과합니다",
+            FileFailure::TooManyFiles => "답변 첨부는 최대 10개입니다",
+            FileFailure::TotalTooLarge => "전체 첨부 용량 25 MiB 제한을 초과합니다",
+        },
+        match failure {
+            FileFailure::InvalidPath => "不是本地文件路径",
+            FileFailure::MissingOrUnreadable => "文件不存在或无法读取",
+            FileFailure::NotRegularFile => "不是普通文件",
+            FileFailure::Protected => "不能附加受保护的凭据或 Codex 设置文件",
+            FileFailure::TooLarge => "超过每个文件 10 MiB 的限制",
+            FileFailure::TooManyFiles => "每条回复最多附加 10 个文件",
+            FileFailure::TotalTooLarge => "超过附件总量 25 MiB 的限制",
+        },
+        match failure {
+            FileFailure::InvalidPath => "ローカルファイルのパスではありません",
+            FileFailure::MissingOrUnreadable => "ファイルがないか、読み取れません",
+            FileFailure::NotRegularFile => "通常ファイルではありません",
+            FileFailure::Protected => "保護された認証情報またはCodex設定ファイルは添付できません",
+            FileFailure::TooLarge => "ファイルごとの上限10 MiBを超えています",
+            FileFailure::TooManyFiles => "返信に添付できるファイルは最大10個です",
+            FileFailure::TotalTooLarge => "添付ファイルの合計上限25 MiBを超えています",
+        },
+    );
+    let safe = display_filename(filename);
+    language
+        .text(
+            // These templates stay untranslated only at the language-neutral path layer.
+            "Could not attach {name}: {reason}.",
+            "{name}을(를) 첨부할 수 없습니다: {reason}.",
+            "无法附加 {name}：{reason}。",
+            "{name}を添付できません: {reason}。",
+        )
+        .replace("{reason}", reason)
+        .replace("{name}", &safe)
+}
+
+fn finish_reply(
+    plan: ReplyPlan,
+    outcomes: &[LinkOutcome],
+    files: Vec<ReplyFile>,
+    language: Language,
+) -> PreparedReply {
+    let mut content = String::new();
+    let mut cursor = 0;
+    let mut failures = Vec::new();
+    let mut replacements = plan
+        .links
+        .iter()
+        .enumerate()
+        .map(|(index, link)| (link.range.clone(), Some(index)))
+        .chain(
+            plan.reference_definition_ranges
+                .iter()
+                .cloned()
+                .map(|range| (range, None)),
+        )
+        .collect::<Vec<_>>();
+    replacements.sort_by_key(|(range, _)| range.start);
+    for (range, link_index) in replacements {
+        if range.start < cursor || range.end > plan.text.len() {
+            continue;
+        }
+        content.push_str(&plan.text[cursor..range.start]);
+        if let Some(index) = link_index {
+            let Some(link) = plan.links.get(index) else {
+                continue;
+            };
+            content.push_str(&display_filename(&link.filename));
+            if let Some(LinkOutcome::Failed(reason)) = outcomes.get(index) {
+                let item = failure_text(language, &link.filename, *reason);
+                if !failures.contains(&item) {
+                    failures.push(item);
+                }
+            }
+        }
+        cursor = range.end;
+    }
+    content.push_str(&plan.text[cursor..]);
+    if !failures.is_empty() {
+        content.push_str("\n\n");
+        content.push_str(&failures.join("\n"));
+    }
+    PreparedReply { content, files }
+}
+
+/// Prepare explicit local paths (for a user-requested file send). The operation
+/// is all-or-nothing and never returns a credential or Codex settings file.
+pub(crate) async fn prepare_explicit_files(
+    config: &Config,
+    paths: &[String],
+) -> Result<Vec<ReplyFile>> {
+    let mut accumulator = ReplyAccumulator::default();
+
+    for supplied in paths {
+        let Some(path) = explicit_path(supplied, &config.project_dir) else {
+            bail!(
+                "{}",
+                failure_text(
+                    config.language,
+                    &safe_basename(Path::new(supplied)),
+                    FileFailure::InvalidPath
+                )
+            );
+        };
+        let name = safe_basename(&path);
+        let canonical = canonical_candidate(config, &path)
+            .await
+            .map_err(|issue| anyhow::anyhow!("{}", failure_text(config.language, &name, issue)))?;
+        if accumulator.previous(&canonical).is_some() {
+            continue;
+        }
+        let result = read_canonical_file(&canonical, &name, accumulator.remaining_total()).await;
+        match accumulator.accept(canonical, result) {
+            LinkOutcome::File(_) => {}
+            LinkOutcome::Failed(issue) => {
+                bail!("{}", failure_text(config.language, &name, issue));
+            }
+        }
+    }
+    Ok(accumulator.files)
+}
+
+fn explicit_path(value: &str, project_dir: &Path) -> Option<PathBuf> {
+    if is_file_scheme(value) {
+        return local_link_path(value, project_dir);
+    }
+    if !is_windows_drive_path(value) && (has_uri_scheme(value) || value.starts_with("//")) {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        project_dir.join(path)
+    })
+}
+
+/// Prepare a Markdown reply, converting explicitly linked local files into
+/// Discord uploads. Ordinary prose, code spans, plain paths, and web links stay
+/// untouched. Files are only read when Markdown explicitly links them.
+pub(crate) async fn prepare_reply(config: &Config, text: &str) -> PreparedReply {
+    let plan = plan_reply(text, &config.project_dir);
+    let mut accumulator = ReplyAccumulator::default();
+    let mut outcomes = Vec::with_capacity(plan.links.len());
+
+    for link in &plan.links {
+        let candidate = absolute_candidate(config, &link.path);
+        let lexical_key = candidate.clone();
+        match canonical_candidate(config, &link.path).await {
+            Err(issue) => {
+                let outcome = accumulator.accept(lexical_key, Err(issue));
+                outcomes.push(outcome);
+            }
+            Ok(canonical) => {
+                if let Some(outcome) = accumulator.previous(&canonical) {
+                    outcomes.push(outcome);
+                    continue;
+                }
+                let name = link.filename.clone();
+                let result = if accumulator.files.len() >= MAX_FILES {
+                    Err(FileFailure::TooManyFiles)
+                } else {
+                    read_canonical_file(&canonical, &name, accumulator.remaining_total()).await
+                };
+                let outcome = accumulator.accept(canonical, result);
+                outcomes.push(outcome);
+            }
+        }
+    }
+    finish_reply(plan, &outcomes, accumulator.files, config.language)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_planning_recognizes_local_link_forms_and_preserves_nonlinks() {
+        let project = Path::new("project");
+        let local_absolute = PathBuf::from(std::env::temp_dir()).join("reply file.pdf");
+        let file_url = Url::from_file_path(&local_absolute).unwrap().to_string();
+        let input = format!(
+            "[relative](docs/a%20b.txt) [absolute](<docs/another file.png>) [file URL]({file_url}) [ref][r] [web](https://example.org/x) `[ignored](docs/code.txt)` docs/plain.txt [source](src/main.rs#L12)\n\n[r]: docs/ref.md"
+        );
+        let plan = plan_reply(&input, project);
+
+        assert_eq!(plan.links.len(), 4);
+        assert_eq!(plan.links[0].path, Path::new("project/docs/a b.txt"));
+        assert_eq!(plan.links[0].filename, "a b.txt");
+        assert_eq!(plan.links[1].filename, "another file.png");
+        assert_eq!(plan.links[2].filename, "reply file.pdf");
+        assert_eq!(plan.links[3].path, Path::new("project/docs/ref.md"));
+        assert_eq!(plan.reference_definition_ranges.len(), 1);
+        let rendered = finish_reply(
+            plan,
+            &[
+                LinkOutcome::File(0),
+                LinkOutcome::File(1),
+                LinkOutcome::File(2),
+                LinkOutcome::File(3),
+            ],
+            Vec::new(),
+            Language::English,
+        );
+        assert!(!rendered.content.contains("[r]: docs/ref.md"));
+        assert!(rendered.content.contains("`ref.md`"));
+    }
+
+    #[test]
+    fn reply_replaces_links_with_filenames_and_deduplicates_injected_read_result() {
+        let plan = plan_reply(
+            "Please read [the report](docs/report.pdf) and [same file](docs/report.pdf). Keep https://example.org and `docs/report.pdf`.",
+            Path::new("project"),
+        );
+        let mut accumulator = ReplyAccumulator::default();
+        let file = ReplyFile {
+            filename: "report.pdf".to_owned(),
+            data: b"test bytes".to_vec(),
+        };
+        let outcomes = [
+            accumulator.accept(PathBuf::from("canonical/report.pdf"), Ok(file.clone())),
+            accumulator.accept(PathBuf::from("canonical/report.pdf"), Ok(file)),
+        ];
+        assert_eq!(outcomes, [LinkOutcome::File(0), LinkOutcome::File(0)]);
+        let files = accumulator.files;
+        let prepared = finish_reply(plan, &outcomes, files.clone(), Language::English);
+
+        assert_eq!(prepared.files, files);
+        assert!(prepared.content.contains("`report.pdf`"));
+        assert!(prepared.content.contains("https://example.org"));
+        assert!(prepared.content.contains("`docs/report.pdf`"));
+        assert!(!prepared.content.contains("[the report](docs/report.pdf)"));
+        assert!(!prepared.content.contains("/project"));
+    }
+
+    #[test]
+    fn distinct_paths_with_same_basename_get_unique_upload_names() {
+        let mut accumulator = ReplyAccumulator::default();
+        for (path, filename) in [
+            ("a/report.txt", "report.txt"),
+            ("b/report.txt", "report.txt"),
+            ("c/report-2.txt", "report-2.txt"),
+            ("d/report.txt", "report.txt"),
+        ] {
+            let result = accumulator.accept(
+                PathBuf::from(path),
+                Ok(ReplyFile {
+                    filename: filename.to_owned(),
+                    data: vec![b'x'],
+                }),
+            );
+            assert!(matches!(result, LinkOutcome::File(_)));
+        }
+        assert_eq!(
+            accumulator
+                .files
+                .iter()
+                .map(|file| file.filename.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "report.txt",
+                "report-2.txt",
+                "report-2-2.txt",
+                "report-3.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_read_reports_only_safe_filename_in_selected_language() {
+        let plan = plan_reply(
+            "See [private name](<docs/missing file.txt>).",
+            Path::new("private-root"),
+        );
+        let prepared = finish_reply(
+            plan,
+            &[LinkOutcome::Failed(FileFailure::MissingOrUnreadable)],
+            Vec::new(),
+            Language::Korean,
+        );
+
+        assert!(prepared.content.contains("missing file.txt"));
+        assert!(prepared.content.contains("첨부할 수 없습니다"));
+        assert!(!prepared.content.contains("private-root"));
+        assert!(prepared.files.is_empty());
+    }
+    #[test]
+    fn windows_drive_paths_are_not_mistaken_for_uri_schemes() {
+        assert!(is_windows_drive_path("C:/Users/Example/file.txt"));
+        assert!(is_windows_drive_path("D:\\work\\file.txt"));
+        assert!(!is_windows_drive_path("https://example.org/file.txt"));
+        assert!(explicit_path("C:/Users/Example/file.txt", Path::new("project")).is_some());
+    }
+
+    #[test]
+    fn reply_accumulator_enforces_attachment_count_limit() {
+        let mut accumulator = ReplyAccumulator::default();
+        let mut last = LinkOutcome::Failed(FileFailure::InvalidPath);
+        for index in 0..=MAX_FILES {
+            let result = Ok(ReplyFile {
+                filename: format!("file-{index}.txt"),
+                data: vec![b'x'],
+            });
+            last = accumulator.accept(PathBuf::from(format!("canonical/{index}")), result);
+        }
+        assert_eq!(accumulator.files.len(), MAX_FILES);
+        assert_eq!(last, LinkOutcome::Failed(FileFailure::TooManyFiles));
+
+        let mut total_limited = ReplyAccumulator::default();
+        total_limited.total_bytes = MAX_TOTAL_BYTES;
+        let result = total_limited.accept(
+            PathBuf::from("canonical/over-limit"),
+            Ok(ReplyFile {
+                filename: "over-limit.txt".to_owned(),
+                data: vec![b'x'],
+            }),
+        );
+        assert_eq!(result, LinkOutcome::Failed(FileFailure::TotalTooLarge));
+        assert!(total_limited.files.is_empty());
+    }
+}

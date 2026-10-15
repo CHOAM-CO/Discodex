@@ -4,6 +4,7 @@ use std::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
+    future::Future,
     time::{Duration, Instant},
 };
 
@@ -24,8 +25,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use serenity::{
     all::{
-        ChannelId, ChannelType, CreateMessage, CreateThread, EditMessage, GetMessages, GuildId,
-        MessageId, Nonce, UserId,
+        AttachmentId, ChannelId, ChannelType, CreateMessage, CreateThread, EditMessage,
+        EditAttachments, GetMessages, GuildId, MessageId, Nonce, UserId, CreateAttachment,
     },
     async_trait,
     http::Http,
@@ -59,6 +60,7 @@ use webrtc::{
 };
 
 use crate::i18n::Language;
+use crate::reply_files::{PreparedReply, ReplyFile};
 use crate::voice_input::{VoiceInputGate, VoiceInputPhase};
 use crate::{config::Config, installation_check::Checks, native::Native};
 
@@ -165,6 +167,11 @@ pub struct TranscriptItem {
 pub struct TranscriptLedger {
     language: Language,
     items: HashMap<String, TranscriptItem>,
+    prepared_replies: HashMap<String, (String, PreparedReply)>,
+    posted_reply_files: HashMap<String, Vec<PostedReplyFile>>,
+    // Native source text can differ from the rendered Discord content when
+    // local-file Markdown is replaced by uploaded attachments.
+    posted_source_text: HashMap<String, String>,
     // Recorded only when an actual flat source is promoted to a native item.
     canonical_sources: HashMap<String, String>,
     post_attempts: HashMap<String, Vec<TranscriptPostAttempt>>,
@@ -185,6 +192,9 @@ impl TranscriptLedger {
         Self {
             language,
             items: HashMap::new(),
+            prepared_replies: HashMap::new(),
+            posted_reply_files: HashMap::new(),
+            posted_source_text: HashMap::new(),
             canonical_sources: HashMap::new(),
             post_attempts: HashMap::new(),
             processed_native_observations: HashSet::new(),
@@ -193,6 +203,96 @@ impl TranscriptLedger {
             flat_event_sequence: 0,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PostedReplyFile {
+    id: AttachmentId,
+    filename: String,
+    digest: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplyFileEdit {
+    Keep(AttachmentId),
+    Upload(usize),
+}
+
+fn reply_file_digest(file: &ReplyFile) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(&file.data).into()
+}
+
+fn reply_file_edit_plan(files: &[ReplyFile], existing: &[PostedReplyFile]) -> Vec<ReplyFileEdit> {
+    let mut unmatched = existing.to_vec();
+    files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            let digest = reply_file_digest(file);
+            if let Some(position) = unmatched
+                .iter()
+                .position(|sent| sent.filename == file.filename && sent.digest == digest)
+            {
+                ReplyFileEdit::Keep(unmatched.remove(position).id)
+            } else {
+                ReplyFileEdit::Upload(index)
+            }
+        })
+        .collect()
+}
+
+fn match_reply_attachment_ids(
+    files: &[ReplyFile],
+    attachments: &[(AttachmentId, String, u32)],
+) -> Result<Vec<AttachmentId>> {
+    if files.len() != attachments.len() {
+        bail!("Discord returned a different number of voice transcript attachments");
+    }
+    let mut used = vec![false; attachments.len()];
+    files
+        .iter()
+        .map(|file| {
+            let expected_size = u32::try_from(file.data.len())
+                .context("voice transcript attachment exceeds Discord size metadata")?;
+            let matches = attachments
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, filename, size))| {
+                    filename == &file.filename && *size == expected_size
+                })
+                .map(|(index, (id, _, _))| (index, *id))
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                bail!("Discord voice transcript attachment metadata is not uniquely matchable");
+            }
+            let (index, id) = matches[0];
+            if std::mem::replace(&mut used[index], true) {
+                bail!("Discord reused a voice transcript attachment identity");
+            }
+            Ok(id)
+        })
+        .collect()
+}
+
+fn posted_reply_files_from_attachments(
+    files: &[ReplyFile],
+    attachments: &[serenity::all::Attachment],
+) -> Result<Vec<PostedReplyFile>> {
+    let metadata = attachments
+        .iter()
+        .map(|attachment| (attachment.id, attachment.filename.clone(), attachment.size))
+        .collect::<Vec<_>>();
+    let ids = match_reply_attachment_ids(files, &metadata)?;
+    Ok(files
+        .iter()
+        .zip(ids)
+        .map(|(file, id)| PostedReplyFile {
+            id,
+            filename: file.filename.clone(),
+            digest: reply_file_digest(file),
+        })
+        .collect())
 }
 
 #[derive(Clone, Debug)]
@@ -285,8 +385,9 @@ impl TranscriptLedger {
             if item.status == TranscriptStatus::Complete
                 && item.role == role
                 && item.text == text
-                && item.posted_content.as_deref()
-                    == Some(transcript_content_pages_for_language(item, self.language).as_slice())
+                && (self.posted_source_text.get(source_id).map(String::as_str) == Some(text)
+                    || item.posted_content.as_deref()
+                        == Some(transcript_content_pages_for_language(item, self.language).as_slice()))
                 && !self.has_pending_posts(source_id)
             {
                 return None;
@@ -428,6 +529,14 @@ impl TranscriptLedger {
         }
         canonical.speaker_ids = fallback.speaker_ids.clone();
         canonical.posted_content = None;
+        self.posted_source_text.remove(event_key);
+        self.posted_source_text.remove(source_id);
+        if let Some(cached) = self.prepared_replies.remove(event_key) {
+            self.prepared_replies.entry(source_id.to_owned()).or_insert(cached);
+        }
+        if let Some(files) = self.posted_reply_files.remove(event_key) {
+            self.posted_reply_files.entry(source_id.to_owned()).or_insert(files);
+        }
         if let Some(stored) = self.items.get_mut(source_id) {
             stored.discord_message_ids = canonical.discord_message_ids.clone();
             stored.posted_content = None;
@@ -613,10 +722,55 @@ impl TranscriptLedger {
             )
     }
 
+    async fn prepared_reply_for<F, Fut>(
+        &mut self,
+        source_id: &str,
+        source_text: &str,
+        prepare: F,
+    ) -> PreparedReply
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = PreparedReply>,
+    {
+        if let Some((cached_source, reply)) = self.prepared_replies.get(source_id)
+            && cached_source == source_text
+        {
+            return reply.clone();
+        }
+        let reply = prepare().await;
+        self.prepared_replies.insert(
+            source_id.to_owned(),
+            (source_text.to_owned(), reply.clone()),
+        );
+        reply
+    }
+
     fn mark_posted(&mut self, source_id: &str, content: Vec<String>) {
         if let Some(item) = self.items.get_mut(source_id) {
             item.posted_content = Some(content);
         }
+        self.posted_source_text.remove(source_id);
+    }
+
+    fn mark_posted_reply_files(&mut self, source_id: &str, files: Vec<PostedReplyFile>) {
+        self.posted_reply_files.insert(source_id.to_owned(), files);
+    }
+
+    fn mark_posted_source_text(
+        &mut self,
+        source_id: &str,
+        source_text: &str,
+        content: Vec<String>,
+    ) {
+        self.mark_posted(source_id, content);
+        self.posted_source_text
+            .insert(source_id.to_owned(), source_text.to_owned());
+        // Sent payload bytes are no longer needed; the source-text marker makes
+        // canonical replays a no-op, while failures retain the prepared bytes.
+        self.prepared_replies.remove(source_id);
+        // Sent payload bytes are no longer needed; the source-text marker makes
+        // canonical replays a no-op, while failures retain the prepared bytes.
+        self.prepared_replies.remove(source_id);
     }
 
     pub fn mark_open_items_incomplete(&mut self) -> Vec<TranscriptItem> {
@@ -651,6 +805,7 @@ pub struct VoiceBridge {
 struct TranscriptCall {
     call_instance_id: Uuid,
     language: Language,
+    reply_file_config: Option<Arc<Config>>,
     installation_checks: Option<Arc<Checks>>,
     native_thread_id: String,
     transcript_thread_id: ChannelId,
@@ -748,6 +903,7 @@ impl TranscriptCall {
             received_fence,
             start_generation,
             None,
+            None,
             GuildId::new(1),
             "Codex".to_owned(),
             Language::English,
@@ -763,6 +919,7 @@ impl TranscriptCall {
         received_fence: &AtomicU64,
         start_generation: Option<u64>,
         installation_checks: Option<Arc<Checks>>,
+        reply_file_config: Option<Arc<Config>>,
         guild_id: GuildId,
         agent_name: String,
         language: Language,
@@ -804,6 +961,7 @@ impl TranscriptCall {
         let call = Arc::new_cyclic(|weak_self| Self {
             call_instance_id,
             language,
+            reply_file_config,
             installation_checks,
             native_thread_id,
             transcript_thread_id,
@@ -1493,9 +1651,19 @@ impl TranscriptCall {
             && item.role == role
             && item.text == text;
         let pages = transcript_content_pages_for_language(item, self.language);
+        let rendered_source_posted = ledger
+            .posted_source_text
+            .get(source_id)
+            .is_some_and(|posted| posted == &item.text);
+        let posted_content_matches = rendered_source_posted
+            || item.posted_content.as_deref() == Some(pages.as_slice());
+        let posted_page_count = item
+            .posted_content
+            .as_ref()
+            .is_some_and(|posted| item.discord_message_ids.len() >= posted.len());
         let all_pages_posted = result.is_ok()
-            && item.posted_content.as_deref() == Some(pages.as_slice())
-            && item.discord_message_ids.len() >= pages.len()
+            && posted_content_matches
+            && posted_page_count
             && !ledger.has_pending_posts(source_id);
         let error = result.as_ref().err().map(|error| format!("{error:#}"));
         checks.note_transcript(
@@ -2093,6 +2261,7 @@ impl VoiceBridge {
             guild_id,
             self.config.language,
             self.config.name.clone(),
+            self.config.clone(),
         )
         .await
         {
@@ -3483,6 +3652,7 @@ async fn negotiate_realtime(
     guild_id: GuildId,
     language: Language,
     agent_name: String,
+    reply_file_config: Arc<Config>,
 ) -> Result<(
     Arc<dyn PeerConnection>,
     Arc<TrackLocalStaticSample>,
@@ -3530,6 +3700,7 @@ async fn negotiate_realtime(
                 fence,
                 Some(native.current_generation()),
                 audio_stats.installation_checks.clone(),
+                Some(reply_file_config.clone()),
                 guild_id,
                 agent_name.clone(),
                 language,
@@ -4591,8 +4762,34 @@ async fn deliver_transcript(
         stored.speaker_ids = item.speaker_ids.clone();
         stored.speaker_labels = item.speaker_labels.clone();
     }
-    let result =
-        upsert_transcript(http, call.transcript_thread_id, ledger, item, call.language).await;
+    let prepared = if item.role == "assistant" && item.status == TranscriptStatus::Complete {
+        if let Some(config) = call.reply_file_config.as_deref() {
+            ledger
+                .prepared_reply_for(&source_id, &item.text, || {
+                    crate::reply_files::prepare_reply(config, &item.text)
+                })
+                .await
+        } else {
+            PreparedReply {
+                content: item.text.clone(),
+                files: Vec::new(),
+            }
+        }
+    } else {
+        PreparedReply {
+            content: item.text.clone(),
+            files: Vec::new(),
+        }
+    };
+    let result = upsert_transcript(
+        http,
+        call.transcript_thread_id,
+        ledger,
+        item,
+        prepared,
+        call.language,
+    )
+    .await;
     call.observe_installation_transcript(
         ledger,
         original_params,
@@ -4606,14 +4803,44 @@ async fn deliver_transcript(
     Ok(())
 }
 
+struct TranscriptReplyRender {
+    contents: Vec<String>,
+}
+
+fn render_transcript_reply(
+    item: &TranscriptItem,
+    prepared: &PreparedReply,
+    language: Language,
+) -> TranscriptReplyRender {
+    let upload_files = item.role == "assistant" && item.status == TranscriptStatus::Complete;
+    let mut rendered = item.clone();
+    if upload_files {
+        rendered.text.clone_from(&prepared.content);
+    }
+    TranscriptReplyRender {
+        contents: transcript_content_pages_for_language(&rendered, language),
+    }
+}
+
+fn transcript_files_for_page<'a>(
+    item: &TranscriptItem,
+    prepared: &'a PreparedReply,
+    page: usize,
+) -> Option<&'a [ReplyFile]> {
+    (item.role == "assistant" && item.status == TranscriptStatus::Complete && page == 0)
+        .then_some(prepared.files.as_slice())
+}
+
 async fn upsert_transcript(
     http: &Arc<Http>,
     thread_id: ChannelId,
     ledger: &mut TranscriptLedger,
     item: TranscriptItem,
+    prepared: PreparedReply,
     language: Language,
 ) -> Result<()> {
-    let contents = transcript_content_pages_for_language(&item, language);
+    let rendered = render_transcript_reply(&item, &prepared, language);
+    let contents = rendered.contents;
     let mut failures = Vec::new();
     if ledger.needs_discord_lookup(&item, &contents) {
         // Unknown original POSTs are queried first. A failed lookup prevents
@@ -4653,16 +4880,40 @@ async fn upsert_transcript(
         .get(&item.source_id)
         .map(|record| record.discord_message_ids.clone())
         .unwrap_or_default();
+    let existing_reply_files = ledger
+        .posted_reply_files
+        .get(&item.source_id)
+        .cloned()
+        .unwrap_or_default();
     for (index, content) in contents.iter().enumerate() {
         if let Some(message_id) = known_ids.get(index) {
-            if let Err(error) = thread_id
-                .edit_message(
-                    http,
-                    *message_id,
-                    serenity::builder::EditMessage::new()
-                        .content(content)
-                        .allowed_mentions(transcript_empty_mentions()),
-                )
+            let mut edit = serenity::builder::EditMessage::new()
+                .content(content)
+                .allowed_mentions(transcript_empty_mentions());
+            if let Some(files) = transcript_files_for_page(&item, &prepared, index) {
+                let plan = reply_file_edit_plan(
+                    files,
+                    if index == 0 { &existing_reply_files } else { &[] },
+                );
+                let attachments = plan.into_iter().fold(
+                    EditAttachments::new(),
+                    |attachments, action| match action {
+                        ReplyFileEdit::Keep(id) => attachments.keep(id),
+                        ReplyFileEdit::Upload(file_index) => {
+                            let file = &files[file_index];
+                            attachments.add(CreateAttachment::bytes(
+                                file.data.clone(),
+                                file.filename.clone(),
+                            ))
+                        }
+                    },
+                );
+                // Explicit replacement removes stale uploads when the assistant
+                // edits away a local-file link and avoids attachment duplication.
+                edit = edit.attachments(attachments);
+            }
+            match thread_id
+                .edit_message(http, *message_id, edit)
                 .await
                 .with_context(|| {
                     format!(
@@ -4672,19 +4923,35 @@ async fn upsert_transcript(
                     )
                 })
             {
-                failures.push(error);
+                Ok(message) => {
+                    if let Some(files) = transcript_files_for_page(&item, &prepared, index) {
+                        match posted_reply_files_from_attachments(files, &message.attachments) {
+                            Ok(sent) => ledger.mark_posted_reply_files(&item.source_id, sent),
+                            Err(error) => {
+                                ledger.posted_reply_files.remove(&item.source_id);
+                                failures.push(error);
+                            }
+                        }
+                    }
+                }
+                Err(error) => failures.push(error),
             }
         } else if failures.is_empty() && !ledger.has_pending_posts(&item.source_id) {
             let attempt = ledger.record_post_attempt(&item.source_id, index, content);
             let nonce = ledger.post_attempts[&item.source_id][attempt].nonce.clone();
-            match thread_id
-                .send_message(
-                    http,
-                    CreateMessage::new()
-                        .content(content)
-                        .nonce(Nonce::String(nonce))
-                        .allowed_mentions(transcript_empty_mentions()),
-                )
+            let mut create = CreateMessage::new()
+                .content(content)
+                .nonce(Nonce::String(nonce))
+                .allowed_mentions(transcript_empty_mentions());
+            if let Some(files) = transcript_files_for_page(&item, &prepared, index) {
+                for file in files {
+                    create = create.add_file(CreateAttachment::bytes(
+                        file.data.clone(),
+                        file.filename.clone(),
+                    ));
+                }
+            }
+            match thread_id.send_message(http, create)
                 .await
                 .with_context(|| {
                     format!(
@@ -4698,6 +4965,15 @@ async fn upsert_transcript(
                     if let Err(error) = ledger.bind_discord_page(&item.source_id, index, message.id)
                     {
                         failures.push(error);
+                    }
+                    if let Some(files) = transcript_files_for_page(&item, &prepared, index) {
+                        match posted_reply_files_from_attachments(files, &message.attachments) {
+                            Ok(sent) => ledger.mark_posted_reply_files(&item.source_id, sent),
+                            Err(error) => {
+                                ledger.posted_reply_files.remove(&item.source_id);
+                                failures.push(error);
+                            }
+                        }
                     }
                 }
                 Err(error) => failures.push(error),
@@ -4753,7 +5029,7 @@ async fn upsert_transcript(
                 .join("; ")
         );
     }
-    ledger.mark_posted(&item.source_id, contents);
+    ledger.mark_posted_source_text(&item.source_id, &item.text, contents);
     Ok(())
 }
 
@@ -8605,6 +8881,202 @@ mod tests {
             transcript_content_pages(&user)[0],
             "**Example Speaker A \\+ Example Speaker B**\nhello"
         );
+    }
+
+    #[test]
+    fn voice_transcript_files_are_assistant_only_and_attached_to_first_page() {
+        let assistant = TranscriptItem {
+            source_id: "assistant-file-item".into(),
+            native_source_id: Some("assistant-file-item".into()),
+            role: "assistant".into(),
+            text: "See [the report](file:///tmp/report.md)".into(),
+            status: TranscriptStatus::Complete,
+            discord_message_ids: Vec::new(),
+            speaker_ids: Vec::new(),
+            agent_label: "Codex".into(),
+            speaker_labels: Vec::new(),
+            posted_content: None,
+        };
+        let prepared = PreparedReply {
+            content: "See the report".into(),
+            files: vec![ReplyFile {
+                filename: "report.md".into(),
+                data: b"report".to_vec(),
+            }],
+        };
+        let rendered = render_transcript_reply(&assistant, &prepared, Language::English);
+        assert_eq!(rendered.contents[0], "**Codex**\nSee the report");
+        assert!(!rendered.contents[0].contains("file://"));
+        assert_eq!(
+            transcript_files_for_page(&assistant, &prepared, 0),
+            Some(prepared.files.as_slice())
+        );
+        assert_eq!(transcript_files_for_page(&assistant, &prepared, 1), None);
+
+        let mut user = assistant.clone();
+        user.role = "user".into();
+        let user_rendered = render_transcript_reply(&user, &prepared, Language::English);
+        assert!(user_rendered.contents[0].contains("file:///tmp/report.md"));
+        assert_eq!(transcript_files_for_page(&user, &prepared, 0), None);
+    }
+
+    #[test]
+    fn voice_transcript_edit_keeps_matching_uploads_and_replaces_changed_files() {
+        let same = ReplyFile {
+            filename: "report.md".into(),
+            data: b"same report".to_vec(),
+        };
+        let changed = ReplyFile {
+            filename: "new.md".into(),
+            data: b"new report".to_vec(),
+        };
+        let existing = vec![
+            PostedReplyFile {
+                id: AttachmentId::new(41),
+                filename: same.filename.clone(),
+                digest: reply_file_digest(&same),
+            },
+            PostedReplyFile {
+                id: AttachmentId::new(42),
+                filename: "retired.md".into(),
+                digest: reply_file_digest(&ReplyFile {
+                    filename: "retired.md".into(),
+                    data: b"retired report".to_vec(),
+                }),
+            },
+        ];
+        assert_eq!(
+            reply_file_edit_plan(&[same, changed], &existing),
+            vec![ReplyFileEdit::Keep(AttachmentId::new(41)), ReplyFileEdit::Upload(1)]
+        );
+    }
+
+    #[test]
+    fn voice_reply_attachment_ids_match_unique_name_and_size_not_response_order() {
+        let first = ReplyFile {
+            filename: "first.md".into(),
+            data: b"first content".to_vec(),
+        };
+        let second = ReplyFile {
+            filename: "second.pdf".into(),
+            data: b"second".to_vec(),
+        };
+        let returned = vec![
+            (AttachmentId::new(52), "second.pdf".into(), 6),
+            (AttachmentId::new(51), "first.md".into(), 13),
+        ];
+        assert_eq!(
+            match_reply_attachment_ids(&[first.clone(), second.clone()], &returned).unwrap(),
+            vec![AttachmentId::new(51), AttachmentId::new(52)]
+        );
+
+        let ambiguous = vec![
+            (AttachmentId::new(61), "first.md".into(), 13),
+            (AttachmentId::new(62), "first.md".into(), 13),
+        ];
+        assert!(match_reply_attachment_ids(&[first], &ambiguous).is_err());
+    }
+
+    #[test]
+    fn flat_transcript_promotion_migrates_prepared_reply_and_attachment_ids() {
+        let mut ledger = TranscriptLedger::default();
+        ledger.partial_flat("flat-source", "assistant", "report");
+        ledger.prepared_replies.insert(
+            "flat-source".into(),
+            (
+                "[report](file:///tmp/report.md)".into(),
+                PreparedReply {
+                    content: "report".into(),
+                    files: vec![ReplyFile {
+                        filename: "report.md".into(),
+                        data: b"report".to_vec(),
+                    }],
+                },
+            ),
+        );
+        let sent = vec![PostedReplyFile {
+            id: AttachmentId::new(43),
+            filename: "report.md".into(),
+            digest: reply_file_digest(&ReplyFile {
+                filename: "report.md".into(),
+                data: b"report".to_vec(),
+            }),
+        }];
+        ledger
+            .posted_reply_files
+            .insert("flat-source".into(), sent.clone());
+
+        assert!(ledger
+            .canonicalize_flat(
+                "flat-source",
+                "native-source",
+                "assistant",
+                "[report](file:///tmp/report.md)",
+            )
+            .is_some());
+        assert!(ledger.prepared_replies.contains_key("native-source"));
+        assert!(!ledger.prepared_replies.contains_key("flat-source"));
+        assert_eq!(ledger.posted_reply_files.get("native-source"), Some(&sent));
+        assert!(!ledger.posted_reply_files.contains_key("flat-source"));
+    }
+
+    #[tokio::test]
+    async fn voice_prepared_reply_cache_reuses_files_for_same_native_text() {
+        let mut ledger = TranscriptLedger::default();
+        let reads = AtomicU64::new(0);
+        let prepared = PreparedReply {
+            content: "Download the report".into(),
+            files: vec![ReplyFile {
+                filename: "report.md".into(),
+                data: b"report".to_vec(),
+            }],
+        };
+        let first = ledger
+            .prepared_reply_for("native-item", "[report](file:///tmp/report.md)", || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                async { prepared.clone() }
+            })
+            .await;
+        let repeated = ledger
+            .prepared_reply_for("native-item", "[report](file:///tmp/report.md)", || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                async { prepared.clone() }
+            })
+            .await;
+        assert_eq!(first, repeated);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+        let changed = ledger
+            .prepared_reply_for("native-item", "[new](file:///tmp/new.md)", || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                async {
+                    PreparedReply {
+                        content: "Download the new report".into(),
+                        files: vec![ReplyFile {
+                            filename: "new.md".into(),
+                            data: b"new report".to_vec(),
+                        }],
+                    }
+                }
+            })
+            .await;
+        assert_eq!(changed.files[0].filename, "new.md");
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn repeated_voice_completion_uses_source_text_after_rendered_link_removal() {
+        let mut ledger = TranscriptLedger::default();
+        let source = "[report](file:///tmp/report.md)";
+        assert!(ledger.complete("native-item", "assistant", source).is_some());
+        ledger.mark_posted_source_text(
+            "native-item",
+            source,
+            vec!["**Codex**\nDownload the report".into()],
+        );
+        assert!(ledger
+            .complete("native-item", "assistant", source)
+            .is_none());
     }
 
     #[test]

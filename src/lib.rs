@@ -8,6 +8,7 @@ pub mod install;
 pub mod installation_check;
 mod instructions;
 pub mod native;
+pub mod reply_files;
 pub mod state;
 pub mod voice;
 mod voice_input;

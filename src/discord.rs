@@ -2142,7 +2142,8 @@ async fn handle_native_event(
                 };
                 if let Some(target) = target {
                     if !text.is_empty() {
-                        let chunks = split_content(text, 1650);
+                        let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
+                        let chunks = split_content(&prepared.content, 1650);
                         let mut publish_error = None;
                         for (index, chunk) in chunks.iter().enumerate() {
                             let content = (*chunk).to_owned();
@@ -2163,9 +2164,33 @@ async fn handle_native_event(
                                     &state.config.language,
                                 )
                             };
+                            let builder = if index == 0 {
+                                builder.add_files(prepared.files.iter().map(|file| {
+                                    serenity::builder::CreateAttachment::bytes(
+                                        file.data.clone(),
+                                        file.filename.clone(),
+                                    )
+                                }))
+                            } else {
+                                builder
+                            };
                             if let Err(error) = channel.send_message(http, builder).await {
                                 warn!(%error, native_item_id = ?item_id, discord_message_id = %target.message_id, "failed to publish native assistant output");
                                 publish_error = Some(format!("{error:#}"));
+                                if index == 0 && !prepared.files.is_empty() {
+                                    let notice = state.config.language.text(
+                                        "Could not confirm delivery of the attached files. Please try again.",
+                                        "파일 첨부 전송을 확인하지 못했습니다. 다시 요청해 주세요.",
+                                        "无法确认附件已发送，请重试。",
+                                        "添付ファイルの送信を確認できませんでした。もう一度お試しください。",
+                                    );
+                                    let _ = channel.send_message(
+                                        http,
+                                        CreateMessage::new()
+                                            .content(notice)
+                                            .allowed_mentions(empty_mentions()),
+                                    ).await;
+                                }
                                 break;
                             }
                         }
