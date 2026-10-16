@@ -457,8 +457,18 @@ impl EventHandler for Handler {
             return;
         };
         *state.bot_user_id.lock().await = Some(ready.user.id);
-        if let Err(error) = commands::register_guild_commands(&ctx.http, &state.config).await {
-            error!(%error, "failed to register guild commands");
+        match commands::register_guild_commands(&ctx.http, &state.config).await {
+            Err(error) => error!(%error, "failed to register guild commands"),
+            Ok(()) => {
+                if let Err(error) = crate::legacy_commands::remove_retired_commands(
+                    &ctx.http,
+                    GuildId::new(state.config.guild_id),
+                )
+                .await
+                {
+                    error!(%error, "failed to remove retired Discord commands");
+                }
+            }
         }
         info!(user = %ready.user.name, guild = state.config.guild_id, "Discord bridge connected");
     }

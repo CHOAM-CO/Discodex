@@ -12,7 +12,7 @@ Discodex 将一个 Discord 应用配置连接到一个官方 Codex app-server �
 | 持续上下文 | worker 重启或语音通话结束后，仍可继续同一个 Codex 对话。 |
 | 语音与转录 | 在允许的语音频道中交谈；已确认的转录保存在每次通话独立的 Discord 线程中。 |
 | 提问与批准 | 在 Discord 表单和按钮中接收 Codex 的问题与批准请求，并将选择提交给对应请求。 |
-| 智能体设置 | 设置配置名称和记忆行为；通过 `/discodex` 选择受支持的模型、推理强度和权限。 |
+| 智能体设置 | 设置配置名称和记忆行为；在 `/discodex settings` 面板中选择受支持的模型、推理强度和权限。 |
 | Discord 上下文与附件 | 查看消息、频道和用户，将图片及文件传入对话；仅在明确请求时单独发送消息。 |
 
 ## 快速开始
@@ -52,7 +52,6 @@ Windows PowerShell：
 - `/discodex settings`：使用按钮选择设置
 - `/discodex voice`：选择语音配置
 - `/discodex status`：查看当前对话和设置
-- `/discodex models`：查看可用模型
 - `/discodex voice-join channel:<允许的语音频道>`：加入语音频道
 - `/discodex voice-leave`：结束语音通话
 - `/discodex interrupt`：请求停止当前响应

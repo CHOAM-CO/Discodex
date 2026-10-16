@@ -12,7 +12,7 @@ Discodexは、1つのDiscordアプリプロファイルを公式Codex app-server
 | 継続する文脈 | workerの再起動や音声通話の終了後も、同じCodex会話を続けられます。 |
 | 音声と文字起こし | 許可された音声チャンネルで会話し、確定した文字起こしを通話ごとのDiscordスレッドに保存します。 |
 | 質問と承認 | Codexからの質問や承認依頼をDiscordのフォームとボタンで受け取り、該当する依頼に回答します。 |
-| エージェント設定 | プロファイル名とメモリ動作を設定し、`/discodex`から利用可能なモデル、推論の強さ、権限を選びます。 |
+| エージェント設定 | プロファイル名とメモリ動作を設定し、`/discodex settings`パネルから利用可能なモデル、推論の強さ、権限を選びます。 |
 | Discordの情報と添付 | メッセージ、チャンネル、ユーザーを参照し、画像やファイルを会話に渡します。別チャンネルへの投稿は明示的な依頼がある場合に行います。 |
 
 ## はじめに
@@ -52,7 +52,6 @@ Windows PowerShell：
 - `/discodex settings`：ボタンで設定を選択
 - `/discodex voice`：音声プロファイルを選択
 - `/discodex status`：会話と設定を表示
-- `/discodex models`：利用可能なモデルを表示
 - `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加
 - `/discodex voice-leave`：音声通話を終了
 - `/discodex interrupt`：現在の応答の停止を依頼

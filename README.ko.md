@@ -12,7 +12,7 @@ Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 �
 | 지속되는 문맥 | 워커 재시작이나 음성 통화 후에도 같은 Codex 대화를 이어갑니다. |
 | 음성과 전사 | 허용된 음성 채널에서 대화하고, 확정 전사는 통화별 Discord 스레드에 남깁니다. |
 | 질문과 승인 | Codex의 질문·승인 요청을 Discord 폼과 버튼으로 전달하고 해당 요청에 응답합니다. |
-| 에이전트 설정 | 프로필 이름과 메모리를 설정하고 `/discodex`에서 지원되는 모델·추론 강도·권한을 조정합니다. |
+| 에이전트 설정 | 프로필 이름과 메모리를 설정하고 `/discodex settings` 패널에서 지원되는 모델·추론 강도·권한을 선택합니다. |
 | Discord 문맥과 첨부 | 메시지·채널·사용자를 조회하고 파일을 대화에 전달합니다. 별도 발송은 명시적으로 요청한 경우 수행합니다. |
 
 ## 시작하기
@@ -52,7 +52,6 @@ Windows PowerShell에서는 다음을 실행합니다.
 - `/discodex settings`: 버튼으로 설정 선택
 - `/discodex voice`: 음성 프로필 선택
 - `/discodex status`: 대화와 설정 확인
-- `/discodex models`: 사용 가능한 모델 확인
 - `/discodex voice-join channel:<허용 음성 채널>`: 음성 입장
 - `/discodex voice-leave`: 음성 통화 종료
 - `/discodex interrupt`: 진행 중 응답 중단 요청

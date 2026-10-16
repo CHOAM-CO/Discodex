@@ -22,7 +22,7 @@ Discodex connects one Discord app profile to one persistent conversation with th
 | Persistent context | Chat and voice use the same Codex conversation, which resumes after a worker restart or voice call. |
 | Voice and transcripts | Talk in an allowed voice channel. Confirmed transcripts are kept in a per-call Discord thread. |
 | Questions and approvals | Receive Codex questions and approval requests in Discord forms and buttons; return selections to the matching request. |
-| Agent settings | Set a profile name and memory behavior. Use `/discodex` to choose supported models, reasoning effort, and permissions. |
+| Agent settings | Set a profile name and memory behavior. Choose supported models, reasoning effort, and permissions in the `/discodex settings` panel. |
 | Discord context and attachments | Read messages, channels, and users; pass images and files into the conversation; send a separate message when explicitly requested. |
 
 ## Getting started
@@ -73,7 +73,6 @@ The updater fast-forwards the checkout only when tracked files have no local cha
 | Choose settings with buttons | `/discodex settings` |
 | Choose a voice profile | `/discodex voice` |
 | Show the current conversation and settings | `/discodex status` |
-| List available models | `/discodex models` |
 | Join an allowed voice channel | `/discodex voice-join channel:<voice channel>` |
 | Leave the voice call | `/discodex voice-leave` |
 | Request that the current response stop | `/discodex interrupt` |

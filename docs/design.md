@@ -6,7 +6,7 @@ Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 th
 
 ## 대화와 설정
 
-`/discodex settings`는 현재 설정과 선택형 항목의 버튼을 제공한다. 모델·추론 강도·서비스 등급·권한 프로필은 공식 native catalog와 기존 update 경로를 사용하고, 입력 전달 방식과 음성 프로필도 버튼으로 선택한다. 값 없이 개별 설정 명령을 실행해도 선택 패널이 열린다. Discord의 행·버튼 한도에 맞춰 페이지를 나누되 선택지를 임의로 누락하지 않는다. 버튼은 표시한 선택값을 유지하고 현재 native catalog로 다시 확인한다.
+`/discodex settings`는 현재 설정과 선택형 항목의 버튼을 제공한다. 모델·추론 강도·서비스 등급·권한 프로필은 공식 native catalog와 기존 update 경로를 사용하고, 입력 전달 방식과 음성 프로필도 버튼으로 선택한다. Discord의 행·버튼 한도에 맞춰 페이지를 나누되 선택지를 임의로 누락하지 않는다. 버튼은 표시한 선택값을 유지하고 현재 native catalog로 다시 확인한다.
 
 음성 목록은 `thread/realtime/listVoices` 응답을 사용한다. 현재 연결 버전 V3는 공식 `voices.v1` 선택지를 따른다. Codex 기본 설정을 선택하면 명시적인 voice를 전달하지 않으므로 native의 기존 음성 설정과 기본값이 적용된다. 선택한 voice는 worker 상태의 `voice-settings.json`에 저장한다. 파일이 없으면 기존 프로필 설정을 사용하며, 명시적 null은 native 기본값을 선택한다. 진행 중 통화는 유지하고 다음 연결에 적용한다.
 
@@ -20,7 +20,7 @@ Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 th
 
 다른 텍스트 채널에 내용을 게시하려면 사용자의 명시적인 대상·발송 요청에 따라 `discord_send_message`를 호출해야 한다. 일반 답변이 다른 채널로 자동 전달된다고 안내하지 않는다. Slash command의 비공개 상호작용 응답과 음성 전사의 통화별 기록은 각 전용 경로를 유지한다. Slash command는 같은 서버와 지정 조작자만 사용할 수 있다.
 
-Discord 명령은 `/discodex status`, `models`, `permission-profiles`, `model`, `effort`, `fast`, `permissions`, `input`, `interrupt`, `new`, `voice-join`, `voice-leave`를 제공한다. 모델·effort·서비스 등급은 공식 native 모델 catalog에서, 권한은 허용된 native profile에서 조회한다. 대화 기본값과 활성 turn 설정은 별도로 적용될 수 있어 결과도 구분해 안내한다. 입력 모드는 `steering`과 `next-turn`이다. 활성·현재 세대의 일반 Discord 메시지 turn이 소비되는 동안 홈 채널 typing 표시를 갱신하며, 완료·오류·연결 종료 시 멈춘다. ephemeral thinking 표시는 interaction 응답에만 사용한다.
+Discord 명령은 `/discodex settings`, `voice`, `status`, `interrupt`, `new`, `voice-join`, `voice-leave`를 제공한다. 모델·추론 강도·서비스 등급·권한 프로필·입력 전달 방식·음성 프로필은 설정 패널에서 고른다. 모델과 권한은 공식 native catalog를 사용한다. 대화 기본값과 활성 turn 설정은 별도로 적용될 수 있어 결과도 구분해 안내한다. 입력 모드는 `steering`과 `next-turn`이다. 활성·현재 세대의 일반 Discord 메시지 turn이 소비되는 동안 홈 채널 typing 표시를 갱신하며, 완료·오류·연결 종료 시 멈춘다. ephemeral thinking 표시는 interaction 응답에만 사용한다.
 
 native가 질문이나 승인 요청을 보내면 브리지는 해당 요청 식별자와 선택 범위를 유지한 Discord 폼/버튼을 제공하고 제출 결과를 원 요청에 돌려준다. 요청이 해결되거나 연결 세대가 달라지면 오래된 상호작용을 새 요청에 쓰지 않는다.
 
@@ -34,7 +34,7 @@ native가 질문이나 승인 요청을 보내면 브리지는 해당 요청 식
 
 일반적인 20ms Opus 음성은 양방향에서 압축 본문을 그대로 전달한다. Codex 응답은 제한된 RTP 큐에서 순서를 정리한 뒤 Songbird 재생 주기마다 읽으며, PCM 스트림의 미리 읽기와 미래 구간 무음 채우기를 사용하지 않는다. Discord 전용 RTP 헤더와 암호화는 Songbird가 적용한다. 20ms 이외 길이의 응답은 라이브러리의 변환 경로를 사용하고, 사용자 입력은 여러 발화자 혼합이나 다른 패킷 길이가 필요한 경우에만 PCM 변환을 사용한다. 전사 중간 조각은 메모리에만 누적하고, native가 확정한 발화별로 게시한다. 매 통화의 Discord 기록 스레드를 새로 만들고, 종료 후 늦게 도착한 항목도 원래 통화의 소유권을 따른다. 음성 시작 요청의 `realtimeSessionId`에는 통화별 `call_instance_id`를 명시한다. 이를 생략하면 공식 native가 지속 thread ID를 기본값으로 재사용하므로, 통화별 전사 소유권을 구분할 수 없다. `threadId`는 기존 값을 유지해 대화 문맥은 이어간다. 새 Realtime 시작에는 새 통화 ID와 연결 시작 상태를 전달하고, 이전 통화의 종료 결과는 과거 기록으로 구분한다. 음성은 텍스트 대화와 별도 Realtime backend prompt를 사용하며, 연결 준비를 알리는 자동 인사 문구를 넣지 않는다. 연결 경계와 기존 Codex 대화 thread의 연속성을 전달하고 음성 모델이 사용자 발화를 기다린다. 종료 시 미확정 전사 본문은 게시하지 않고 미확정 내용이 있었다는 안내만 남긴다.
 
-음성 채널 허용 목록과 선택적 voice 값은 프로필 설정에 있다. 현재 `/discodex`에는 음성 voice 선택 명령이 없다. 실행 시 native realtime 지원과 설정한 voice 값을 사용하며, 목록/적용 확인이 제공되는 기능인 것처럼 안내하지 않는다.
+음성 채널 허용 목록과 선택적 voice 값은 프로필 설정에 있다. `/discodex settings`와 `/discodex voice`에서 native realtime voice 목록을 불러와 선택할 수 있다. 선택한 voice는 다음 통화부터 적용된다.
 
 ## 설치 소유권
 

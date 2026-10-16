@@ -5,6 +5,7 @@ pub mod i18n;
 pub mod discord;
 pub mod discord_tools;
 pub mod install;
+mod legacy_commands;
 pub mod installation_check;
 mod instructions;
 pub mod native;

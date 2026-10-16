@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -39,6 +40,7 @@ pub(crate) struct SettingsChoice {
 
 #[derive(Clone, Debug)]
 pub(crate) struct SettingsMenuState {
+    pub claimed: bool,
     pub requester_id: u64,
     pub connection_generation: u64,
     pub thread_id: String,
@@ -57,123 +59,6 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         "管理当前 Discodex 对话和设置",
         "現在の Discodex 会話と設定を管理します",
     ));
-    let string = |name: &'static str, description: &'static str| {
-        CreateCommandOption::new(CommandOptionType::String, name, description).required(false)
-    };
-    for (name, desc, opt_name, opt_desc) in [
-        (
-            "model",
-            language.text(
-                "Set the model",
-                "모델을 설정합니다",
-                "设置模型",
-                "モデルを設定します",
-            ),
-            "value",
-            language.text(
-                "Model name to use",
-                "현재 사용할 모델 이름",
-                "要使用的模型名称",
-                "使用するモデル名",
-            ),
-        ),
-        (
-            "effort",
-            language.text(
-                "Set reasoning effort",
-                "추론 강도를 설정합니다",
-                "设置推理强度",
-                "推論の強さを設定します",
-            ),
-            "value",
-            language.text(
-                "Reasoning effort for the current model",
-                "현재 모델에서 사용할 추론 강도",
-                "当前模型的推理强度",
-                "現在のモデルで使う推論の強さ",
-            ),
-        ),
-        (
-            "fast",
-            language.text(
-                "Set or clear Fast mode",
-                "Fast 모드를 설정하거나 해제합니다",
-                "设置或关闭 Fast 模式",
-                "Fastモードを設定または解除します",
-            ),
-            "tier",
-            language.text(
-                "Fast mode for the current model, or off",
-                "현재 모델의 Fast 모드 또는 off",
-                "当前模型的 Fast 模式，或关闭",
-                "現在のモデルのFastモード、またはオフ",
-            ),
-        ),
-        (
-            "permissions",
-            language.text(
-                "Set the permission profile",
-                "권한 프로필을 설정합니다",
-                "设置权限配置",
-                "権限プロファイルを設定します",
-            ),
-            "profile",
-            language.text(
-                "Permission profile name",
-                "사용할 권한 프로필 이름",
-                "权限配置名称",
-                "使用する権限プロファイル名",
-            ),
-        ),
-    ] {
-        command = command.add_option(
-            CreateCommandOption::new(CommandOptionType::SubCommand, name, desc)
-                .add_sub_option(string(opt_name, opt_desc)),
-        );
-    }
-    command = command.add_option(
-        CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "input",
-            language.text(
-                "Send new input to the current or next response",
-                "새 입력을 현재 응답 또는 다음 응답에 전달합니다",
-                "将新输入发送到当前或下一条回复",
-                "新しい入力を現在または次の応答に送ります",
-            ),
-        )
-        .add_sub_option(
-            CreateCommandOption::new(
-                CommandOptionType::String,
-                "mode",
-                language.text(
-                    "Input delivery mode",
-                    "입력 전달 방식",
-                    "输入传递方式",
-                    "入力の送信方法",
-                ),
-            )
-            .required(false)
-            .add_string_choice(
-                language.text(
-                    "Send to the current response",
-                    "진행 중인 응답에 전달",
-                    "发送到当前回复",
-                    "現在の応答に送信",
-                ),
-                "steering",
-            )
-            .add_string_choice(
-                language.text(
-                    "Send before the next response",
-                    "다음 응답 전에 전달",
-                    "在下一条回复前发送",
-                    "次の応答の前に送信",
-                ),
-                "next-turn",
-            ),
-        ),
-    );
     command = command
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
@@ -203,26 +88,6 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
                 "현재 대화 연결과 설정을 조회합니다",
                 "查看当前对话连接和设置",
                 "会話の接続状態と設定を表示します",
-            ),
-        ))
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "models",
-            language.text(
-                "Show available models and settings choices",
-                "사용 가능한 모델과 설정 선택지를 조회합니다",
-                "查看可用模型和设置选项",
-                "利用可能なモデルと設定項目を表示します",
-            ),
-        ))
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "permission-profiles",
-            language.text(
-                "Show available permission profiles",
-                "사용 가능한 권한 프로필을 조회합니다",
-                "查看可用权限配置",
-                "利用可能な権限プロファイルを表示します",
             ),
         ))
         .add_option(CreateCommandOption::new(
@@ -428,13 +293,15 @@ async fn send_command_followups(
     chunks: &[String],
 ) -> anyhow::Result<()> {
     for chunk in chunks {
-        interaction.create_followup(
-            ctx,
-            serenity::builder::CreateInteractionResponseFollowup::new()
-                .content(chunk)
-                .ephemeral(true)
-                .allowed_mentions(no_mentions()),
-        ).await?;
+        interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(chunk)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
     }
     Ok(())
 }
@@ -549,46 +416,6 @@ async fn handle_authorized(
                 ));
                 output.push_str(&checks.summary());
             }
-        }
-        "models" => {
-            output = format_model_catalog_with_language(
-                &full_catalog(&state, "model/list", json!({"includeHidden":false})).await?,
-                language,
-            )
-        }
-        "permission-profiles" => {
-            output = format_permission_catalog_with_language(
-                &full_catalog(
-                    &state,
-                    "permissionProfile/list",
-                    json!({"cwd":state.config.project_dir.to_string_lossy()}),
-                )
-                .await?,
-                language,
-            )
-        }
-        "model" | "effort" | "fast" | "permissions" => {
-            let requested = arg_string().ok_or_else(|| anyhow!("선택값이 없습니다"))?;
-            let kind = match sub {
-                "model" => SettingsKind::Model,
-                "effort" => SettingsKind::Effort,
-                "fast" => SettingsKind::Fast,
-                _ => SettingsKind::Permissions,
-            };
-            output =
-                apply_setting_choice(state.as_ref(), interaction.id.get(), kind, &requested, None)
-                    .await?;
-        }
-        "input" => {
-            let value = arg_string().ok_or_else(|| anyhow!("입력 전달 방식을 선택하세요"))?;
-            output = apply_setting_choice(
-                state.as_ref(),
-                interaction.id.get(),
-                SettingsKind::Input,
-                &value,
-                None,
-            )
-            .await?;
         }
         "interrupt" => {
             let turn_id = state
@@ -770,18 +597,11 @@ async fn handle_authorized(
 const SETTINGS_PAGE_SIZE: usize = 20;
 
 fn settings_ui_requested(interaction: &CommandInteraction) -> bool {
-    let Some(subcommand) = interaction.data.options.first() else {
-        return false;
-    };
-    let options = match &subcommand.value {
-        CommandDataOptionValue::SubCommand(options) => options,
-        _ => return false,
-    };
-    match subcommand.name.as_str() {
-        "settings" | "models" | "permission-profiles" | "voice" => true,
-        "model" | "effort" | "fast" | "permissions" | "input" => options.is_empty(),
-        _ => false,
-    }
+    interaction
+        .data
+        .options
+        .first()
+        .is_some_and(|subcommand| matches!(subcommand.name.as_str(), "settings" | "voice"))
 }
 
 async fn send_command_settings_panel(
@@ -825,11 +645,6 @@ async fn settings_menu_from_command(
         .ok_or_else(|| anyhow!("setting command is missing"))?;
     let kind = match subcommand.name.as_str() {
         "settings" => SettingsKind::Hub,
-        "models" | "model" => SettingsKind::Model,
-        "permission-profiles" | "permissions" => SettingsKind::Permissions,
-        "effort" => SettingsKind::Effort,
-        "fast" => SettingsKind::Fast,
-        "input" => SettingsKind::Input,
         "voice" => SettingsKind::Voice,
         _ => bail!("unsupported settings menu"),
     };
@@ -1086,7 +901,8 @@ async fn build_settings_menu(
             let voices = state
                 .native
                 .request("thread/realtime/listVoices", json!({}))
-                .await?;
+                .await
+                .context("load thread/realtime/listVoices catalog")?;
             let default_label = language
                 .text(
                     "Codex default",
@@ -1132,6 +948,7 @@ async fn build_settings_menu(
         page.min((choices.len() - 1) / SETTINGS_PAGE_SIZE)
     };
     Ok(SettingsMenuState {
+        claimed: false,
         requester_id,
         connection_generation,
         thread_id: target_thread_id,
@@ -1342,6 +1159,50 @@ fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SettingsClaimError {
+    Missing,
+    OtherUser,
+    Busy,
+}
+
+fn claim_settings_menu(
+    menus: &mut HashMap<String, SettingsMenuState>,
+    menu_id: &str,
+    requester_id: u64,
+) -> Result<SettingsMenuState, SettingsClaimError> {
+    let menu = menus.get_mut(menu_id).ok_or(SettingsClaimError::Missing)?;
+    if menu.requester_id != requester_id {
+        return Err(SettingsClaimError::OtherUser);
+    }
+    if menu.claimed {
+        return Err(SettingsClaimError::Busy);
+    }
+    menu.claimed = true;
+    Ok(menu.clone())
+}
+
+fn release_settings_menu(menus: &mut HashMap<String, SettingsMenuState>, menu_id: &str) {
+    if let Some(menu) = menus.get_mut(menu_id) {
+        menu.claimed = false;
+    }
+}
+
+fn finish_settings_update(
+    menus: &mut HashMap<String, SettingsMenuState>,
+    previous_id: &str,
+    replacement_id: &str,
+    delivered: bool,
+) {
+    if delivered {
+        menus.remove(previous_id);
+    } else {
+        // A failed HTTP response can be ambiguous: either version may be visible.
+        release_settings_menu(menus, previous_id);
+    }
+    release_settings_menu(menus, replacement_id);
+}
+
 async fn handle_settings_component(
     ctx: &Context,
     interaction: &ComponentInteraction,
@@ -1349,78 +1210,145 @@ async fn handle_settings_component(
 ) -> anyhow::Result<()> {
     let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
     if parts.len() != 4 || parts[0] != "codex" || parts[1] != "settings" {
-        bail!("알 수 없는 settings component id");
+        bail!("unknown settings component id");
     }
     let menu_id = parts[2];
     let action = parts[3];
-    let menu = {
-        let mut menus = state.settings_menus.lock().await;
-        match menus.get(menu_id) {
-            Some(menu) if menu.requester_id == interaction.user.id.get() => menus
-                .remove(menu_id)
-                .expect("menu was checked while locked"),
-            Some(_) => {
-                drop(menus);
-                interaction
-                    .create_response(
-                        ctx,
-                        CreateInteractionResponse::Message(
-                            CreateInteractionResponseMessage::new()
-                                .content(state.config.language.text(
-                                    "Only the person who opened this settings panel can use it.",
-                                    "이 설정 화면을 연 사용자만 사용할 수 있습니다.",
-                                    "只有打开此设置面板的用户可以使用它。",
-                                    "この設定パネルを開いたユーザーだけが操作できます。",
-                                ))
-                                .ephemeral(true),
-                        ),
-                    )
-                    .await?;
-                return Ok(());
-            }
-            None => {
-                drop(menus);
-                interaction.create_response(
+    let claimed = claim_settings_menu(
+        &mut *state.settings_menus.lock().await,
+        menu_id,
+        interaction.user.id.get(),
+    );
+    let menu = match claimed {
+        Ok(menu) => menu,
+        Err(reason) => {
+            let language = state.config.language;
+            let content = match reason {
+                SettingsClaimError::Missing => language.text(
+                    "This panel is no longer active. Open `/discodex settings` again.",
+                    "이 설정 화면은 더 이상 유효하지 않습니다. `/discodex settings`를 다시 여세요.",
+                    "此设置面板已失效。请重新打开 `/discodex settings`。",
+                    "このパネルは無効です。`/discodex settings` を開き直してください。",
+                ),
+                SettingsClaimError::OtherUser => language.text(
+                    "Only the person who opened this settings panel can use it.",
+                    "이 설정 화면을 연 사용자만 사용할 수 있습니다.",
+                    "只有打开此设置面板的用户可以使用它。",
+                    "この設定パネルを開いたユーザーだけが操作できます。",
+                ),
+                SettingsClaimError::Busy => language.text(
+                    "This setting is still being processed. Please wait a moment.",
+                    "설정을 처리 중입니다. 잠시 기다려 주세요.",
+                    "正在处理设置，请稍候。",
+                    "設定を処理中です。少々お待ちください。",
+                ),
+            };
+            interaction
+                .create_response(
                     ctx,
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
-                            .content(state.config.language.text(
-                                "This settings panel has already been updated. Use its latest buttons.",
-                                "설정 화면이 이미 갱신되었습니다. 최신 버튼을 사용하세요.",
-                                "此设置面板已更新，请使用最新按钮。",
-                                "設定パネルは更新済みです。新しいボタンを使ってください。",
-                            ))
+                            .content(content)
                             .ephemeral(true),
                     ),
-                ).await?;
-                return Ok(());
-            }
+                )
+                .await?;
+            return Ok(());
         }
     };
-    let mut menu = menu;
-    interaction
-        .create_response(ctx, CreateInteractionResponse::Acknowledge)
-        .await?;
-
-    if menu.connection_generation != state.native.current_generation()
-        || menu.thread_id != state.native.thread_id()
-    {
+    let result = async {
         interaction
+            .create_response(ctx, CreateInteractionResponse::Acknowledge)
+            .await
+            .context("acknowledge settings button")?;
+        if menu.connection_generation != state.native.current_generation()
+            || menu.thread_id != state.native.thread_id()
+        {
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new()
+                        .content(state.config.language.text(
+                            "The Codex connection changed. Open settings again.",
+                            "Codex 연결이 변경되었습니다. 설정을 다시 여세요.",
+                            "Codex 连接已更改，请重新打开设置。",
+                            "Codex 接続が変わりました。設定を開き直してください。",
+                        ))
+                        .components(Vec::new()),
+                )
+                .await?;
+            state.settings_menus.lock().await.remove(menu_id);
+            return Ok(());
+        }
+        handle_claimed_settings_action(ctx, interaction, state, menu_id, action, menu.clone()).await
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(error = ?error, "Discord settings action failed; existing buttons remain retryable");
+        let notice = state.config.language.text(
+            "Could not update settings. You can retry the buttons below.",
+            "설정을 갱신하지 못했습니다. 아래 버튼으로 다시 시도할 수 있습니다.",
+            "无法更新设置。可以重试下方按钮。",
+            "設定を更新できませんでした。下のボタンで再試行できます。",
+        );
+        // Preserve an actionable panel even when a catalog read or Discord edit fails.
+        let (content, rows) = render_settings_menu(menu_id, &menu, state.config.language);
+        let detail = settings_error_detail(&error);
+        let chunks = split_discord_content(&format!("{notice}\n{detail}\n\n{content}"));
+        let response = interaction
             .edit_response(
                 ctx,
                 serenity::builder::EditInteractionResponse::new()
-                    .content(state.config.language.text(
-                        "The Codex connection changed. Open settings again.",
-                        "Codex 연결이 변경되었습니다. 설정을 다시 여세요.",
-                        "Codex 连接已更改，请重新打开设置。",
-                        "Codex 接続が変わりました。設定を開き直してください。",
-                    ))
-                    .components(Vec::new()),
+                    .content(&chunks[0])
+                    .components(rows)
+                    .allowed_mentions(no_mentions()),
             )
-            .await?;
-        return Ok(());
+            .await;
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        response?;
+        for chunk in chunks.iter().skip(1) {
+            interaction
+                .create_followup(
+                    ctx,
+                    serenity::builder::CreateInteractionResponseFollowup::new()
+                        .content(chunk)
+                        .ephemeral(true)
+                        .allowed_mentions(no_mentions()),
+                )
+                .await?;
+        }
     }
+    Ok(())
+}
 
+fn settings_error_detail(error: &anyhow::Error) -> String {
+    // HTTP errors can contain interaction-token URLs. The API error itself is
+    // enough to explain a failed edit without displaying those URLs.
+    for cause in error.chain() {
+        if let Some(serenity::Error::Http(serenity::http::HttpError::UnsuccessfulRequest(
+            response,
+        ))) = cause.downcast_ref::<serenity::Error>()
+        {
+            return format!(
+                "Discord {}: {} ({})",
+                response.status_code, response.error.message, response.error.code
+            );
+        }
+        if cause.downcast_ref::<serenity::Error>().is_some() {
+            return format!("Discord: {}", error);
+        }
+    }
+    format!("{error:#}")
+}
+
+async fn handle_claimed_settings_action(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    menu_id: &str,
+    action: &str,
+    mut menu: SettingsMenuState,
+) -> anyhow::Result<()> {
     let prefix = action
         .chars()
         .next()
@@ -1465,7 +1393,7 @@ async fn handle_settings_component(
         if matches!(menu.kind, SettingsKind::Effort | SettingsKind::Fast)
             && fresh.model_scope != menu.model_scope
         {
-            return update_settings_panel(ctx, interaction, state, fresh).await;
+            return update_settings_panel(ctx, interaction, state, menu_id, fresh).await;
         }
         if !fresh
             .choices
@@ -1478,7 +1406,15 @@ async fn handle_settings_component(
                 "此选项已不可用，已刷新当前选项。",
                 "選んだ項目は利用できなくなったため、選択肢を更新しました。",
             );
-            return update_settings_panel_with_notice(ctx, interaction, state, fresh, stale).await;
+            return update_settings_panel_with_notice(
+                ctx,
+                interaction,
+                state,
+                menu_id,
+                fresh,
+                stale,
+            )
+            .await;
         }
         let result = match apply_setting_choice(
             state,
@@ -1512,8 +1448,15 @@ async fn handle_settings_component(
             menu.connection_generation,
         )
         .await?;
-        return update_settings_panel_with_notice(ctx, interaction, state, refreshed, &result)
-            .await;
+        return update_settings_panel_with_notice(
+            ctx,
+            interaction,
+            state,
+            menu_id,
+            refreshed,
+            &result,
+        )
+        .await;
     } else {
         bail!("unknown settings action");
     }
@@ -1526,23 +1469,25 @@ async fn handle_settings_component(
         menu.connection_generation,
     )
     .await?;
-    update_settings_panel(ctx, interaction, state, refreshed).await
+    update_settings_panel(ctx, interaction, state, menu_id, refreshed).await
 }
 
 async fn update_settings_panel(
     ctx: &Context,
     interaction: &ComponentInteraction,
     state: &Arc<BridgeState>,
+    previous_id: &str,
     menu: SettingsMenuState,
 ) -> anyhow::Result<()> {
-    update_settings_panel_with_notice(ctx, interaction, state, menu, "").await
+    update_settings_panel_with_notice(ctx, interaction, state, previous_id, menu, "").await
 }
 
 async fn update_settings_panel_with_notice(
     ctx: &Context,
     interaction: &ComponentInteraction,
     state: &Arc<BridgeState>,
-    menu: SettingsMenuState,
+    previous_id: &str,
+    mut menu: SettingsMenuState,
     notice: &str,
 ) -> anyhow::Result<()> {
     let menu_id = Uuid::new_v4().simple().to_string();
@@ -1553,12 +1498,13 @@ async fn update_settings_panel_with_notice(
         format!("{notice}\n\n{content}")
     };
     let chunks = split_discord_content(&content);
+    menu.claimed = true;
     state
         .settings_menus
         .lock()
         .await
         .insert(menu_id.clone(), menu);
-    interaction
+    let response = interaction
         .edit_response(
             ctx,
             serenity::builder::EditInteractionResponse::new()
@@ -1566,9 +1512,16 @@ async fn update_settings_panel_with_notice(
                 .components(rows)
                 .allowed_mentions(no_mentions()),
         )
-        .await?;
+        .await;
+    finish_settings_update(
+        &mut *state.settings_menus.lock().await,
+        previous_id,
+        &menu_id,
+        response.is_ok(),
+    );
+    response.context("edit settings panel")?;
     for chunk in chunks.iter().skip(1) {
-        interaction
+        if let Err(error) = interaction
             .create_followup(
                 ctx,
                 serenity::builder::CreateInteractionResponseFollowup::new()
@@ -1576,7 +1529,10 @@ async fn update_settings_panel_with_notice(
                     .ephemeral(true)
                     .allowed_mentions(no_mentions()),
             )
-            .await?;
+            .await
+        {
+            tracing::warn!(%error, "settings panel updated but continuation delivery failed");
+        }
     }
     Ok(())
 }
@@ -2832,7 +2788,11 @@ async fn full_catalog(state: &BridgeState, method: &str, base: Value) -> anyhow:
     let mut page_params = base;
     let mut all = Vec::new();
     loop {
-        let page = state.native.request(method, page_params.clone()).await?;
+        let page = state
+            .native
+            .request(method, page_params.clone())
+            .await
+            .with_context(|| format!("load {method} catalog"))?;
         if let Some(data) = page.get("data").and_then(Value::as_array) {
             all.extend(data.iter().cloned());
         }
@@ -6547,6 +6507,7 @@ mod display_tests {
             })
             .collect::<Vec<_>>();
         let menu_for_page = |page| SettingsMenuState {
+            claimed: false,
             requester_id: 31,
             connection_generation: 7,
             thread_id: "thread-opaque".to_owned(),
@@ -6619,30 +6580,91 @@ mod display_tests {
     }
 
     #[test]
-    fn generated_settings_commands_expose_optional_choices_and_voice_panel() {
+    fn generated_commands_use_settings_panels_without_retired_aliases() {
         let commands = definitions(crate::i18n::Language::English);
         let payload = serde_json::to_value(commands).unwrap();
-        let options = payload[0]["options"].as_array().unwrap();
-        let find = |name: &str| {
-            options
-                .iter()
-                .find(|option| option["name"].as_str() == Some(name))
-                .unwrap()
-        };
-
-        for name in ["model", "effort", "fast", "permissions"] {
-            let value_option = &find(name)["options"][0];
-            assert_eq!(value_option["required"], false);
-        }
-        let input_mode = &find("input")["options"][0];
-        assert_eq!(input_mode["required"], false);
-        assert_eq!(find("settings")["type"], 1);
-        assert_eq!(find("voice")["type"], 1);
-        assert!(
-            find("voice")
-                .get("options")
-                .and_then(serde_json::Value::as_array)
-                .is_none_or(|options| options.is_empty())
+        let names = payload[0]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|option| option["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "settings",
+                "voice",
+                "status",
+                "interrupt",
+                "new",
+                "voice-leave",
+                "voice-join"
+            ]
         );
+    }
+
+    fn menu_fixture() -> SettingsMenuState {
+        SettingsMenuState {
+            claimed: false,
+            requester_id: 31,
+            connection_generation: 7,
+            thread_id: "thread-menu".to_owned(),
+            kind: SettingsKind::Hub,
+            page: 0,
+            choices: vec![],
+            current: String::new(),
+            current_value: None,
+            model_scope: None,
+        }
+    }
+
+    #[test]
+    fn failed_settings_refresh_preserves_clickable_menu() {
+        let mut menus = HashMap::from([("old".to_owned(), menu_fixture())]);
+        assert!(claim_settings_menu(&mut menus, "old", 31).is_ok());
+        assert_eq!(
+            claim_settings_menu(&mut menus, "old", 31).unwrap_err(),
+            SettingsClaimError::Busy
+        );
+        release_settings_menu(&mut menus, "old");
+        assert!(claim_settings_menu(&mut menus, "old", 31).is_ok());
+        assert_eq!(menus.len(), 1);
+    }
+
+    #[test]
+    fn failed_settings_delivery_keeps_both_possible_visible_versions_usable() {
+        let mut menus = HashMap::from([("old".to_owned(), menu_fixture())]);
+        claim_settings_menu(&mut menus, "old", 31).unwrap();
+        let mut replacement = menu_fixture();
+        replacement.kind = SettingsKind::Model;
+        replacement.claimed = true;
+        menus.insert("new".to_owned(), replacement);
+        finish_settings_update(&mut menus, "old", "new", false);
+        assert_eq!(
+            claim_settings_menu(&mut menus, "old", 31).unwrap().kind,
+            SettingsKind::Hub
+        );
+        assert_eq!(
+            claim_settings_menu(&mut menus, "new", 31).unwrap().kind,
+            SettingsKind::Model
+        );
+    }
+
+    #[test]
+    fn successful_settings_delivery_retires_only_previous_buttons() {
+        let mut menus = HashMap::from([
+            ("old".to_owned(), menu_fixture()),
+            ("new".to_owned(), menu_fixture()),
+        ]);
+        finish_settings_update(&mut menus, "old", "new", true);
+        assert_eq!(
+            claim_settings_menu(&mut menus, "old", 31).unwrap_err(),
+            SettingsClaimError::Missing
+        );
+        assert_eq!(
+            claim_settings_menu(&mut menus, "new", 99).unwrap_err(),
+            SettingsClaimError::OtherUser
+        );
+        assert!(claim_settings_menu(&mut menus, "new", 31).is_ok());
     }
 }
