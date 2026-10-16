@@ -1291,22 +1291,11 @@ async fn handle_settings_component(
             "无法更新设置。可以重试下方按钮。",
             "設定を更新できませんでした。下のボタンで再試行できます。",
         );
-        // Preserve an actionable panel even when a catalog read or Discord edit fails.
-        let (content, rows) = render_settings_menu(menu_id, &menu, state.config.language);
-        let detail = settings_error_detail(&error);
-        let chunks = split_discord_content(&format!("{notice}\n{detail}\n\n{content}"));
-        let response = interaction
-            .edit_response(
-                ctx,
-                serenity::builder::EditInteractionResponse::new()
-                    .content(&chunks[0])
-                    .components(rows)
-                    .allowed_mentions(no_mentions()),
-            )
-            .await;
+        // An edit error can mean the new panel reached Discord but its response
+        // was lost. Never overwrite either visible version with a recovery edit.
         release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
-        response?;
-        for chunk in chunks.iter().skip(1) {
+        let detail = settings_error_detail(&error);
+        for chunk in split_discord_content(&format!("{notice}\n{detail}")) {
             interaction
                 .create_followup(
                     ctx,
