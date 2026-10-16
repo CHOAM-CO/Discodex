@@ -1107,7 +1107,7 @@ fn render_settings_menu(
                 .label(language.text("Settings", "설정", "设置", "設定"))
                 .style(ButtonStyle::Primary),
             CreateButton::new(format!(
-                "codex:settings:{menu_id}:p{}",
+                "codex:settings:{menu_id}:n{}",
                 (menu.page + 1).min(pages - 1)
             ))
             .label(language.text("Next", "다음", "下一页", "次へ"))
@@ -1117,6 +1117,14 @@ fn render_settings_menu(
         rows.push(CreateActionRow::Buttons(nav));
     }
     (content, rows)
+}
+
+fn settings_page_from_action(action: &str) -> Option<usize> {
+    action
+        .strip_prefix('p')
+        .or_else(|| action.strip_prefix('n'))?
+        .parse()
+        .ok()
 }
 
 fn split_discord_content(content: &str) -> Vec<String> {
@@ -1286,10 +1294,10 @@ async fn handle_settings_component(
     if let Err(error) = result {
         tracing::warn!(error = ?error, "Discord settings action failed; existing buttons remain retryable");
         let notice = state.config.language.text(
-            "Could not update settings. You can retry the buttons below.",
-            "설정을 갱신하지 못했습니다. 아래 버튼으로 다시 시도할 수 있습니다.",
-            "无法更新设置。可以重试下方按钮。",
-            "設定を更新できませんでした。下のボタンで再試行できます。",
+            "Could not update settings. You can retry the existing settings panel.",
+            "설정을 갱신하지 못했습니다. 기존 설정 화면에서 다시 시도할 수 있습니다.",
+            "无法更新设置。可以在原设置面板中重试。",
+            "設定を更新できませんでした。元の設定画面で再試行できます。",
         );
         // An edit error can mean the new panel reached Discord but its response
         // was lost. Never overwrite either visible version with a recovery edit.
@@ -1362,8 +1370,8 @@ async fn handle_claimed_settings_action(
     } else if prefix == 'h' && suffix.is_empty() {
         menu.kind = SettingsKind::Hub;
         menu.page = 0;
-    } else if prefix == 'p' {
-        menu.page = index.unwrap_or(0);
+    } else if let Some(page) = settings_page_from_action(action) {
+        menu.page = page;
     } else if prefix == 'c' {
         let index = index.ok_or_else(|| anyhow!("invalid settings choice"))?;
         let selected = menu
@@ -6558,6 +6566,59 @@ mod display_tests {
             render_settings_menu("menu-opaque", &long, crate::i18n::Language::English);
         assert!(content.contains(&long.choices[0].value));
         assert!(content.contains(&long.choices[0].label));
+    }
+
+    #[test]
+    fn settings_menu_ids_are_unique_even_when_navigation_is_disabled() {
+        for count in [0usize, 1, 10, 20, 21, 40, 41] {
+            let pages = count.div_ceil(SETTINGS_PAGE_SIZE).max(1);
+            for page in 0..pages {
+                let mut menu = menu_fixture();
+                menu.kind = SettingsKind::Voice;
+                menu.page = page;
+                menu.choices = (0..count)
+                    .map(|index| SettingsChoice {
+                        value: format!("voice-{index}"),
+                        label: format!("Voice {index}"),
+                    })
+                    .collect();
+                let (_, rows) =
+                    render_settings_menu("menu-regression", &menu, crate::i18n::Language::English);
+                let payload = serde_json::to_value(rows).unwrap();
+                let ids = payload
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(|row| row["components"].as_array().unwrap())
+                    .map(|button| button["custom_id"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                let unique = ids
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::HashSet<_>>();
+                assert_eq!(
+                    ids.len(),
+                    unique.len(),
+                    "duplicate ID for {count} choices, page {page}"
+                );
+                let nav = payload.as_array().unwrap().last().unwrap()["components"]
+                    .as_array()
+                    .unwrap();
+                for (button, expected_page, disabled) in [
+                    (&nav[0], page.saturating_sub(1), page == 0),
+                    (&nav[2], (page + 1).min(pages - 1), page + 1 >= pages),
+                ] {
+                    let action = button["custom_id"]
+                        .as_str()
+                        .unwrap()
+                        .rsplit(':')
+                        .next()
+                        .unwrap();
+                    assert_eq!(settings_page_from_action(action), Some(expected_page));
+                    assert_eq!(button["disabled"], disabled);
+                }
+            }
+        }
     }
 
     #[test]
