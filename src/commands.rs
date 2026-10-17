@@ -794,15 +794,7 @@ async fn build_settings_menu(
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|item| {
-                        item.get("reasoningEffort")
-                            .and_then(Value::as_str)
-                            .or_else(|| item.as_str())
-                            .map(|value| SettingsChoice {
-                                value: value.to_owned(),
-                                label: value.to_owned(),
-                            })
-                    })
+                    .filter_map(|item| effort_settings_choice(item, language))
                     .collect::<Vec<_>>();
                 let selected = thread
                     .get("effort")
@@ -821,17 +813,7 @@ async fn build_settings_menu(
                         .and_then(Value::as_array)
                         .into_iter()
                         .flatten()
-                        .filter_map(|item| {
-                            let value = item
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .or_else(|| item.as_str())?;
-                            let label = item.get("name").and_then(Value::as_str).unwrap_or(value);
-                            Some(SettingsChoice {
-                                value: value.to_owned(),
-                                label: label.to_owned(),
-                            })
-                        }),
+                        .filter_map(|item| service_tier_settings_choice(item, language)),
                 );
                 let selected = thread
                     .get("serviceTier")
@@ -961,6 +943,48 @@ async fn build_settings_menu(
     })
 }
 
+fn effort_settings_choice(item: &Value, language: crate::i18n::Language) -> Option<SettingsChoice> {
+    let value = item
+        .get("reasoningEffort")
+        .and_then(Value::as_str)
+        .or_else(|| item.as_str())?;
+    let label = match value {
+        "none" => language.text("None", "없음", "无", "なし"),
+        "minimal" => language.text("Minimal", "최소", "最低", "最小"),
+        "low" => language.text("Low", "낮음", "低", "低"),
+        "medium" => language.text("Medium", "보통", "中", "中"),
+        "high" => language.text("High", "높음", "高", "高"),
+        "xhigh" => language.text("Extra high", "매우 높음", "很高", "非常に高い"),
+        "max" => language.text("Maximum", "최대", "最高", "最大"),
+        "ultra" => language.text("Ultra", "울트라", "超高", "ウルトラ"),
+        _ => value,
+    };
+    Some(SettingsChoice {
+        value: value.to_owned(),
+        label: label.to_owned(),
+    })
+}
+
+fn service_tier_settings_choice(
+    item: &Value,
+    language: crate::i18n::Language,
+) -> Option<SettingsChoice> {
+    let value = item
+        .get("id")
+        .and_then(Value::as_str)
+        .or_else(|| item.as_str())?;
+    let label = match value {
+        "priority" => language.text("Priority", "우선 처리", "优先", "優先"),
+        "standard" => language.text("Standard", "표준", "标准", "標準"),
+        "flex" => language.text("Flex", "유연 처리", "灵活", "フレックス"),
+        _ => item.get("name").and_then(Value::as_str).unwrap_or(value),
+    };
+    Some(SettingsChoice {
+        value: value.to_owned(),
+        label: label.to_owned(),
+    })
+}
+
 fn choice_current_label(
     choices: &[SettingsChoice],
     current: Option<&str>,
@@ -1019,17 +1043,29 @@ fn render_settings_menu(
     );
     if menu.kind != SettingsKind::Hub {
         let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
-        content.push_str(&format!(
-            "\n{} {}/{}",
-            language.text(
-                "Choose an option · page",
-                "선택지 · 페이지",
-                "选择一项 · 页码",
-                "選択肢 · ページ"
-            ),
-            menu.page + 1,
-            pages
-        ));
+        if pages > 1 {
+            content.push_str(&format!(
+                "\n{} {}/{}",
+                language.text(
+                    "Choose an option · page",
+                    "선택지 · 페이지",
+                    "选择一项 · 页码",
+                    "選択肢 · ページ"
+                ),
+                menu.page + 1,
+                pages
+            ));
+        } else {
+            content.push_str(&format!(
+                "\n{}",
+                language.text(
+                    "Choose an option",
+                    "선택지를 선택하세요",
+                    "请选择一项",
+                    "項目を選んでください"
+                )
+            ));
+        }
     } else {
         content.push_str(&format!(
             "\n{}",
@@ -1093,29 +1129,43 @@ fn render_settings_menu(
             .collect();
         rows.push(CreateActionRow::Buttons(buttons));
     }
+    let mut controls = Vec::new();
     if menu.kind != SettingsKind::Hub {
         let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
-        let nav = vec![
-            CreateButton::new(format!(
-                "codex:settings:{menu_id}:p{}",
-                menu.page.saturating_sub(1)
-            ))
-            .label(language.text("Previous", "이전", "上一页", "前へ"))
-            .style(ButtonStyle::Secondary)
-            .disabled(menu.page == 0),
+        if pages > 1 {
+            controls.push(
+                CreateButton::new(format!(
+                    "codex:settings:{menu_id}:p{}",
+                    menu.page.saturating_sub(1)
+                ))
+                .label(language.text("Previous", "이전", "上一页", "前へ"))
+                .style(ButtonStyle::Secondary)
+                .disabled(menu.page == 0),
+            );
+        }
+        controls.push(
             CreateButton::new(format!("codex:settings:{menu_id}:h"))
                 .label(language.text("Settings", "설정", "设置", "設定"))
                 .style(ButtonStyle::Primary),
-            CreateButton::new(format!(
-                "codex:settings:{menu_id}:n{}",
-                (menu.page + 1).min(pages - 1)
-            ))
-            .label(language.text("Next", "다음", "下一页", "次へ"))
-            .style(ButtonStyle::Secondary)
-            .disabled(menu.page + 1 >= pages),
-        ];
-        rows.push(CreateActionRow::Buttons(nav));
+        );
+        if pages > 1 {
+            controls.push(
+                CreateButton::new(format!(
+                    "codex:settings:{menu_id}:n{}",
+                    (menu.page + 1).min(pages - 1)
+                ))
+                .label(language.text("Next", "다음", "下一页", "次へ"))
+                .style(ButtonStyle::Secondary)
+                .disabled(menu.page + 1 >= pages),
+            );
+        }
     }
+    controls.push(
+        CreateButton::new(format!("codex:settings:{menu_id}:x"))
+            .label(language.text("Exit", "나가기", "退出", "閉じる"))
+            .style(ButtonStyle::Secondary),
+    );
+    rows.push(CreateActionRow::Buttons(controls));
     (content, rows)
 }
 
@@ -1269,6 +1319,14 @@ async fn handle_settings_component(
             .create_response(ctx, CreateInteractionResponse::Acknowledge)
             .await
             .context("acknowledge settings button")?;
+        if action == "x" {
+            interaction
+                .delete_response(ctx)
+                .await
+                .context("close settings panel")?;
+            state.settings_menus.lock().await.remove(menu_id);
+            return Ok(());
+        }
         if menu.connection_generation != state.native.current_generation()
             || menu.thread_id != state.native.thread_id()
         {
@@ -1293,12 +1351,21 @@ async fn handle_settings_component(
     .await;
     if let Err(error) = result {
         tracing::warn!(error = ?error, "Discord settings action failed; existing buttons remain retryable");
-        let notice = state.config.language.text(
-            "Could not update settings. You can retry the existing settings panel.",
-            "설정을 갱신하지 못했습니다. 기존 설정 화면에서 다시 시도할 수 있습니다.",
-            "无法更新设置。可以在原设置面板中重试。",
-            "設定を更新できませんでした。元の設定画面で再試行できます。",
-        );
+        let notice = if action == "x" {
+            state.config.language.text(
+                "Could not close settings. You can retry Exit.",
+                "설정 화면을 닫지 못했습니다. 나가기를 다시 눌러 주세요.",
+                "无法关闭设置。请重试退出。",
+                "設定を閉じられませんでした。もう一度「閉じる」を押してください。",
+            )
+        } else {
+            state.config.language.text(
+                "Could not update settings. You can retry the existing settings panel.",
+                "설정을 갱신하지 못했습니다. 기존 설정 화면에서 다시 시도할 수 있습니다.",
+                "无法更新设置。可以在原设置面板中重试。",
+                "設定を更新できませんでした。元の設定画面で再試行できます。",
+            )
+        };
         // An edit error can mean the new panel reached Discord but its response
         // was lost. Never overwrite either visible version with a recovery edit.
         release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
@@ -6604,6 +6671,16 @@ mod display_tests {
                 let nav = payload.as_array().unwrap().last().unwrap()["components"]
                     .as_array()
                     .unwrap();
+                assert_eq!(
+                    nav.last().unwrap()["custom_id"],
+                    "codex:settings:menu-regression:x"
+                );
+                if pages == 1 {
+                    assert_eq!(nav.len(), 2);
+                    assert_eq!(nav[0]["custom_id"], "codex:settings:menu-regression:h");
+                    continue;
+                }
+                assert_eq!(nav.len(), 4);
                 for (button, expected_page, disabled) in [
                     (&nav[0], page.saturating_sub(1), page == 0),
                     (&nav[2], (page + 1).min(pages - 1), page + 1 >= pages),
@@ -6616,6 +6693,160 @@ mod display_tests {
                         .unwrap();
                     assert_eq!(settings_page_from_action(action), Some(expected_page));
                     assert_eq!(button["disabled"], disabled);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_setting_choices_translate_labels_without_changing_values() {
+        use crate::i18n::Language;
+        let efforts = [
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ];
+        let tiers = ["priority", "standard", "flex"];
+        for (language, effort_labels, tier_labels) in [
+            (
+                Language::English,
+                [
+                    "None",
+                    "Minimal",
+                    "Low",
+                    "Medium",
+                    "High",
+                    "Extra high",
+                    "Maximum",
+                    "Ultra",
+                ],
+                ["Priority", "Standard", "Flex"],
+            ),
+            (
+                Language::Korean,
+                [
+                    "없음",
+                    "최소",
+                    "낮음",
+                    "보통",
+                    "높음",
+                    "매우 높음",
+                    "최대",
+                    "울트라",
+                ],
+                ["우선 처리", "표준", "유연 처리"],
+            ),
+            (
+                Language::Chinese,
+                ["无", "最低", "低", "中", "高", "很高", "最高", "超高"],
+                ["优先", "标准", "灵活"],
+            ),
+            (
+                Language::Japanese,
+                [
+                    "なし",
+                    "最小",
+                    "低",
+                    "中",
+                    "高",
+                    "非常に高い",
+                    "最大",
+                    "ウルトラ",
+                ],
+                ["優先", "標準", "フレックス"],
+            ),
+        ] {
+            for (value, label) in efforts.into_iter().zip(effort_labels) {
+                for input in [json!(value), json!({"reasoningEffort": value})] {
+                    let choice = effort_settings_choice(&input, language).unwrap();
+                    assert_eq!(
+                        (choice.value.as_str(), choice.label.as_str()),
+                        (value, label)
+                    );
+                }
+            }
+            for (value, label) in tiers.into_iter().zip(tier_labels) {
+                for input in [json!(value), json!({"id": value, "name": "Native name"})] {
+                    let choice = service_tier_settings_choice(&input, language).unwrap();
+                    assert_eq!(
+                        (choice.value.as_str(), choice.label.as_str()),
+                        (value, label)
+                    );
+                }
+            }
+            let future = effort_settings_choice(&json!("future-effort"), language).unwrap();
+            assert_eq!(
+                (future.value.as_str(), future.label.as_str()),
+                ("future-effort", "future-effort")
+            );
+            let future = service_tier_settings_choice(
+                &json!({"id":"future-tier", "name":"Native future tier"}),
+                language,
+            )
+            .unwrap();
+            assert_eq!(
+                (future.value.as_str(), future.label.as_str()),
+                ("future-tier", "Native future tier")
+            );
+            let unnamed = service_tier_settings_choice(&json!("unnamed-tier"), language).unwrap();
+            assert_eq!(
+                (unnamed.value.as_str(), unnamed.label.as_str()),
+                ("unnamed-tier", "unnamed-tier")
+            );
+            assert!(effort_settings_choice(&json!({}), language).is_none());
+            assert!(service_tier_settings_choice(&json!({}), language).is_none());
+        }
+    }
+
+    #[test]
+    fn settings_controls_follow_the_selected_language_on_every_panel() {
+        use crate::i18n::Language;
+        for (language, exit, home, previous, next) in [
+            (Language::English, "Exit", "Settings", "Previous", "Next"),
+            (Language::Korean, "나가기", "설정", "이전", "다음"),
+            (Language::Chinese, "退出", "设置", "上一页", "下一页"),
+            (Language::Japanese, "閉じる", "設定", "前へ", "次へ"),
+        ] {
+            for kind in [
+                SettingsKind::Hub,
+                SettingsKind::Model,
+                SettingsKind::Effort,
+                SettingsKind::Fast,
+                SettingsKind::Permissions,
+                SettingsKind::Input,
+                SettingsKind::Voice,
+            ] {
+                for count in [1, 21] {
+                    if kind == SettingsKind::Hub && count == 21 {
+                        continue;
+                    }
+                    let mut menu = menu_fixture();
+                    menu.kind = kind;
+                    menu.choices = (0..count)
+                        .map(|index| SettingsChoice {
+                            value: format!("choice-{index}"),
+                            label: format!("Choice {index}"),
+                        })
+                        .collect();
+                    let (_, rows) = render_settings_menu("localized", &menu, language);
+                    let payload = serde_json::to_value(rows).unwrap();
+                    let rows = payload.as_array().unwrap();
+                    assert!(rows.len() <= 5);
+                    let controls = rows.last().unwrap()["components"].as_array().unwrap();
+                    let labels = controls
+                        .iter()
+                        .map(|button| button["label"].as_str().unwrap())
+                        .collect::<Vec<_>>();
+                    let expected = if kind == SettingsKind::Hub {
+                        vec![exit]
+                    } else if count <= SETTINGS_PAGE_SIZE {
+                        vec![home, exit]
+                    } else {
+                        vec![previous, home, next, exit]
+                    };
+                    assert_eq!(labels, expected);
+                    assert_eq!(
+                        controls.last().unwrap()["custom_id"],
+                        "codex:settings:localized:x"
+                    );
                 }
             }
         }
