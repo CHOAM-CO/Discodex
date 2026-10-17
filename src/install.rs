@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, InputMode};
 use crate::i18n::Language;
+use crate::message_access::{MessageAccess, MessagePolicy};
 
 pub mod updates;
 
@@ -47,6 +48,12 @@ struct InstallationList {
     home_channel_id: u64,
     transcript_channel_id: u64,
     operator_ids: Vec<u64>,
+    #[serde(default)]
+    message_access: Option<MessageAccess>,
+    /// Set only by a newly generated plan; consumed after the selected policy is
+    /// written to durable state so subsequent reinstalls preserve runtime choices.
+    #[serde(default)]
+    message_access_plan_pending: bool,
     voice_channel_ids: Vec<u64>,
     project_dir: PathBuf,
     model: Option<String>,
@@ -81,6 +88,7 @@ fn merge_install_config(
         memory_enabled,
         language,
         model,
+        message_access,
     ) = match previous {
         Some(config) => (
             config.name,
@@ -92,6 +100,13 @@ fn merge_install_config(
             config.memory_enabled,
             configured_language(config.language),
             config.model.or_else(|| list.model.clone()),
+            if list.message_access_plan_pending {
+                list.message_access.clone().or(config.message_access)
+            } else {
+                config
+                    .message_access
+                    .or_else(|| list.message_access.clone())
+            },
         ),
         None => (
             list.profile.clone(),
@@ -103,6 +118,7 @@ fn merge_install_config(
             None,
             configured_language(list.language),
             list.model.clone(),
+            list.message_access.clone(),
         ),
     };
     Config {
@@ -115,6 +131,7 @@ fn merge_install_config(
         home_channel_id: list.home_channel_id,
         transcript_channel_id: list.transcript_channel_id,
         operator_ids: list.operator_ids.clone(),
+        message_access,
         voice_channel_ids: list.voice_channel_ids.clone(),
         codex_path: codex_path.to_owned(),
         worker_path: worker_path.map(Path::to_owned),
@@ -349,6 +366,11 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         "操作员用户 ID（逗号分隔）",
         "オペレーターのユーザー ID（カンマ区切り）",
     )?;
+    let message_access = ask_install_message_access(
+        language,
+        &operator_ids,
+        &[home_channel_id, transcript_channel_id],
+    )?;
     let project_default = env::current_dir().context("read current directory")?;
     let project_dir = prepare_project_directory(&PathBuf::from(ask_text(
         language,
@@ -377,6 +399,8 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         home_channel_id,
         transcript_channel_id,
         operator_ids,
+        message_access: Some(message_access),
+        message_access_plan_pending: true,
         voice_channel_ids,
         project_dir,
         model,
@@ -1520,6 +1544,16 @@ fn install_at(
         &selected_codex_home,
     );
     write_json_private(&config_path, &config)?;
+    if list.message_access_plan_pending {
+        let access = list
+            .message_access
+            .as_ref()
+            .or(config.message_access.as_ref())
+            .context("new installation plan did not include a message receive policy")?;
+        access.save(&state_dir.join("message-access.json"))?;
+        let path = state_dir.join("message-access.json");
+        set_private_file(&path)?;
+    }
     if let Some(runtime_dir) = &partial_runtime_dir {
         remove_owned_core_runtime(runtime_dir)?;
     }
@@ -1602,6 +1636,11 @@ fn install_at(
         .map(|report| report.run_id);
     install_user_service(&config_path, &mut ownership, previous_ownership.as_ref())?;
     write_json_private(&ownership_path, &ownership)?;
+    if list.message_access_plan_pending {
+        let mut installed_list = list.clone();
+        installed_list.message_access_plan_pending = false;
+        write_json_private(&list_path, &installed_list)?;
+    }
     println!("{}", language.text(
         "Codex account/read confirmed a ChatGPT account; the allowed permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
         "Codex 계정 확인에서 ChatGPT 계정이 확인되었습니다. 허용된 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
@@ -5415,6 +5454,188 @@ fn saved_install_language(roots: &Roots) -> Result<Option<Language>> {
     Ok(None)
 }
 
+fn ask_install_message_access(
+    language: Language,
+    operator_ids: &[u64],
+    default_channels: &[u64],
+) -> Result<MessageAccess> {
+    let policy = loop {
+        println!(
+            "{}",
+            language.text(
+                "Message receive policy: 1) Everyone (all servers and DMs)  2) Registered server  3) Registered channels  4) Paired users",
+                "메시지 수신 정책: 1) 모두 (모든 서버 및 DM)  2) 등록된 서버  3) 등록된 채널  4) 페어링된 사용자",
+                "消息接收策略：1) 所有人（所有服务器和私信）  2) 已注册服务器  3) 已注册频道  4) 已配对用户",
+                "メッセージ受信ポリシー: 1) 全員（すべてのサーバーとDM）  2) 登録サーバー  3) 登録チャンネル  4) ペアユーザー"
+            )
+        );
+        let choice = ask_text(
+            language,
+            "Choose policy (1-4)",
+            "정책 선택 (1-4)",
+            "选择策略（1-4）",
+            "ポリシーを選択 (1-4)",
+            "4",
+        )?;
+        match choice.trim().to_ascii_lowercase().as_str() {
+            "1" | "everyone" => break MessagePolicy::Everyone,
+            "2" | "registeredserver" | "registered-server" => {
+                break MessagePolicy::RegisteredServer;
+            }
+            "3" | "registeredchannels" | "registered-channels" => {
+                break MessagePolicy::RegisteredChannels;
+            }
+            "4" | "paired" | "pairedusers" | "paired-users" => break MessagePolicy::Paired,
+            _ => println!(
+                "{}",
+                language.text(
+                    "Choose 1, 2, 3, or 4.",
+                    "1, 2, 3, 4 중에서 선택하세요.",
+                    "请选择 1、2、3 或 4。",
+                    "1、2、3、4 から選択してください。"
+                )
+            ),
+        }
+    };
+
+    let paired_user_ids = if policy == MessagePolicy::Paired {
+        ask_ids_with_default(
+            language,
+            "Paired user IDs; enter 'none' to clear",
+            "페어링 사용자 ID ('none' 입력 시 비움)",
+            "已配对用户 ID（输入 none 清空）",
+            "ペアユーザー ID（none で消去）",
+            operator_ids,
+        )?
+    } else {
+        operator_ids.to_vec()
+    };
+    let channel_ids = if policy == MessagePolicy::RegisteredChannels {
+        ask_ids_with_default(
+            language,
+            "Registered channel IDs; blank keeps home/transcript defaults, 'none' clears",
+            "등록 채널 ID (비우면 홈/전사 채널, 'none' 입력 시 비움)",
+            "已注册频道 ID（留空使用主页/转录频道，输入 none 清空）",
+            "登録チャンネル ID（空欄でホーム/文字起こし、none で消去）",
+            default_channels,
+        )?
+    } else {
+        default_channels.to_vec()
+    };
+    let whitelist = ask_optional_ids(
+        language,
+        "Whitelist user IDs (optional; comma-separated)",
+        "허용 목록 사용자 ID (선택 사항, 쉼표로 구분)",
+        "允许列表用户 ID（可选，逗号分隔）",
+        "許可リストのユーザー ID（任意、カンマ区切り）",
+    )?;
+    let blacklist = ask_optional_ids(
+        language,
+        "Blacklist user IDs (optional; comma-separated)",
+        "차단 목록 사용자 ID (선택 사항, 쉼표로 구분)",
+        "阻止列表用户 ID（可选，逗号分隔）",
+        "拒否リストのユーザー ID（任意、カンマ区切り）",
+    )?;
+    Ok(MessageAccess {
+        policy,
+        paired_user_ids,
+        whitelist,
+        blacklist,
+        channel_ids,
+    })
+}
+
+fn ask_ids_with_default(
+    language: Language,
+    en: &str,
+    ko: &str,
+    zh: &str,
+    ja: &str,
+    default_ids: &[u64],
+) -> Result<Vec<u64>> {
+    let default = default_ids
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    loop {
+        let line = ask_text(language, en, ko, zh, ja, &default)?;
+        let line = line.trim();
+        if line.eq_ignore_ascii_case("none") {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        let mut valid = true;
+        for item in line
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            match item.parse::<u64>() {
+                Ok(id) => ids.push(id),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid && !ids.is_empty() {
+            return Ok(ids);
+        }
+        println!(
+            "{}",
+            language.text(
+                "Enter numeric IDs separated by commas, or 'none' to clear.",
+                "숫자 ID를 쉼표로 구분해 입력하거나 'none'을 입력해 비우세요.",
+                "请输入逗号分隔的数字 ID，或输入 none 清空。",
+                "数値 ID をカンマ区切りで入力するか、none で消去してください。"
+            )
+        );
+    }
+}
+
+fn ask_optional_ids(
+    language: Language,
+    en: &str,
+    ko: &str,
+    zh: &str,
+    ja: &str,
+) -> Result<Vec<u64>> {
+    loop {
+        let line = ask_text(language, en, ko, zh, ja, "")?;
+        if line.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        let mut valid = true;
+        for item in line
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            match item.parse::<u64>() {
+                Ok(id) => ids.push(id),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid && !ids.is_empty() {
+            return Ok(ids);
+        }
+        println!(
+            "{}",
+            language.text(
+                "Enter numeric IDs separated by commas, or leave blank for none.",
+                "숫자 ID를 쉼표로 구분해 입력하거나 비워 두세요.",
+                "请输入逗号分隔的数字 ID，或留空表示无。",
+                "数値 ID をカンマ区切りで入力するか、空欄のままにしてください。"
+            )
+        );
+    }
+}
+
 fn choose_language(existing: Option<Language>) -> Result<Language> {
     if let Some(language) = env_language().or(existing) {
         return Ok(language);
@@ -6005,6 +6226,13 @@ mod tests {
             home_channel_id: 2,
             transcript_channel_id: 3,
             operator_ids: vec![4],
+            message_access: Some(MessageAccess {
+                policy: MessagePolicy::RegisteredServer,
+                paired_user_ids: vec![44],
+                whitelist: vec![45],
+                blacklist: vec![46],
+                channel_ids: vec![47],
+            }),
             voice_channel_ids: vec![5],
             codex_path: "old-codex".into(),
             worker_path: None,
@@ -6030,6 +6258,8 @@ mod tests {
             home_channel_id: 12,
             transcript_channel_id: 13,
             operator_ids: vec![14],
+            message_access: None,
+            message_access_plan_pending: false,
             voice_channel_ids: vec![15],
             project_dir: "/selected/project".into(),
             model: Some("gpt-5.6-luna".into()),
@@ -6038,7 +6268,7 @@ mod tests {
         };
 
         let merged = merge_install_config(
-            Some(previous),
+            Some(previous.clone()),
             &list,
             Path::new("/new/config/discord-token"),
             Path::new("/selected/codex"),
@@ -6065,6 +6295,54 @@ mod tests {
             Some(Path::new("/new/config/discord-token"))
         );
         assert_eq!(merged.state_dir, Path::new("/new/data/state"));
+        assert_eq!(
+            merged.message_access.as_ref().unwrap().policy,
+            MessagePolicy::RegisteredServer
+        );
+        assert_eq!(
+            merged.message_access.as_ref().unwrap().paired_user_ids,
+            vec![44]
+        );
+        assert_eq!(merged.message_access.as_ref().unwrap().whitelist, vec![45]);
+        assert_eq!(merged.message_access.as_ref().unwrap().blacklist, vec![46]);
+        assert_eq!(
+            merged.message_access.as_ref().unwrap().channel_ids,
+            vec![47]
+        );
+
+        // A newly generated installation plan is an explicit policy choice and
+        // overrides the prior config value.
+        let mut updated_list = list.clone();
+        updated_list.message_access_plan_pending = true;
+        updated_list.message_access = Some(MessageAccess {
+            policy: MessagePolicy::Everyone,
+            paired_user_ids: vec![60],
+            whitelist: vec![61],
+            blacklist: vec![62],
+            channel_ids: vec![63],
+        });
+        let planned = merge_install_config(
+            Some(previous),
+            &updated_list,
+            Path::new("/new/config/discord-token"),
+            Path::new("/selected/codex"),
+            None,
+            Path::new("/new/data/state"),
+            &native_home,
+        );
+        assert_eq!(planned.message_access, updated_list.message_access);
+
+        // Older saved installation lists remain readable and preserve the
+        // previous config policy when they have no new plan field.
+        let mut legacy_list = serde_json::to_value(&list).unwrap();
+        legacy_list.as_object_mut().unwrap().remove("messageAccess");
+        legacy_list
+            .as_object_mut()
+            .unwrap()
+            .remove("messageAccessPlanPending");
+        let legacy_list: InstallationList = serde_json::from_value(legacy_list).unwrap();
+        assert!(legacy_list.message_access.is_none());
+        assert!(!legacy_list.message_access_plan_pending);
 
         let config_dir = tempfile::tempdir().expect("temporary config directory");
         let config_path = config_dir.path().join("config.json");

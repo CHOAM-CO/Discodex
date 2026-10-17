@@ -30,6 +30,8 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplyTarget {
+    /// None is a legacy configured-server target; zero denotes a direct message.
+    pub source_guild: Option<u64>,
     pub channel_id: ChannelId,
     pub message_id: serenity::all::MessageId,
 }
@@ -387,6 +389,8 @@ impl ApprovalResults {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct QueuedInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_guild: Option<u64>,
     pub text: String,
     #[serde(default)]
     pub attachments: Vec<crate::attachments::DownloadedAttachment>,
@@ -447,6 +451,9 @@ pub(crate) struct BridgeState {
     pub voice: Arc<VoiceBridge>,
     pub input_mode: RwLock<InputMode>,
     pub input_mode_path: PathBuf,
+    pub message_access: RwLock<crate::message_access::MessageAccess>,
+    pub message_access_path: PathBuf,
+    message_channel_parents: Mutex<HashMap<ChannelId, Option<u64>>>,
     pub current_turn: Mutex<Option<String>>,
     pub active_turns: Mutex<HashMap<String, String>>,
     // Access only while current_turn is held, with the active-turn state update.
@@ -509,25 +516,89 @@ impl EventHandler for Handler {
             return;
         };
         let mut activity = state.updates.admission();
-        if msg.guild_id.map(|id| id.get()) != Some(state.config.guild_id) {
-            return;
-        }
         let bot_id = *state.bot_user_id.lock().await;
         let is_self = bot_id == Some(msg.author.id);
+        if is_self {
+            return;
+        }
         let mentioned = bot_id.is_some_and(|id| msg.mentions.iter().any(|user| user.id == id));
-        if !admit_discord_message_author(
-            msg.author.bot,
+        let access = state.message_access.read().await.clone();
+        if access.blacklist.contains(&msg.author.id.get()) {
+            return;
+        }
+        if access.policy != crate::message_access::MessagePolicy::RegisteredChannels
+            && !access.allows(
+                msg.author.id.get(),
+                is_self,
+                msg.guild_id.map(|id| id.get()),
+                msg.channel_id.get(),
+                None,
+                state.config.guild_id,
+            )
+        {
+            return;
+        }
+        let parent_channel_id = if msg.guild_id.is_some() {
+            let cached = state
+                .message_channel_parents
+                .lock()
+                .await
+                .get(&msg.channel_id)
+                .copied();
+            match cached {
+                Some(parent) => parent,
+                None => {
+                    match msg.channel_id.to_channel(&ctx.http).await {
+                        Ok(channel) => {
+                            let parent = channel
+                                .guild()
+                                .filter(|channel| {
+                                    matches!(
+                                        channel.kind,
+                                        serenity::all::ChannelType::PublicThread
+                                            | serenity::all::ChannelType::PrivateThread
+                                            | serenity::all::ChannelType::NewsThread
+                                    )
+                                })
+                                .and_then(|channel| channel.parent_id)
+                                .map(|id| id.get());
+                            // A Discord thread's parent is immutable; names are still fetched live.
+                            state
+                                .message_channel_parents
+                                .lock()
+                                .await
+                                .insert(msg.channel_id, parent);
+                            parent
+                        }
+                        Err(error) => {
+                            warn!(%error, "could not resolve message channel parent");
+                            None
+                        }
+                    }
+                }
+            }
+        } else {
+            None
+        };
+        if !access.allows(
+            msg.author.id.get(),
             is_self,
-            state.config.operator_ids.contains(&msg.author.id.get()),
-            mentioned,
+            msg.guild_id.map(|id| id.get()),
+            msg.channel_id.get(),
+            parent_channel_id,
+            state.config.guild_id,
         ) {
             return;
         }
         let home_channel = msg.channel_id.get() == state.config.home_channel_id;
-        let route = state.voice.input_gate.state.lock().await.route(
+        let registered_channel = access.channel_ids.contains(&msg.channel_id.get())
+            || parent_channel_id.is_some_and(|id| access.channel_ids.contains(&id));
+        let route = state.voice.input_gate.state.lock().await.route_registered(
             msg.channel_id.get(),
             state.config.home_channel_id,
             mentioned,
+            registered_channel,
+            msg.guild_id.is_none(),
         );
         if route == crate::voice_input::InputRoute::Ignore {
             return;
@@ -540,6 +611,7 @@ impl EventHandler for Handler {
         activity.mark_activity();
         let input = message_input(&msg, home_channel, &ctx.http).await;
         let target = ReplyTarget {
+            source_guild: Some(msg.guild_id.map(|id| id.get()).unwrap_or(0)),
             channel_id: msg.channel_id,
             message_id: msg.id,
         };
@@ -844,6 +916,8 @@ pub async fn run(
     });
     let input_mode_path = config.state_dir.join("discord-settings.json");
     let input_mode = load_input_mode(&input_mode_path)?.unwrap_or(config.input_mode);
+    let message_access_path = config.state_dir.join("message-access.json");
+    let message_access = crate::message_access::MessageAccess::load(&message_access_path, &config)?;
     let mut queued_inputs = load_queue(&config.state_dir.join("discord-inputs.json"))?;
     let changed_queue = recover_submitting_inputs(&mut queued_inputs);
     let mut changed_queue = changed_queue;
@@ -883,6 +957,9 @@ pub async fn run(
         )?),
         input_mode: RwLock::new(input_mode),
         input_mode_path,
+        message_access: RwLock::new(message_access),
+        message_access_path,
+        message_channel_parents: Mutex::new(HashMap::new()),
         config: config.clone(),
         installation_checks,
         native: native.clone(),
@@ -951,6 +1028,7 @@ pub async fn run(
     let mut client = Client::builder(
         token.clone(),
         GatewayIntents::GUILDS
+            | GatewayIntents::DIRECT_MESSAGES
             | GatewayIntents::GUILD_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT
             | GatewayIntents::GUILD_VOICE_STATES,
@@ -1209,6 +1287,8 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
         .unwrap_or(&msg.author.name);
     let source = if home_channel {
         serde_json::json!({"author": author_name})
+    } else if msg.guild_id.is_none() {
+        serde_json::json!({"channel": "DM", "author": author_name})
     } else {
         let channel_name = msg
             .channel_id
@@ -1235,21 +1315,6 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
     let source = add_bot_source_metadata(source, msg.author.bot);
     let forwarded = crate::attachments::forwarded_message_data(msg);
     crate::attachments::format_ingress_message(&msg.content, &forwarded, source)
-}
-
-fn admit_discord_message_author(
-    author_is_bot: bool,
-    is_self: bool,
-    is_operator: bool,
-    mentioned_this_bot: bool,
-) -> bool {
-    if is_self {
-        return false;
-    }
-    if author_is_bot {
-        return mentioned_this_bot;
-    }
-    is_operator
 }
 
 fn add_bot_source_metadata(
@@ -1313,6 +1378,7 @@ async fn enqueue_voice_inbox(
             .is_some_and(|entry| !entry.pending_attachments.is_empty()));
     }
     staged.push_back(QueuedInput {
+        source_guild: Some(msg.guild_id.map(|id| id.get()).unwrap_or(0)),
         text: input.to_owned(),
         attachments: Vec::new(),
         channel_id: msg.channel_id.get(),
@@ -2402,6 +2468,7 @@ async fn record_input(
 ) -> anyhow::Result<()> {
     let mut queue = state.queued_inputs.lock().await;
     admit_input_and_save(
+        target.source_guild,
         &mut queue,
         input,
         target.channel_id.get(),
@@ -2415,6 +2482,7 @@ async fn record_input(
 }
 
 fn admit_input_and_save(
+    source_guild: Option<u64>,
     queue: &mut VecDeque<QueuedInput>,
     text: &str,
     channel_id: u64,
@@ -2435,10 +2503,9 @@ fn admit_input_and_save(
         delivery,
         generation,
     )?;
-    staged
-        .back_mut()
-        .expect("admitted input is present")
-        .attachments = attachments.to_vec();
+    let admitted = staged.back_mut().expect("admitted input is present");
+    admitted.attachments = attachments.to_vec();
+    admitted.source_guild = source_guild;
     save_queue(path, &staged)?;
     *queue = staged;
     Ok(())
@@ -2492,6 +2559,7 @@ fn admit_input(
         anyhow::bail!("Discord message {message_id} already has a recorded native submission");
     }
     queue.push_back(QueuedInput {
+        source_guild: None,
         attachments: Vec::new(),
         text: text.to_owned(),
         channel_id,
@@ -2622,6 +2690,7 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
         return Ok(());
     };
     let target = ReplyTarget {
+        source_guild: item.source_guild,
         channel_id: ChannelId::new(item.channel_id),
         message_id: serenity::all::MessageId::new(item.message_id),
     };
@@ -3516,6 +3585,10 @@ fn take_failed_turn_reply(
 }
 
 pub(crate) fn source_message_url(guild_id: u64, target: &ReplyTarget) -> String {
+    let guild_id = match target.source_guild.unwrap_or(guild_id) {
+        0 => "@me".to_owned(),
+        id => id.to_string(),
+    };
     format!(
         "https://discord.com/channels/{guild_id}/{}/{}",
         target.channel_id.get(),
@@ -3650,23 +3723,47 @@ fn empty_mentions() -> serenity::builder::CreateAllowedMentions {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn discord_message_author_admission_requires_direct_bot_mention() {
-        assert!(super::admit_discord_message_author(
-            false, false, true, false
-        ));
-        assert!(!super::admit_discord_message_author(
-            false, false, false, true
-        ));
-        assert!(super::admit_discord_message_author(
-            true, false, false, true
-        ));
-        assert!(!super::admit_discord_message_author(
-            true, false, false, false
-        ));
-        assert!(!super::admit_discord_message_author(true, true, true, true));
-        assert!(!super::admit_discord_message_author(
-            true, false, true, false
-        ));
+    fn source_links_preserve_other_servers_and_direct_messages_through_the_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join("queue.json");
+        for source in [None, Some(99), Some(0)] {
+            let mut queue = VecDeque::new();
+            admit_input_and_save(
+                source,
+                &mut queue,
+                "hello",
+                21,
+                31,
+                "thread",
+                QueueDelivery::Queued,
+                1,
+                &journal,
+                &[],
+            )
+            .unwrap();
+            let saved = load_queue(&journal).unwrap().pop_front().unwrap();
+            assert_eq!(saved.source_guild, source);
+            let target = ReplyTarget {
+                source_guild: saved.source_guild,
+                channel_id: ChannelId::new(saved.channel_id),
+                message_id: serenity::all::MessageId::new(saved.message_id),
+            };
+            let expected = match source {
+                None => "11",
+                Some(99) => "99",
+                Some(0) => "@me",
+                _ => unreachable!(),
+            };
+            assert_eq!(
+                source_message_url(11, &target),
+                format!("https://discord.com/channels/{expected}/21/31")
+            );
+        }
+        let legacy: QueuedInput = serde_json::from_value(
+            serde_json::json!({"text":"old","channel_id":21,"message_id":31}),
+        )
+        .unwrap();
+        assert_eq!(legacy.source_guild, None);
     }
 
     #[test]
@@ -3694,6 +3791,7 @@ mod tests {
         read: bool,
     ) -> QueuedInput {
         QueuedInput {
+            source_guild: None,
             text: format!("original message {message_id}"),
             attachments: Vec::new(),
             channel_id: 42,
@@ -3942,6 +4040,7 @@ mod tests {
             (
                 ("thread-a".to_owned(), "turn-a".to_owned()),
                 ReplyTarget {
+                    source_guild: None,
                     channel_id: ChannelId::new(7),
                     message_id: serenity::all::MessageId::new(70),
                 },
@@ -3949,6 +4048,7 @@ mod tests {
             (
                 ("thread-b".to_owned(), "turn-b".to_owned()),
                 ReplyTarget {
+                    source_guild: None,
                     channel_id: ChannelId::new(8),
                     message_id: serenity::all::MessageId::new(80),
                 },
@@ -3956,6 +4056,7 @@ mod tests {
             (
                 ("thread-c".to_owned(), "turn-c".to_owned()),
                 ReplyTarget {
+                    source_guild: None,
                     channel_id: ChannelId::new(9),
                     message_id: serenity::all::MessageId::new(90),
                 },
@@ -3963,6 +4064,7 @@ mod tests {
             (
                 ("thread-d".to_owned(), "turn-d".to_owned()),
                 ReplyTarget {
+                    source_guild: None,
                     channel_id: ChannelId::new(7),
                     message_id: serenity::all::MessageId::new(71),
                 },
@@ -4035,6 +4137,7 @@ mod tests {
     fn conversation_reply_routes_home_and_only_references_same_channel_source() {
         let home = ChannelId::new(5);
         let same = ReplyTarget {
+            source_guild: None,
             channel_id: home,
             message_id: serenity::all::MessageId::new(20),
         };
@@ -4046,6 +4149,7 @@ mod tests {
         assert_eq!(payload["content"], "answer");
 
         let elsewhere = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(6),
             message_id: serenity::all::MessageId::new(21),
         };
@@ -4063,6 +4167,7 @@ mod tests {
     fn source_message_label_follows_the_configured_language() {
         let home = ChannelId::new(5);
         let elsewhere = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(6),
             message_id: serenity::all::MessageId::new(21),
         };
@@ -4314,6 +4419,7 @@ mod tests {
             assert!(current.is_none());
             assert!(!active.contains_key("thread"));
             let mut queue = VecDeque::from([QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "next".to_owned(),
                 channel_id: 42,
@@ -4592,6 +4698,7 @@ mod tests {
     #[test]
     fn assistant_reply_payload_references_source_and_contains_only_native_text() {
         let target = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
@@ -4630,6 +4737,7 @@ mod tests {
     #[test]
     fn approval_result_notification_follows_the_configured_language() {
         let source = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
@@ -4665,6 +4773,7 @@ mod tests {
     #[test]
     fn approval_results_survive_resolved_and_report_only_observed_execution_outcomes() {
         let source = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
@@ -4702,6 +4811,7 @@ mod tests {
                 1,
                 &serde_json::json!(17),
                 ReplyTarget {
+                    source_guild: None,
                     channel_id: ChannelId::new(99),
                     message_id: serenity::all::MessageId::new(88),
                 },
@@ -4772,10 +4882,12 @@ mod tests {
     #[test]
     fn approval_result_identity_and_frozen_source_survive_steering_and_reconnect() {
         let first = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
         let later = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(43),
             message_id: serenity::all::MessageId::new(77),
         };
@@ -4907,20 +5019,24 @@ mod tests {
     #[test]
     fn approval_request_context_keeps_consumed_text_source_during_active_voice() {
         let original = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
         let steering = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(43),
             message_id: serenity::all::MessageId::new(77),
         };
         let voice_channel = ChannelId::new(44);
         let home_channel = ChannelId::new(45);
         let home_card = ReplyTarget {
+            source_guild: None,
             channel_id: home_channel,
             message_id: serenity::all::MessageId::new(78),
         };
         let voice_card = ReplyTarget {
+            source_guild: None,
             channel_id: voice_channel,
             message_id: serenity::all::MessageId::new(79),
         };
@@ -5039,10 +5155,12 @@ mod tests {
     #[test]
     fn approval_result_turn_interruption_replies_only_to_the_captured_related_request_card() {
         let card = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(44),
             message_id: serenity::all::MessageId::new(78),
         };
         let later_card = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(45),
             message_id: serenity::all::MessageId::new(79),
         };
@@ -5097,10 +5215,12 @@ mod tests {
     #[test]
     fn failed_turn_reply_keeps_consumed_source_and_is_published_only_once() {
         let first = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
         let later = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(43),
             message_id: serenity::all::MessageId::new(77),
         };
@@ -5149,10 +5269,12 @@ mod tests {
     #[test]
     fn agent_message_reply_uses_current_consumed_text_and_preserves_its_frozen_body() {
         let original = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
         let steering = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(43),
             message_id: serenity::all::MessageId::new(77),
         };
@@ -5218,10 +5340,12 @@ mod tests {
     #[test]
     fn steering_consumption_does_not_retarget_an_started_assistant_item() {
         let first = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(42),
             message_id: serenity::all::MessageId::new(76),
         };
         let later = ReplyTarget {
+            source_guild: None,
             channel_id: ChannelId::new(43),
             message_id: serenity::all::MessageId::new(77),
         };
@@ -5282,6 +5406,7 @@ mod tests {
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::new();
         admit_input_and_save(
+            None,
             &mut queue,
             "same body",
             42,
@@ -5312,6 +5437,7 @@ mod tests {
         assert_eq!(queue[0], accepted);
         assert!(
             admit_input_and_save(
+                None,
                 &mut queue,
                 "same body",
                 43,
@@ -5327,6 +5453,7 @@ mod tests {
         assert_eq!(queue, VecDeque::from([accepted.clone()]));
         assert_eq!(load_queue(&path).expect("unchanged accepted record"), queue);
         admit_input_and_save(
+            None,
             &mut queue,
             "same body",
             42,
@@ -5361,6 +5488,7 @@ mod tests {
         };
         let mut queue = VecDeque::new();
         admit_input_and_save(
+            None,
             &mut queue,
             "home",
             10,
@@ -5373,6 +5501,7 @@ mod tests {
         )
         .unwrap();
         admit_input_and_save(
+            None,
             &mut queue,
             "mention",
             20,
@@ -5495,6 +5624,7 @@ mod tests {
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::from([
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "unknown original".to_owned(),
                 channel_id: 42,
@@ -5505,6 +5635,7 @@ mod tests {
                 voice_inbox: None,
             },
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "queued original".to_owned(),
                 channel_id: 43,
@@ -5521,6 +5652,7 @@ mod tests {
         fs::create_dir(&blocked_temp).expect("block actual journal write");
         assert!(
             admit_input_and_save(
+                None,
                 &mut queue,
                 "not submitted",
                 44,
@@ -5562,6 +5694,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temporary journal");
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::from([QueuedInput {
+            source_guild: None,
             attachments: Vec::new(),
             text: "accepted body".to_owned(),
             channel_id: 42,
@@ -5617,6 +5750,7 @@ mod tests {
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::new();
         queue.push_back(QueuedInput {
+            source_guild: None,
             attachments: Vec::new(),
             text: "later input".to_owned(),
             channel_id: 42,
@@ -5636,6 +5770,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temporary state folder");
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::from([QueuedInput {
+            source_guild: None,
             attachments: Vec::new(),
             text: "accepted response may be lost".to_owned(),
             channel_id: 42,
@@ -5694,6 +5829,7 @@ mod tests {
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::from([
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "uncertain first input".to_owned(),
                 channel_id: 42,
@@ -5704,6 +5840,7 @@ mod tests {
                 voice_inbox: None,
             },
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "queued second input".to_owned(),
                 channel_id: 42,
@@ -5714,6 +5851,7 @@ mod tests {
                 voice_inbox: None,
             },
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "queued third input".to_owned(),
                 channel_id: 42,
@@ -5759,6 +5897,7 @@ mod tests {
         let path = dir.path().join("discord-inputs.json");
         let mut queue = VecDeque::from([
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "rejected input".to_owned(),
                 channel_id: 42,
@@ -5769,6 +5908,7 @@ mod tests {
                 voice_inbox: None,
             },
             QueuedInput {
+                source_guild: None,
                 attachments: Vec::new(),
                 text: "unrelated queued input".to_owned(),
                 channel_id: 42,
@@ -5812,6 +5952,7 @@ mod tests {
         }];
         let mut queue = VecDeque::new();
         admit_input_and_save(
+            None,
             &mut queue,
             "look at this",
             42,
@@ -5833,6 +5974,7 @@ mod tests {
         assert_eq!(claimed.delivery, QueueDelivery::Submitting);
         assert!(
             admit_input_and_save(
+                None,
                 &mut recovered,
                 "replacement",
                 43,

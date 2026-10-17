@@ -45,7 +45,7 @@ macOS, Linux, Windows에서 migration은 지정한 프로필만 소유 기록과
 
 ## 첫 설치
 
-`discodex install`은 저장된 설치 목록이 없으면 대화식으로 작성한다. `install-plan`은 같은 목록 작성만 수행한다. 설치자는 프로필 표시 이름, 사용할 Codex 실행체(발견된 데스크톱 앱/기존 CLI 또는 설치기가 내려받는 공식 Codex core), Discord 서버·홈 텍스트 채널·전사 채널·허용 음성 채널·조작자 ID, 이미 존재하는 project 디렉터리와 선택적 모델을 지정한다. Discord token은 안전한 입력으로 제공하며, 설치기는 Discord 접근과 native 연결을 확인한다. Codex 로그인이나 MFA가 필요하면 공식 로그인 흐름을 사용자가 완료한다. worker `config.json`에 `effort`와 `serviceTier`를 지정하면 새 지속 thread에 적용한다. `serviceTier: "off"`는 native에 tier 해제로 전달한다. 설정이 없으면 native 기본값을 따르며, 기존 thread를 재개할 때는 `/discodex`에서 바꾼 현재 thread 설정을 덮어쓰지 않는다.
+`discodex install`은 저장된 설치 목록이 없으면 대화식으로 작성한다. `install-plan`은 같은 목록 작성만 수행한다. 설치자는 프로필 표시 이름, 사용할 Codex 실행체(발견된 데스크톱 앱/기존 CLI 또는 설치기가 내려받는 공식 Codex core), Discord 서버·홈 텍스트 채널·전사 채널·허용 음성 채널·조작자 ID, 수신 정책과 등록 사용자·채널 ID 목록, 이미 존재하는 project 디렉터리와 선택적 모델을 지정한다. 수신 정책은 `Everyone`(모든 서버와 DM), `RegisteredServer`(설정된 서버), `RegisteredChannels`(등록 채널과 하위 스레드), `Paired`(등록 사용자 ID) 중 하나다. 허용·차단 목록은 정책 선택과 별도로 유지되고, 차단 목록이 우선한다. 정책은 메시지 입력 범위만 정하며 slash command 및 관리 권한은 지정 조작자 설정을 따른다. 새 설치 계획에서 선택한 정책과 목록은 설치 시 런타임 `message-access.json`에 한 번 적용된다. 이후 일반 재설치·업데이트는 현재 정책과 목록을 보존한다. Discord token은 안전한 입력으로 제공하며, 설치기는 Discord 접근과 native 연결을 확인한다. Codex 로그인이나 MFA가 필요하면 공식 로그인 흐름을 사용자가 완료한다. worker `config.json`에 `effort`와 `serviceTier`를 지정하면 새 지속 thread에 적용한다. `serviceTier`의 `off` 값은 native에 tier 해제로 전달한다. 설정이 없으면 native 기본값을 따르며, 기존 thread를 재개할 때는 `/discodex`에서 바꾼 현재 thread 설정을 덮어쓰지 않는다.
 
 설치 선택 목록 저장만으로 서비스가 준비된 것은 아니다. 설치기는 native 계정·catalog와 Discord 구성을 확인하고 사용자 서비스를 등록한다. 서비스 시작 여부만으로 텍스트·질문/승인·음성 기능 검증이 끝났다고 판단하지 않는다.
 

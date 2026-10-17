@@ -28,6 +28,8 @@ pub struct Config {
     pub transcript_channel_id: u64,
     #[serde(default)]
     pub operator_ids: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_access: Option<crate::message_access::MessageAccess>,
     #[serde(default)]
     pub voice_channel_ids: Vec<u64>,
     pub codex_path: PathBuf,

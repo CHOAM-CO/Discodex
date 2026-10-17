@@ -12,14 +12,15 @@ use serenity::{
         ButtonStyle, ChannelId, ChannelType, CommandDataOption, CommandDataOptionValue,
         CommandInteraction, CommandOptionType, ComponentInteraction, Context, CreateActionRow,
         CreateButton, CreateCommand, CreateCommandOption, CreateInteractionResponse,
-        CreateInteractionResponseMessage, CreateModal, GuildChannel, GuildId, Member,
-        ModalInteraction, PartialGuild, Permissions, UserId,
+        CreateInteractionResponseMessage, CreateModal, GuildChannel, GuildId, InputTextStyle,
+        Member, ModalInteraction, PartialGuild, Permissions, UserId,
     },
     builder::{CreateAllowedMentions, CreateMessage},
 };
 use uuid::Uuid;
 
 use crate::discord::{BridgeState, PendingApproval, ReplyTarget, StateKey};
+use crate::message_access::{MessageAccess, MessagePolicy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsKind {
@@ -31,6 +32,11 @@ pub(crate) enum SettingsKind {
     Input,
     Voice,
     Updates,
+    MessageAccess,
+    PairedAccounts,
+    Whitelist,
+    Blacklist,
+    RegisteredChannels,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -208,7 +214,7 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
         )
         .await?;
     if settings_ui_requested(interaction) {
-        let response = match settings_menu_from_command(interaction, &state).await {
+        let response = match settings_menu_from_command(ctx, interaction, &state).await {
             Ok((content, rows)) => {
                 send_command_settings_panel(ctx, interaction, &content, rows).await
             }
@@ -596,6 +602,15 @@ async fn handle_authorized(
 }
 
 const SETTINGS_PAGE_SIZE: usize = 20;
+const MESSAGE_ACCESS_PAGE_SIZE: usize = 10;
+
+fn settings_page_size(kind: SettingsKind) -> usize {
+    if is_access_list(kind) {
+        MESSAGE_ACCESS_PAGE_SIZE
+    } else {
+        SETTINGS_PAGE_SIZE
+    }
+}
 
 fn settings_ui_requested(interaction: &CommandInteraction) -> bool {
     interaction
@@ -636,6 +651,7 @@ async fn send_command_settings_panel(
 }
 
 async fn settings_menu_from_command(
+    ctx: &Context,
     interaction: &CommandInteraction,
     state: &Arc<BridgeState>,
 ) -> anyhow::Result<(String, Vec<CreateActionRow>)> {
@@ -651,6 +667,7 @@ async fn settings_menu_from_command(
     };
     let id = Uuid::new_v4().simple().to_string();
     let menu = build_settings_menu(
+        ctx,
         state,
         kind,
         0,
@@ -672,6 +689,7 @@ async fn settings_menu_from_command(
 }
 
 async fn build_settings_menu(
+    ctx: &Context,
     state: &BridgeState,
     kind: SettingsKind,
     page: usize,
@@ -683,7 +701,11 @@ async fn build_settings_menu(
         bail!("Codex connection changed while settings were opening");
     }
     let target_thread_id = state.native.thread_id();
-    let thread = state.native.refresh_thread_state().await?;
+    let thread = if kind == SettingsKind::MessageAccess || is_access_list(kind) {
+        json!({})
+    } else {
+        state.native.refresh_thread_state().await?
+    };
     let model_scope = thread
         .get("model")
         .and_then(Value::as_str)
@@ -754,6 +776,13 @@ async fn build_settings_menu(
                     "入力の送信方法",
                 ),
                 (
+                    "message-access",
+                    "Message reception policy",
+                    "메시지 수신 정책",
+                    "消息接收策略",
+                    "メッセージ受信ポリシー",
+                ),
+                (
                     "voice",
                     "Voice profile",
                     "음성 프로필",
@@ -767,6 +796,170 @@ async fn build_settings_menu(
                 label: language.text(en, ko, zh, ja).to_owned(),
             })
             .collect();
+            (None, current, choices)
+        }
+        SettingsKind::MessageAccess => {
+            let access = state.message_access.read().await.clone();
+            let selected = format!("policy:{}", message_policy_key(access.policy));
+            let current = format!(
+                "{}: {}\n{}: {} · {}: {} · {}: {} · {}: {}",
+                language.text("Current policy", "현재 정책", "当前策略", "現在のポリシー"),
+                message_policy_label(access.policy, language),
+                language.text("Paired", "페어링", "已配对", "ペアリング済み"),
+                access.paired_user_ids.len(),
+                language.text("Whitelist", "화이트리스트", "白名单", "許可リスト"),
+                access.whitelist.len(),
+                language.text("Blacklist", "블랙리스트", "黑名单", "ブロックリスト"),
+                access.blacklist.len(),
+                language.text(
+                    "Registered channels",
+                    "등록 채널",
+                    "已登记频道",
+                    "登録チャンネル"
+                ),
+                access.channel_ids.len()
+            );
+            let choices = [
+                (
+                    "policy:everyone",
+                    message_policy_label(MessagePolicy::Everyone, language),
+                ),
+                (
+                    "policy:registered-server",
+                    message_policy_label(MessagePolicy::RegisteredServer, language),
+                ),
+                (
+                    "policy:registered-channels",
+                    message_policy_label(MessagePolicy::RegisteredChannels, language),
+                ),
+                (
+                    "policy:paired",
+                    message_policy_label(MessagePolicy::Paired, language),
+                ),
+                (
+                    "list:paired",
+                    language.text(
+                        "Edit paired accounts",
+                        "페어링 계정 편집",
+                        "编辑已配对账号",
+                        "ペアリング済みアカウントを編集",
+                    ),
+                ),
+                (
+                    "list:whitelist",
+                    language.text(
+                        "Edit whitelist",
+                        "화이트리스트 편집",
+                        "编辑白名单",
+                        "許可リストを編集",
+                    ),
+                ),
+                (
+                    "list:blacklist",
+                    language.text(
+                        "Edit blocklist",
+                        "차단 목록 편집",
+                        "编辑屏蔽列表",
+                        "ブロックリストを編集",
+                    ),
+                ),
+                (
+                    "list:channels",
+                    language.text(
+                        "Edit registered channels",
+                        "등록 채널 편집",
+                        "编辑已登记频道",
+                        "登録チャンネルを編集",
+                    ),
+                ),
+            ]
+            .into_iter()
+            .map(|(value, label)| SettingsChoice {
+                value: value.to_owned(),
+                label: label.to_owned(),
+            })
+            .collect();
+            (Some(selected.to_owned()), current, choices)
+        }
+        SettingsKind::PairedAccounts
+        | SettingsKind::Whitelist
+        | SettingsKind::Blacklist
+        | SettingsKind::RegisteredChannels => {
+            let access = state.message_access.read().await.clone();
+            let ids = access_list(&access, kind).to_vec();
+            let page = if ids.is_empty() {
+                0
+            } else {
+                page.min((ids.len() - 1) / MESSAGE_ACCESS_PAGE_SIZE)
+            };
+            let start = page * MESSAGE_ACCESS_PAGE_SIZE;
+            let end = (start + MESSAGE_ACCESS_PAGE_SIZE).min(ids.len());
+            let mut choices = ids
+                .iter()
+                .map(|id| SettingsChoice {
+                    value: id.to_string(),
+                    label: format!("ID: {id}"),
+                })
+                .collect::<Vec<_>>();
+            for (index, id) in ids.get(start..end).unwrap_or_default().iter().enumerate() {
+                let label = if kind == SettingsKind::RegisteredChannels {
+                    match ctx.http.get_channel(ChannelId::new(*id)).await {
+                        Ok(channel) => channel
+                            .guild()
+                            .map(|channel| channel.name.clone())
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "{} (ID: {})",
+                                    language.text(
+                                        "Unavailable",
+                                        "사용할 수 없음",
+                                        "不可用",
+                                        "利用できません"
+                                    ),
+                                    id
+                                )
+                            }),
+                        Err(_) => format!(
+                            "{} (ID: {})",
+                            language.text(
+                                "Unavailable in this server",
+                                "이 서버에서 사용할 수 없음",
+                                "在此服务器中不可用",
+                                "このサーバーでは利用できません"
+                            ),
+                            id
+                        ),
+                    }
+                } else {
+                    match GuildId::new(state.config.guild_id)
+                        .member(ctx, UserId::new(*id))
+                        .await
+                    {
+                        Ok(member) => member_display_name(
+                            member.nick.as_deref(),
+                            member.user.global_name.as_deref(),
+                            &member.user.name,
+                        )
+                        .to_owned(),
+                        Err(_) => format!(
+                            "{} (ID: {})",
+                            language.text(
+                                "Unavailable or not a current server member",
+                                "조회할 수 없거나 현재 서버 구성원이 아님",
+                                "无法查询或不是当前服务器成员",
+                                "取得できないか、現在のサーバーメンバーではありません"
+                            ),
+                            id
+                        ),
+                    }
+                };
+                choices[start + index].label = label;
+            }
+            let current = format!(
+                "{}: {}",
+                language.text("Entries", "항목", "条目", "項目"),
+                ids.len()
+            );
             (None, current, choices)
         }
         SettingsKind::Updates => {
@@ -951,7 +1144,7 @@ async fn build_settings_menu(
     let page = if choices.is_empty() {
         0
     } else {
-        page.min((choices.len() - 1) / SETTINGS_PAGE_SIZE)
+        page.min((choices.len() - 1) / settings_page_size(kind))
     };
     Ok(SettingsMenuState {
         claimed: false,
@@ -1060,6 +1253,30 @@ fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &
             "输入传递方式",
             "入力の送信方法",
         ),
+        SettingsKind::MessageAccess => language.text(
+            "Message reception policy",
+            "메시지 수신 정책",
+            "消息接收策略",
+            "メッセージ受信ポリシー",
+        ),
+        SettingsKind::PairedAccounts => language.text(
+            "Paired accounts",
+            "페어링 계정",
+            "已配对账号",
+            "ペアリング済みアカウント",
+        ),
+        SettingsKind::Whitelist => {
+            language.text("Whitelist", "화이트리스트", "白名单", "許可リスト")
+        }
+        SettingsKind::Blacklist => {
+            language.text("Blacklist", "블랙리스트", "黑名单", "ブロックリスト")
+        }
+        SettingsKind::RegisteredChannels => language.text(
+            "Registered channels",
+            "등록 채널",
+            "已登记频道",
+            "登録チャンネル",
+        ),
         SettingsKind::Voice => language.text(
             "Voice profile",
             "음성 프로필",
@@ -1081,7 +1298,11 @@ fn render_settings_menu(
         menu.current
     );
     if menu.kind != SettingsKind::Hub {
-        let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
+        let pages = menu
+            .choices
+            .len()
+            .div_ceil(settings_page_size(menu.kind))
+            .max(1);
         if pages > 1 {
             content.push_str(&format!(
                 "\n{} {}/{}",
@@ -1118,59 +1339,75 @@ fn render_settings_menu(
     }
 
     if menu.kind != SettingsKind::Hub {
-        let start = menu.page * SETTINGS_PAGE_SIZE;
-        let end = (start + SETTINGS_PAGE_SIZE).min(menu.choices.len());
+        let start = menu.page * settings_page_size(menu.kind);
+        let end = (start + settings_page_size(menu.kind)).min(menu.choices.len());
         for choice in &menu.choices[start..end] {
-            content.push_str(&format!("\n• {} — {}", choice.label, choice.value));
+            if is_access_list(menu.kind) {
+                content.push_str(&format!(
+                    "\n• {} (ID: {})",
+                    choice.label.strip_prefix("ID: ").unwrap_or(&choice.label),
+                    choice.value
+                ));
+            } else {
+                content.push_str(&format!("\n• {} — {}", choice.label, choice.value));
+            }
         }
     }
 
+    let is_access_list = is_access_list(menu.kind);
     let start = if menu.kind == SettingsKind::Hub {
         0
     } else {
-        menu.page * SETTINGS_PAGE_SIZE
+        menu.page * settings_page_size(menu.kind)
     };
     let end = (start
         + if menu.kind == SettingsKind::Hub {
             menu.choices.len()
         } else {
-            SETTINGS_PAGE_SIZE
+            settings_page_size(menu.kind)
         })
     .min(menu.choices.len());
     let mut rows = Vec::new();
-    for (offset, group) in menu.choices[start..end].chunks(5).enumerate() {
-        let buttons = group
-            .iter()
-            .enumerate()
-            .map(|(within, choice)| {
-                let index = start + offset * 5 + within;
-                let is_hub = menu.kind == SettingsKind::Hub;
-                let marker =
-                    if !is_hub && menu.current_value.as_deref() == Some(choice.value.as_str()) {
+    if !is_access_list {
+        for (offset, group) in menu.choices[start..end].chunks(5).enumerate() {
+            let buttons = group
+                .iter()
+                .enumerate()
+                .map(|(within, choice)| {
+                    let index = start + offset * 5 + within;
+                    let is_hub = menu.kind == SettingsKind::Hub;
+                    let marker = if !is_hub
+                        && menu.current_value.as_deref() == Some(choice.value.as_str())
+                    {
                         "✓ "
                     } else {
                         ""
                     };
-                let custom_id = if is_hub {
-                    format!("codex:settings:{menu_id}:o{index}")
-                } else {
-                    format!("codex:settings:{menu_id}:c{index}")
-                };
-                let label = discord_button_label(&format!("{marker}{}", choice.label));
-                CreateButton::new(custom_id)
-                    .label(label)
-                    .style(if marker.is_empty() {
-                        ButtonStyle::Secondary
+                    let custom_id = if is_hub {
+                        format!("codex:settings:{menu_id}:o{index}")
                     } else {
-                        ButtonStyle::Success
-                    })
-            })
-            .collect();
-        rows.push(CreateActionRow::Buttons(buttons));
+                        format!("codex:settings:{menu_id}:c{index}")
+                    };
+                    let label = discord_button_label(&format!("{marker}{}", choice.label));
+                    CreateButton::new(custom_id)
+                        .label(label)
+                        .style(if marker.is_empty() {
+                            ButtonStyle::Secondary
+                        } else {
+                            ButtonStyle::Success
+                        })
+                })
+                .collect();
+            rows.push(CreateActionRow::Buttons(buttons));
+        }
     }
     let mut controls = Vec::new();
     if menu.kind != SettingsKind::Hub {
-        let pages = menu.choices.len().div_ceil(SETTINGS_PAGE_SIZE).max(1);
+        let pages = menu
+            .choices
+            .len()
+            .div_ceil(settings_page_size(menu.kind))
+            .max(1);
         if pages > 1 {
             controls.push(
                 CreateButton::new(format!(
@@ -1182,10 +1419,25 @@ fn render_settings_menu(
                 .disabled(menu.page == 0),
             );
         }
+        if is_access_list {
+            controls.push(
+                CreateButton::new(format!("codex:settings:{menu_id}:a"))
+                    .label(access_list_action_label(menu.kind, true, language))
+                    .style(ButtonStyle::Success),
+            );
+            controls.push(
+                CreateButton::new(format!("codex:settings:{menu_id}:r"))
+                    .label(access_list_action_label(menu.kind, false, language))
+                    .style(ButtonStyle::Danger),
+            );
+        }
         controls.push(
-            CreateButton::new(format!("codex:settings:{menu_id}:h"))
-                .label(language.text("Back", "뒤로가기", "返回", "戻る"))
-                .style(ButtonStyle::Primary),
+            CreateButton::new(format!(
+                "codex:settings:{menu_id}:{}",
+                if is_access_list { "b" } else { "h" }
+            ))
+            .label(language.text("Back", "뒤로가기", "返回", "戻る"))
+            .style(ButtonStyle::Primary),
         );
         if pages > 1 {
             controls.push(
@@ -1246,6 +1498,194 @@ fn discord_button_label(value: &str) -> String {
     }
 }
 
+fn message_policy_key(policy: MessagePolicy) -> &'static str {
+    match policy {
+        MessagePolicy::Everyone => "everyone",
+        MessagePolicy::RegisteredServer => "registered-server",
+        MessagePolicy::RegisteredChannels => "registered-channels",
+        MessagePolicy::Paired => "paired",
+    }
+}
+
+fn message_policy_label(policy: MessagePolicy, language: crate::i18n::Language) -> &'static str {
+    match policy {
+        MessagePolicy::Everyone => language.text(
+            "Everyone, including DMs",
+            "DM을 포함한 모든 사용자",
+            "所有人（包括私信）",
+            "DMを含む全員",
+        ),
+        MessagePolicy::RegisteredServer => language.text(
+            "All members in registered server",
+            "등록 서버의 모든 구성원",
+            "已登记服务器中的所有成员",
+            "登録サーバーの全メンバー",
+        ),
+        MessagePolicy::RegisteredChannels => language.text(
+            "Registered channels",
+            "등록 채널",
+            "已登记频道",
+            "登録チャンネル",
+        ),
+        MessagePolicy::Paired => language.text(
+            "Paired accounts",
+            "페어링 계정",
+            "已配对账号",
+            "ペアリング済みアカウント",
+        ),
+    }
+}
+
+fn is_access_list(kind: SettingsKind) -> bool {
+    matches!(
+        kind,
+        SettingsKind::PairedAccounts
+            | SettingsKind::Whitelist
+            | SettingsKind::Blacklist
+            | SettingsKind::RegisteredChannels
+    )
+}
+
+fn access_list(access: &MessageAccess, kind: SettingsKind) -> &[u64] {
+    match kind {
+        SettingsKind::PairedAccounts => &access.paired_user_ids,
+        SettingsKind::Whitelist => &access.whitelist,
+        SettingsKind::Blacklist => &access.blacklist,
+        SettingsKind::RegisteredChannels => &access.channel_ids,
+        _ => &[],
+    }
+}
+
+fn access_list_key(kind: SettingsKind) -> Option<&'static str> {
+    match kind {
+        SettingsKind::PairedAccounts => Some("paired"),
+        SettingsKind::Whitelist => Some("whitelist"),
+        SettingsKind::Blacklist => Some("blacklist"),
+        SettingsKind::RegisteredChannels => Some("channels"),
+        _ => None,
+    }
+}
+
+fn access_list_kind(key: &str) -> Option<SettingsKind> {
+    match key {
+        "paired" => Some(SettingsKind::PairedAccounts),
+        "whitelist" => Some(SettingsKind::Whitelist),
+        "blacklist" => Some(SettingsKind::Blacklist),
+        "channels" => Some(SettingsKind::RegisteredChannels),
+        _ => None,
+    }
+}
+
+fn member_display_name<'a>(
+    nick: Option<&'a str>,
+    global_name: Option<&'a str>,
+    username: &'a str,
+) -> &'a str {
+    nick.or(global_name).unwrap_or(username)
+}
+
+fn access_list_action_label(
+    kind: SettingsKind,
+    add: bool,
+    language: crate::i18n::Language,
+) -> String {
+    match (kind, add) {
+        (SettingsKind::PairedAccounts, true) => language
+            .text("Add ID", "ID 추가", "添加 ID", "ID を追加")
+            .to_owned(),
+        (SettingsKind::PairedAccounts, false) => language
+            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .to_owned(),
+        (SettingsKind::Whitelist, true) => language
+            .text("Allow ID", "ID 허용", "允许 ID", "ID を許可")
+            .to_owned(),
+        (SettingsKind::Whitelist, false) => language
+            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .to_owned(),
+        (SettingsKind::Blacklist, true) => language
+            .text("Block ID", "ID 차단", "屏蔽 ID", "ID をブロック")
+            .to_owned(),
+        (SettingsKind::Blacklist, false) => language
+            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .to_owned(),
+        (_, true) => language
+            .text(
+                "Add channel ID",
+                "채널 ID 추가",
+                "添加频道 ID",
+                "チャンネル ID を追加",
+            )
+            .to_owned(),
+        (_, false) => language
+            .text(
+                "Remove channel ID",
+                "채널 ID 제거",
+                "移除频道 ID",
+                "チャンネル ID を削除",
+            )
+            .to_owned(),
+    }
+}
+
+async fn save_message_policy(state: &BridgeState, key: &str) -> anyhow::Result<()> {
+    let policy = match key {
+        "everyone" => MessagePolicy::Everyone,
+        "registered-server" => MessagePolicy::RegisteredServer,
+        "registered-channels" => MessagePolicy::RegisteredChannels,
+        "paired" => MessagePolicy::Paired,
+        _ => bail!("unknown message policy"),
+    };
+    let _change = state.settings_change_lock.lock().await;
+    let mut current = state.message_access.write().await;
+    let mut staged = current.clone();
+    staged.policy = policy;
+    staged.save(&state.message_access_path)?;
+    *current = staged;
+    Ok(())
+}
+
+fn apply_message_access_list_edit(
+    access: &mut MessageAccess,
+    kind: SettingsKind,
+    add: bool,
+    id: u64,
+) -> anyhow::Result<()> {
+    let list = match kind {
+        SettingsKind::PairedAccounts => &mut access.paired_user_ids,
+        SettingsKind::Whitelist => &mut access.whitelist,
+        SettingsKind::Blacklist => &mut access.blacklist,
+        SettingsKind::RegisteredChannels => &mut access.channel_ids,
+        _ => bail!("not a message access list"),
+    };
+    if add {
+        if list.contains(&id) {
+            bail!("ID {id} is already registered");
+        }
+        list.push(id);
+    } else {
+        let Some(index) = list.iter().position(|value| *value == id) else {
+            bail!("ID {id} is not registered in this list");
+        };
+        list.remove(index);
+    }
+    Ok(())
+}
+
+async fn update_message_access_list(
+    state: &BridgeState,
+    kind: SettingsKind,
+    add: bool,
+    id: u64,
+) -> anyhow::Result<()> {
+    let _change = state.settings_change_lock.lock().await;
+    let mut current = state.message_access.write().await;
+    let mut staged = current.clone();
+    apply_message_access_list_edit(&mut staged, kind, add, id)?;
+    staged.save(&state.message_access_path)?;
+    *current = staged;
+    Ok(())
+}
+
 fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
     match value {
         "model" => Some(SettingsKind::Model),
@@ -1255,6 +1695,7 @@ fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
         "input" => Some(SettingsKind::Input),
         "voice" => Some(SettingsKind::Voice),
         "updates" => Some(SettingsKind::Updates),
+        "message-access" => Some(SettingsKind::MessageAccess),
         _ => None,
     }
 }
@@ -1356,6 +1797,57 @@ async fn handle_settings_component(
             return Ok(());
         }
     };
+    if matches!(action, "a" | "r") && is_access_list(menu.kind) {
+        let key =
+            access_list_key(menu.kind).ok_or_else(|| anyhow!("invalid message access list"))?;
+        let add = action == "a";
+        let title = if menu.kind == SettingsKind::RegisteredChannels {
+            state.config.language.text(
+                "Edit registered channels",
+                "등록 채널 편집",
+                "编辑已登记频道",
+                "登録チャンネルを編集",
+            )
+        } else {
+            settings_kind_title(menu.kind, state.config.language)
+        };
+        let label = if menu.kind == SettingsKind::RegisteredChannels {
+            state
+                .config
+                .language
+                .text("Channel ID", "채널 ID", "频道 ID", "チャンネル ID")
+        } else {
+            state
+                .config
+                .language
+                .text("Account ID", "계정 ID", "账号 ID", "アカウント ID")
+        };
+        let placeholder = state.config.language.text(
+            "Enter a Discord numeric ID",
+            "Discord 숫자 ID를 입력하세요",
+            "输入 Discord 数字 ID",
+            "Discord 数字 ID を入力してください",
+        );
+        let modal_id = format!(
+            "codex:access:{menu_id}:{key}:{}",
+            if add { "add" } else { "remove" }
+        );
+        let modal = CreateModal::new(modal_id, discord_button_label(title)).components(vec![
+            CreateActionRow::InputText(
+                serenity::builder::CreateInputText::new(InputTextStyle::Short, label, "id")
+                    .placeholder(placeholder)
+                    .min_length(1)
+                    .max_length(20),
+            ),
+        ]);
+        let response = interaction
+            .create_response(ctx, CreateInteractionResponse::Modal(modal))
+            .await;
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        response.context("open message access ID modal")?;
+        return Ok(());
+    }
+
     let result = async {
         interaction
             .create_response(ctx, CreateInteractionResponse::Acknowledge)
@@ -1479,6 +1971,9 @@ async fn handle_claimed_settings_action(
     } else if prefix == 'h' && suffix.is_empty() {
         menu.kind = SettingsKind::Hub;
         menu.page = 0;
+    } else if prefix == 'b' && suffix.is_empty() && is_access_list(menu.kind) {
+        menu.kind = SettingsKind::MessageAccess;
+        menu.page = 0;
     } else if let Some(page) = settings_page_from_action(action) {
         menu.page = page;
     } else if prefix == 'c' {
@@ -1488,7 +1983,64 @@ async fn handle_claimed_settings_action(
             .get(index)
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        if menu.kind == SettingsKind::MessageAccess {
+            let notice = match selected.value.as_str() {
+                "policy:everyone"
+                | "policy:registered-server"
+                | "policy:registered-channels"
+                | "policy:paired" => {
+                    save_message_policy(state, &selected.value[7..]).await?;
+                    format!(
+                        "{}: {}",
+                        state.config.language.text(
+                            "Policy saved",
+                            "정책 저장됨",
+                            "策略已保存",
+                            "ポリシーを保存しました"
+                        ),
+                        selected.label
+                    )
+                }
+                "list:paired" => {
+                    menu.kind = SettingsKind::PairedAccounts;
+                    String::new()
+                }
+                "list:whitelist" => {
+                    menu.kind = SettingsKind::Whitelist;
+                    String::new()
+                }
+                "list:blacklist" => {
+                    menu.kind = SettingsKind::Blacklist;
+                    String::new()
+                }
+                "list:channels" => {
+                    menu.kind = SettingsKind::RegisteredChannels;
+                    String::new()
+                }
+                _ => bail!("unknown message access choice"),
+            };
+            menu.page = 0;
+            let refreshed = build_settings_menu(
+                ctx,
+                state,
+                menu.kind,
+                0,
+                menu.requester_id,
+                menu.connection_generation,
+            )
+            .await?;
+            return update_settings_panel_with_notice(
+                ctx,
+                interaction,
+                state,
+                menu_id,
+                refreshed,
+                &notice,
+            )
+            .await;
+        }
         let fresh = build_settings_menu(
+            ctx,
             state,
             menu.kind,
             menu.page,
@@ -1547,6 +2099,7 @@ async fn handle_claimed_settings_action(
             }
         };
         let refreshed = build_settings_menu(
+            ctx,
             state,
             menu.kind,
             menu.page,
@@ -1568,6 +2121,7 @@ async fn handle_claimed_settings_action(
     }
 
     let refreshed = build_settings_menu(
+        ctx,
         state,
         menu.kind,
         menu.page,
@@ -1845,6 +2399,13 @@ async fn apply_setting_choice(
             ))
         }
         SettingsKind::Hub => bail!("Choose a setting first."),
+        SettingsKind::MessageAccess
+        | SettingsKind::PairedAccounts
+        | SettingsKind::Whitelist
+        | SettingsKind::Blacklist
+        | SettingsKind::RegisteredChannels => {
+            bail!("Message access settings are handled by their own menu.")
+        }
     }
 }
 
@@ -2013,6 +2574,196 @@ pub(crate) async fn handle_component(
     Ok(())
 }
 
+async fn handle_message_access_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<()> {
+    let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
+    if parts.len() != 5 || parts[0] != "codex" || parts[1] != "access" {
+        bail!("unknown message access modal id");
+    }
+    let menu_id = parts[2];
+    let kind = access_list_kind(parts[3]).ok_or_else(|| anyhow!("unknown message access list"))?;
+    let add = match parts[4] {
+        "add" => true,
+        "remove" => false,
+        _ => bail!("unknown message access operation"),
+    };
+    let menu = claim_settings_menu(
+        &mut *state.settings_menus.lock().await,
+        menu_id,
+        interaction.user.id.get(),
+    )
+    .map_err(|_| anyhow!("This settings panel is no longer available to this user"))?;
+    if menu.kind != kind
+        || menu.connection_generation != state.native.current_generation()
+        || menu.thread_id != state.native.thread_id()
+    {
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        interaction
+            .create_response(
+                ctx,
+                CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(state.config.language.text(
+                            "This message-access panel is no longer active. Open settings again.",
+                            "메시지 접근 설정이 만료되었습니다. 설정을 다시 여세요.",
+                            "此消息接收设置已失效。请重新打开设置。",
+                            "メッセージ受信設定の有効期限が切れました。設定を開き直してください。",
+                        ))
+                        .ephemeral(true),
+                ),
+            )
+            .await?;
+        return Ok(());
+    }
+    let raw_components = serde_json::to_value(&interaction.data.components)?;
+    let mut values = serde_json::Map::new();
+    collect_modal_values(&raw_components, &mut values);
+    let raw_id = values.get("id").and_then(Value::as_str).unwrap_or_default();
+    let id = match parse_message_access_id(raw_id) {
+        Ok(id) => id,
+        Err(()) => {
+            release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+            interaction
+                .create_response(
+                    ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(state.config.language.text(
+                                "Enter a nonzero Discord numeric ID.",
+                                "0이 아닌 Discord 숫자 ID를 입력하세요.",
+                                "请输入非零 Discord 数字 ID。",
+                                "0 以外の Discord 数字 ID を入力してください。",
+                            ))
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+    };
+    if let Err(error) = interaction
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await
+    {
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        return Err(error.into());
+    }
+    let update = update_message_access_list(state, kind, add, id).await;
+    if let Err(error) = update {
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        let notice = localized_access_update_error(error.to_string(), state.config.language);
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(notice)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+        return Ok(());
+    }
+    let mut fresh = match build_settings_menu(
+        ctx,
+        state,
+        kind,
+        menu.page,
+        menu.requester_id,
+        menu.connection_generation,
+    )
+    .await
+    {
+        Ok(menu) => menu,
+        Err(error) => {
+            release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new()
+                        .content(format!("{}\n{error:#}", state.config.language.text(
+                    "Saved, but could not refresh the list. Reopen settings to view it.",
+                    "저장했지만 목록을 새로고침하지 못했습니다. 설정을 다시 열어 확인하세요.",
+                    "已保存，但无法刷新列表。请重新打开设置查看。",
+                    "保存しましたが一覧を更新できませんでした。設定を開き直してください。",
+                )))
+                        .allowed_mentions(no_mentions()),
+                )
+                .await?;
+            return Ok(());
+        }
+    };
+    fresh.claimed = false;
+    let (content, rows) = render_settings_menu(menu_id, &fresh, state.config.language);
+    let notice = state.config.language.text(
+        "Account list updated.",
+        "계정 목록을 업데이트했습니다.",
+        "账号列表已更新。",
+        "アカウントリストを更新しました。",
+    );
+    let result = interaction
+        .edit_response(
+            ctx,
+            serenity::builder::EditInteractionResponse::new()
+                .content(format!("{notice}\n\n{content}"))
+                .components(rows)
+                .allowed_mentions(no_mentions()),
+        )
+        .await;
+    if result.is_ok() {
+        state
+            .settings_menus
+            .lock()
+            .await
+            .insert(menu_id.to_owned(), fresh);
+    } else {
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+    }
+    result.context("refresh message access settings panel")?;
+    Ok(())
+}
+
+fn parse_message_access_id(input: &str) -> Result<u64, ()> {
+    let id = input.trim().parse::<u64>().map_err(|_| ())?;
+    if id == 0 {
+        return Err(());
+    }
+    Ok(id)
+}
+
+fn localized_access_update_error(error: String, language: crate::i18n::Language) -> String {
+    if error.contains("already registered") {
+        language
+            .text(
+                "That ID is already in this list.",
+                "해당 ID가 이미 목록에 있습니다.",
+                "该 ID 已在列表中。",
+                "その ID はすでに一覧にあります。",
+            )
+            .to_owned()
+    } else if error.contains("not registered") {
+        language
+            .text(
+                "That ID is not in this list.",
+                "해당 ID가 이 목록에 없습니다.",
+                "该 ID 不在此列表中。",
+                "その ID はこの一覧にありません。",
+            )
+            .to_owned()
+    } else {
+        format!(
+            "{}: {error}",
+            language.text(
+                "Could not save message access settings",
+                "메시지 접근 설정을 저장하지 못했습니다",
+                "无法保存消息接收设置",
+                "メッセージ受信設定を保存できませんでした"
+            )
+        )
+    }
+}
+
 pub(crate) async fn handle_modal(
     ctx: &Context,
     interaction: &ModalInteraction,
@@ -2024,6 +2775,9 @@ pub(crate) async fn handle_modal(
         interaction.user.id,
         state.config.language,
     )?;
+    if interaction.data.custom_id.starts_with("codex:access:") {
+        return handle_message_access_modal(ctx, interaction, &state).await;
+    }
     let Some(key) = interaction.data.custom_id.strip_prefix("codex:input:") else {
         bail!("알 수 없는 modal id")
     };
@@ -2247,6 +3001,7 @@ pub(crate) async fn publish_server_request(
         crate::discord::ReplyTarget {
             channel_id: message.channel_id,
             message_id: message.id,
+            source_guild: None,
         },
     );
     if let Some(checks) = &state.installation_checks {
@@ -6983,6 +7738,169 @@ mod display_tests {
                 "voice-join"
             ]
         );
+    }
+
+    #[test]
+    fn message_access_policy_labels_and_keys_cover_all_four_modes() {
+        use crate::i18n::Language;
+        let policies = [
+            (
+                MessagePolicy::Everyone,
+                "everyone",
+                "Everyone, including DMs",
+                "DM을 포함한 모든 사용자",
+                "所有人（包括私信）",
+                "DMを含む全員",
+            ),
+            (
+                MessagePolicy::RegisteredServer,
+                "registered-server",
+                "All members in registered server",
+                "등록 서버의 모든 구성원",
+                "已登记服务器中的所有成员",
+                "登録サーバーの全メンバー",
+            ),
+            (
+                MessagePolicy::RegisteredChannels,
+                "registered-channels",
+                "Registered channels",
+                "등록 채널",
+                "已登记频道",
+                "登録チャンネル",
+            ),
+            (
+                MessagePolicy::Paired,
+                "paired",
+                "Paired accounts",
+                "페어링 계정",
+                "已配对账号",
+                "ペアリング済みアカウント",
+            ),
+        ];
+        for (policy, key, en, ko, zh, ja) in policies {
+            assert_eq!(message_policy_key(policy), key);
+            for (language, expected) in [
+                (Language::English, en),
+                (Language::Korean, ko),
+                (Language::Chinese, zh),
+                (Language::Japanese, ja),
+            ] {
+                assert_eq!(message_policy_label(policy, language), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn message_access_id_input_accepts_only_nonzero_discord_ids() {
+        for input in ["123456789012345678", " 42 "] {
+            assert!(parse_message_access_id(input).unwrap() > 0);
+        }
+        for input in ["", "0", " 0 ", "-1", "account-name", "18446744073709551616"] {
+            assert!(parse_message_access_id(input).is_err());
+        }
+    }
+
+    #[test]
+    fn message_access_list_pages_render_first_and_last_rows_once_with_scoped_controls() {
+        use crate::i18n::Language;
+        let mut menu = menu_fixture();
+        menu.kind = SettingsKind::Whitelist;
+        menu.choices = (1..=25)
+            .map(|id| SettingsChoice {
+                value: id.to_string(),
+                label: if id == 1 {
+                    "Member Nickname".to_owned()
+                } else if id == 2 {
+                    "Unavailable in this server".to_owned()
+                } else {
+                    format!("Member {id}")
+                },
+            })
+            .collect();
+        menu.current_value = None;
+        menu.page = 0;
+        let (first, first_rows) = render_settings_menu("access-menu", &menu, Language::English);
+        assert!(first.contains("Member Nickname (ID: 1)"));
+        assert!(first.contains("Unavailable in this server (ID: 2)"));
+        assert!(first.contains("Member 10 (ID: 10)"));
+        assert!(!first.contains("Member 11 (ID: 11)"));
+        assert!(!first.contains("ID: 1 (ID: 1)"));
+        let payload = serde_json::to_value(first_rows).unwrap();
+        let controls = payload.as_array().unwrap().last().unwrap()["components"]
+            .as_array()
+            .unwrap();
+        let ids = controls
+            .iter()
+            .map(|button| button["custom_id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"codex:settings:access-menu:a"));
+        assert!(ids.contains(&"codex:settings:access-menu:r"));
+        assert!(ids.contains(&"codex:settings:access-menu:b"));
+        assert!(!ids.contains(&"codex:settings:access-menu:x"));
+
+        menu.page = 2;
+        let (last, rows) = render_settings_menu("access-menu", &menu, Language::English);
+        assert!(last.contains("Member 21 (ID: 21)"));
+        assert!(last.contains("Member 25 (ID: 25)"));
+        assert!(!last.contains("Member 20 (ID: 20)"));
+        let controls = serde_json::to_value(rows).unwrap();
+        let buttons = controls.as_array().unwrap().last().unwrap()["components"]
+            .as_array()
+            .unwrap();
+        assert!(
+            buttons
+                .iter()
+                .any(|button| button["custom_id"] == "codex:settings:access-menu:p1")
+        );
+    }
+
+    #[test]
+    fn policy_selection_matches_the_emitted_choice_value() {
+        let mut access = MessageAccess::default();
+        access.policy = MessagePolicy::RegisteredChannels;
+        let current_value = format!("policy:{}", message_policy_key(access.policy));
+        let choice_value = format!(
+            "policy:{}",
+            message_policy_key(MessagePolicy::RegisteredChannels)
+        );
+        assert_eq!(current_value, choice_value);
+    }
+
+    #[test]
+    fn account_display_name_tracks_current_server_nickname_precedence() {
+        assert_eq!(
+            member_display_name(Some("Nick"), Some("Global"), "User"),
+            "Nick"
+        );
+        assert_eq!(member_display_name(None, Some("Global"), "User"), "Global");
+        assert_eq!(member_display_name(None, None, "User"), "User");
+        assert_eq!(
+            member_display_name(Some("New Nick"), Some("Global"), "User"),
+            "New Nick"
+        );
+    }
+
+    #[test]
+    fn message_access_list_edits_add_and_remove_ids_without_touching_other_lists_or_policy() {
+        let mut access = MessageAccess {
+            policy: MessagePolicy::RegisteredServer,
+            paired_user_ids: vec![11],
+            whitelist: vec![22],
+            blacklist: vec![33],
+            channel_ids: vec![44],
+        };
+        apply_message_access_list_edit(&mut access, SettingsKind::Whitelist, true, 55).unwrap();
+        assert_eq!(access.whitelist, vec![22, 55]);
+        assert_eq!(access.paired_user_ids, vec![11]);
+        assert_eq!(access.blacklist, vec![33]);
+        assert_eq!(access.channel_ids, vec![44]);
+        assert_eq!(access.policy, MessagePolicy::RegisteredServer);
+        apply_message_access_list_edit(&mut access, SettingsKind::Whitelist, false, 22).unwrap();
+        assert_eq!(access.whitelist, vec![55]);
+        assert_eq!(access.paired_user_ids, vec![11]);
+        assert_eq!(access.blacklist, vec![33]);
+        assert_eq!(access.channel_ids, vec![44]);
+        assert_eq!(access.policy, MessagePolicy::RegisteredServer);
     }
 
     fn menu_fixture() -> SettingsMenuState {

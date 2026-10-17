@@ -33,6 +33,17 @@ impl VoiceInputPhase {
         home_channel_id: u64,
         mentioned: bool,
     ) -> InputRoute {
+        self.route_registered(channel_id, home_channel_id, mentioned, false, false)
+    }
+
+    pub(crate) fn route_registered(
+        &self,
+        channel_id: u64,
+        home_channel_id: u64,
+        mentioned: bool,
+        registered_channel: bool,
+        direct_message: bool,
+    ) -> InputRoute {
         if let Self::Active {
             call_id,
             thread_id,
@@ -47,7 +58,7 @@ impl VoiceInputPhase {
             }
         }
 
-        if channel_id == home_channel_id || mentioned {
+        if channel_id == home_channel_id || mentioned || registered_channel || direct_message {
             InputRoute::Ordinary
         } else {
             InputRoute::Ignore
@@ -87,6 +98,40 @@ impl VoiceInputGate {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn registered_channels_and_admitted_direct_messages_enter_the_normal_queue() {
+        let idle = VoiceInputPhase::Idle;
+        assert_eq!(
+            idle.route_registered(90, 10, false, false, true),
+            InputRoute::Ordinary
+        );
+        assert_eq!(
+            idle.route_registered(90, 10, false, true, false),
+            InputRoute::Ordinary
+        );
+        assert_eq!(
+            idle.route_registered(90, 10, false, false, false),
+            InputRoute::Ignore
+        );
+        assert_eq!(
+            idle.route_registered(90, 10, true, false, false),
+            InputRoute::Ordinary
+        );
+        let active = VoiceInputPhase::Active {
+            call_id: Uuid::new_v4(),
+            thread_id: "same-thread".into(),
+            transcript_channel_id: 50,
+        };
+        assert_eq!(
+            active.route_registered(90, 10, false, false, true),
+            InputRoute::Ordinary
+        );
+        assert!(matches!(
+            active.route_registered(50, 10, false, true, false),
+            InputRoute::Voice { .. }
+        ));
+    }
 
     #[test]
     fn routes_voice_thread_before_home_or_mention_rules() {

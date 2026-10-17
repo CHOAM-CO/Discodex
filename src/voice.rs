@@ -9546,6 +9546,7 @@ mod tests {
             home_channel_id: 21,
             transcript_channel_id: 22,
             operator_ids: vec![30],
+            message_access: None,
             voice_channel_ids: vec![40],
             codex_path: "codex".into(),
             codex_home: None,
