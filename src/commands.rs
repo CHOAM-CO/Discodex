@@ -800,7 +800,7 @@ async fn build_settings_menu(
                     .get("effort")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                let current = choice_current_label(&choices, selected.as_deref(), language);
+                let current = effort_current_label(&choices, thread.get("effort"), language);
                 (selected, current, choices)
             } else {
                 let mut choices = vec![SettingsChoice {
@@ -985,6 +985,15 @@ fn service_tier_settings_choice(
     })
 }
 
+fn effort_current_label(
+    choices: &[SettingsChoice],
+    effort: Option<&Value>,
+    language: crate::i18n::Language,
+) -> String {
+    // A null native value can be unset or unavailable; do not invent a default.
+    choice_current_label(choices, effort.and_then(Value::as_str), language)
+}
+
 fn choice_current_label(
     choices: &[SettingsChoice],
     current: Option<&str>,
@@ -1145,7 +1154,7 @@ fn render_settings_menu(
         }
         controls.push(
             CreateButton::new(format!("codex:settings:{menu_id}:h"))
-                .label(language.text("Settings", "설정", "设置", "設定"))
+                .label(language.text("Back", "뒤로가기", "返回", "戻る"))
                 .style(ButtonStyle::Primary),
         );
         if pages > 1 {
@@ -1160,11 +1169,13 @@ fn render_settings_menu(
             );
         }
     }
-    controls.push(
-        CreateButton::new(format!("codex:settings:{menu_id}:x"))
-            .label(language.text("Exit", "나가기", "退出", "閉じる"))
-            .style(ButtonStyle::Secondary),
-    );
+    if menu.kind == SettingsKind::Hub {
+        controls.push(
+            CreateButton::new(format!("codex:settings:{menu_id}:x"))
+                .label(language.text("Exit", "나가기", "退出", "閉じる"))
+                .style(ButtonStyle::Secondary),
+        );
+    }
     rows.push(CreateActionRow::Buttons(controls));
     (content, rows)
 }
@@ -3481,6 +3492,11 @@ fn format_settings_with_language(settings: &Value, language: crate::i18n::Langua
                 }
                 let display = if *key == "activePermissionProfile" {
                     format_active_permission_profile_with_language(value, language)
+                } else if *key == "effort" {
+                    let choices = effort_settings_choice(value, language)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    Some(effort_current_label(&choices, Some(value), language))
                 } else if *key == "sandboxPolicy" {
                     Some(format_sandbox_policy_with_language(value, language))
                 } else if *key == "approvalPolicy" {
@@ -6671,16 +6687,12 @@ mod display_tests {
                 let nav = payload.as_array().unwrap().last().unwrap()["components"]
                     .as_array()
                     .unwrap();
-                assert_eq!(
-                    nav.last().unwrap()["custom_id"],
-                    "codex:settings:menu-regression:x"
-                );
                 if pages == 1 {
-                    assert_eq!(nav.len(), 2);
+                    assert_eq!(nav.len(), 1);
                     assert_eq!(nav[0]["custom_id"], "codex:settings:menu-regression:h");
                     continue;
                 }
-                assert_eq!(nav.len(), 4);
+                assert_eq!(nav.len(), 3);
                 for (button, expected_page, disabled) in [
                     (&nav[0], page.saturating_sub(1), page == 0),
                     (&nav[2], (page + 1).min(pages - 1), page + 1 >= pages),
@@ -6696,6 +6708,39 @@ mod display_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn current_effort_uses_native_value_without_inventing_a_default() {
+        use crate::i18n::Language;
+        let choices = ["low", "high"]
+            .map(|value| effort_settings_choice(&json!(value), Language::Korean).unwrap());
+        assert_eq!(
+            effort_current_label(&choices, Some(&json!("high")), Language::Korean),
+            "높음"
+        );
+        assert_eq!(
+            effort_current_label(&choices, Some(&Value::Null), Language::Korean),
+            "확인할 수 없음"
+        );
+        assert_eq!(
+            effort_current_label(&choices, None, Language::Korean),
+            "확인할 수 없음"
+        );
+        assert_eq!(
+            format_settings_with_language(&json!({"effort":"high"}), Language::Korean),
+            "추론 강도: 높음"
+        );
+        let mut menu = menu_fixture();
+        menu.kind = SettingsKind::Effort;
+        menu.choices = choices.to_vec();
+        menu.current_value = Some("high".to_owned());
+        menu.current = effort_current_label(&menu.choices, Some(&json!("high")), Language::Korean);
+        let (content, rows) = render_settings_menu("current-effort", &menu, Language::Korean);
+        assert!(content.contains("현재: 높음"));
+        let payload = serde_json::to_value(rows).unwrap();
+        assert_eq!(payload[0]["components"][0]["label"], "낮음");
+        assert_eq!(payload[0]["components"][1]["label"], "✓ 높음");
     }
 
     #[test]
@@ -6799,11 +6844,11 @@ mod display_tests {
     #[test]
     fn settings_controls_follow_the_selected_language_on_every_panel() {
         use crate::i18n::Language;
-        for (language, exit, home, previous, next) in [
-            (Language::English, "Exit", "Settings", "Previous", "Next"),
-            (Language::Korean, "나가기", "설정", "이전", "다음"),
-            (Language::Chinese, "退出", "设置", "上一页", "下一页"),
-            (Language::Japanese, "閉じる", "設定", "前へ", "次へ"),
+        for (language, exit, back, previous, next) in [
+            (Language::English, "Exit", "Back", "Previous", "Next"),
+            (Language::Korean, "나가기", "뒤로가기", "이전", "다음"),
+            (Language::Chinese, "退出", "返回", "上一页", "下一页"),
+            (Language::Japanese, "閉じる", "戻る", "前へ", "次へ"),
         ] {
             for kind in [
                 SettingsKind::Hub,
@@ -6838,15 +6883,21 @@ mod display_tests {
                     let expected = if kind == SettingsKind::Hub {
                         vec![exit]
                     } else if count <= SETTINGS_PAGE_SIZE {
-                        vec![home, exit]
+                        vec![back]
                     } else {
-                        vec![previous, home, next, exit]
+                        vec![previous, back, next]
                     };
                     assert_eq!(labels, expected);
-                    assert_eq!(
-                        controls.last().unwrap()["custom_id"],
-                        "codex:settings:localized:x"
-                    );
+                    let ids = controls
+                        .iter()
+                        .map(|button| button["custom_id"].as_str().unwrap())
+                        .collect::<Vec<_>>();
+                    if kind == SettingsKind::Hub {
+                        assert_eq!(ids, ["codex:settings:localized:x"]);
+                    } else {
+                        assert!(ids.contains(&"codex:settings:localized:h"));
+                        assert!(!ids.contains(&"codex:settings:localized:x"));
+                    }
                 }
             }
         }

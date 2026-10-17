@@ -1554,13 +1554,11 @@ fn thread_state_summary(response: &Value) -> Value {
         "serviceTier",
         "permissionProfile",
         "activePermissionProfile",
-        "effort",
         "sandboxPolicy",
         "collaborationMode",
         "approvalPolicy",
         "sandbox",
         "approvalsReviewer",
-        "reasoningEffort",
         "status",
         "turns",
     ];
@@ -1569,6 +1567,17 @@ fn thread_state_summary(response: &Value) -> Value {
         if let Some(value) = thread.get(field).or_else(|| response.get(field)) {
             summary.insert(field.to_owned(), value.clone());
         }
+    }
+    // Thread snapshots use reasoningEffort; settings notifications use effort.
+    // Keep one internal field so refreshes and UI consumers see the latest value.
+    // Preserve explicit null; only an absent field preserves cached state.
+    if let Some(effort) = thread
+        .get("reasoningEffort")
+        .or_else(|| response.get("reasoningEffort"))
+        .or_else(|| thread.get("effort"))
+        .or_else(|| response.get("effort"))
+    {
+        summary.insert("effort".to_owned(), effort.clone());
     }
     Value::Object(summary)
 }
@@ -2034,6 +2043,45 @@ mod thread_state_tests {
                 .is_none()
         );
         assert_eq!(state_observation_order(&json!({})), None);
+    }
+
+    #[test]
+    fn native_effort_aliases_share_one_current_setting_across_refreshes() {
+        let mut state = thread_state_summary(&json!({
+            "thread": {"id":"thread-1"}, "reasoningEffort":"high"
+        }));
+        assert_eq!(state["effort"], "high");
+        assert!(state.get("reasoningEffort").is_none());
+        merge_thread_state(
+            &mut state,
+            &thread_state_summary(&json!({"thread":{"id":"thread-1"}})),
+        );
+        assert_eq!(state["effort"], "high");
+        merge_thread_state(
+            &mut state,
+            &thread_state_summary(&json!({"thread":{"effort":"low"}})),
+        );
+        assert_eq!(state["effort"], "low");
+        merge_thread_state(
+            &mut state,
+            &thread_state_summary(&json!({"thread":{"id":"thread-1", "reasoningEffort":"medium"}})),
+        );
+        assert_eq!(state["effort"], "medium");
+        for response in [
+            json!({"reasoningEffort":null, "effort":"high"}),
+            json!({"thread":{"reasoningEffort":null, "effort":"high"}}),
+        ] {
+            merge_thread_state(&mut state, &thread_state_summary(&response));
+            assert_eq!(state["effort"], Value::Null);
+        }
+        assert_eq!(
+            thread_state_summary(&json!({"effort":"low"}))["effort"],
+            "low"
+        );
+        assert_eq!(
+            thread_state_summary(&json!({"reasoningEffort":"high", "effort":"low"}))["effort"],
+            "high"
+        );
     }
 
     #[test]
