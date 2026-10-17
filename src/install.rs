@@ -25,6 +25,8 @@ use std::time::{Duration, Instant};
 use crate::config::{Config, InputMode};
 use crate::i18n::Language;
 
+pub mod updates;
+
 const RELEASES_API: &str = "https://api.github.com/repos/openai/codex/releases";
 const APP_NAME: &str = "discodex";
 const SERVICE_NAME: &str = "discodex";
@@ -276,7 +278,10 @@ fn prepare_project_directory(path: &Path) -> Result<PathBuf> {
     let canonical = path
         .canonicalize()
         .with_context(|| format!("resolve Codex project/work directory {}", path.display()))?;
-    ensure!(canonical.is_dir(), "Codex project/work path is not a directory");
+    ensure!(
+        canonical.is_dir(),
+        "Codex project/work path is not a directory"
+    );
     Ok(canonical)
 }
 
@@ -2745,9 +2750,8 @@ pub fn update_mac(args: &[String]) -> Result<()> {
 #[cfg(all(test, target_os = "macos"))]
 mod mac_update_policy_tests {
     use super::{
-        MacUpdateArgs, mac_fda_guidance_answer, mac_worker_path_unchanged,
-        parse_mac_update_args, require_mac_fda_interactive_terminal_state,
-        validate_mac_update_migration,
+        MacUpdateArgs, mac_fda_guidance_answer, mac_worker_path_unchanged, parse_mac_update_args,
+        require_mac_fda_interactive_terminal_state, validate_mac_update_migration,
     };
     use std::path::PathBuf;
 
@@ -2761,8 +2765,14 @@ mod mac_update_policy_tests {
         std::fs::write(&old_worker, b"old worker").unwrap();
         std::fs::write(&new_worker, b"new worker").unwrap();
 
-        assert!(mac_worker_path_unchanged(Some(&old_worker), Some(&old_worker)));
-        assert!(!mac_worker_path_unchanged(Some(&old_worker), Some(&new_worker)));
+        assert!(mac_worker_path_unchanged(
+            Some(&old_worker),
+            Some(&old_worker)
+        ));
+        assert!(!mac_worker_path_unchanged(
+            Some(&old_worker),
+            Some(&new_worker)
+        ));
         assert!(!mac_worker_path_unchanged(None, Some(&new_worker)));
     }
 
@@ -5166,8 +5176,16 @@ fn default_permission_profile_id(entries: &[serde_json::Value]) -> Option<String
     entries
         .iter()
         .find(|item| permission_profile_is_canonical_full_access(item))
-        .or_else(|| entries.iter().find(|item| permission_profile_is_full_access(item)))
-        .or_else(|| entries.iter().find(|item| permission_profile_is_allowed(item)))
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|item| permission_profile_is_full_access(item))
+        })
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|item| permission_profile_is_allowed(item))
+        })
         .and_then(|item| item.get("id").and_then(serde_json::Value::as_str))
         .map(str::to_owned)
 }
@@ -5516,9 +5534,11 @@ mod tests {
     fn project_directory_is_created_and_canonicalized() {
         let root = tempfile::tempdir().expect("temporary parent directory");
         let selected = root.path().join("new").join("nested").join("project");
-        let prepared =
-            prepare_project_directory(&selected).expect("prepare project directory");
-        assert_eq!(prepared, selected.canonicalize().expect("canonical project path"));
+        let prepared = prepare_project_directory(&selected).expect("prepare project directory");
+        assert_eq!(
+            prepared,
+            selected.canonicalize().expect("canonical project path")
+        );
     }
 
     #[test]

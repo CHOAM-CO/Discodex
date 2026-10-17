@@ -398,6 +398,34 @@ pub(crate) struct QueuedInput {
     pub delivery: QueueDelivery,
     #[serde(default)]
     pub submission_generation: u64,
+    #[serde(default)]
+    pub voice_inbox: Option<VoiceInboxEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct VoiceInboxEntry {
+    pub author: String,
+    pub author_id: u64,
+    pub channel_name: String,
+    pub preview: String,
+    #[serde(default)]
+    pub call_id: Option<String>,
+    #[serde(default)]
+    pub read_in_flight: bool,
+    #[serde(default)]
+    pub attachment_download_in_flight: bool,
+    #[serde(default)]
+    pub pending_attachments: Vec<VoiceAttachmentSource>,
+    pub read: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct VoiceAttachmentSource {
+    pub attachment_id: u64,
+    pub filename: String,
+    pub url: String,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -413,6 +441,7 @@ pub(crate) enum QueueDelivery {
 
 pub(crate) struct BridgeState {
     pub config: Arc<Config>,
+    pub updates: Arc<crate::discord_updates::UpdateController>,
     pub installation_checks: Option<Arc<crate::installation_check::Checks>>,
     pub native: Native,
     pub voice: Arc<VoiceBridge>,
@@ -423,6 +452,8 @@ pub(crate) struct BridgeState {
     // Access only while current_turn is held, with the active-turn state update.
     turn_observation_orders: Mutex<HashMap<String, (u64, u64)>>,
     pub queued_inputs: Mutex<VecDeque<QueuedInput>>,
+    /// Successful voice inbox tool results await the matching terminal turn event.
+    voice_inbox_turn_outcomes: Mutex<HashMap<(u64, String, String), Vec<VoiceInboxToolOutcome>>>,
     pub queue_path: PathBuf,
     pub bot_user_id: Mutex<Option<UserId>>,
     /// clientUserMessageId -> source Discord message. Native user item events confirm
@@ -477,6 +508,7 @@ impl EventHandler for Handler {
         let Some(state) = state_from_context(&ctx).await else {
             return;
         };
+        let mut activity = state.updates.admission();
         if msg.guild_id.map(|id| id.get()) != Some(state.config.guild_id) {
             return;
         }
@@ -502,16 +534,77 @@ impl EventHandler for Handler {
         if content.trim().is_empty() && message_attachments.is_empty() {
             return;
         }
+        activity.mark_activity();
         let input = message_input(&msg, home_channel, &ctx.http).await;
         let target = ReplyTarget {
             channel_id: msg.channel_id,
             message_id: msg.id,
         };
+        if matches!(route, crate::voice_input::InputRoute::Ordinary) {
+            let phase = state.voice.input_gate.state.lock().await.clone();
+            if let crate::voice_input::VoiceInputPhase::Active {
+                call_id, thread_id, ..
+            } = phase
+            {
+                match enqueue_voice_inbox(
+                    &state,
+                    &msg,
+                    &input,
+                    &thread_id,
+                    call_id,
+                    &content,
+                    &message_attachments,
+                    &ctx.http,
+                )
+                .await
+                {
+                    Ok(attachments_pending) => {
+                        let notice = notify_voice_inbox(&state, &msg, call_id, &thread_id).await;
+                        if let Err(error) = notice {
+                            warn!(%error, message_id = %msg.id, "could not notify active voice call about queued inbox message");
+                        }
+                        if attachments_pending {
+                            let content = state.config.language.text(
+                                "Your message was saved, but one or more attachments could not be downloaded yet.",
+                                "메시지는 저장했지만 첨부 파일을 아직 다운로드하지 못했습니다.",
+                                "消息已保存，但有一个或多个附件暂时无法下载。",
+                                "メッセージは保存されましたが、添付ファイルをまだダウンロードできませんでした。",
+                            );
+                            let _ = target
+                                .channel_id
+                                .send_message(&ctx.http, assistant_reply_message(&target, content))
+                                .await;
+                        }
+                    }
+                    Err(error) => {
+                        warn!(%error, message_id = %msg.id, "could not persist voice inbox message");
+                        let content = state.config.language.text(
+                            "Could not save this message to the voice inbox. Please try again.",
+                            "이 메시지를 음성 받은편지함에 저장하지 못했습니다. 다시 시도해 주세요.",
+                            "无法将此消息保存到语音收件箱。请重试。",
+                            "このメッセージを音声受信トレイに保存できませんでした。もう一度お試しください。",
+                        );
+                        let _ = target
+                            .channel_id
+                            .send_message(&ctx.http, assistant_reply_message(&target, content))
+                            .await;
+                    }
+                }
+                if let Err(error) =
+                    submit_next_queued_input(&state, &state.native.thread_id()).await
+                {
+                    warn!(%error, "failed to dispatch voice inbox item after a call transition");
+                }
+                return;
+            }
+        }
         let submission = async {
             if let crate::voice_input::InputRoute::Voice { call_id, thread_id } = &route {
                 let mut attachments = Vec::with_capacity(message_attachments.len());
                 for attachment in &message_attachments {
-                    attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
+                    attachments.push(
+                        crate::attachments::download_attachment(&state.config, attachment).await?,
+                    );
                 }
                 if attachments.is_empty() {
                     return submit_voice_input(&state, &input, &target, *call_id, thread_id).await;
@@ -533,10 +626,13 @@ impl EventHandler for Handler {
             // Retrieval tools return metadata and never invoke this ingress handler.
             let mut attachments = Vec::with_capacity(message_attachments.len());
             for attachment in &message_attachments {
-                attachments.push(crate::attachments::download_attachment(&state.config, attachment).await?);
+                attachments.push(
+                    crate::attachments::download_attachment(&state.config, attachment).await?,
+                );
             }
             submit_input(&state, &input, &attachments, target.clone(), None).await
-        }.await;
+        }
+        .await;
         match submission {
             Ok(()) => {}
             Err(error) => {
@@ -589,10 +685,39 @@ impl EventHandler for Handler {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: serenity::all::Interaction) {
-        let language = state_from_context(&ctx)
-            .await
-            .map(|state| state.config.language.clone())
-            .unwrap_or(crate::i18n::Language::English);
+        let state = state_from_context(&ctx).await;
+        let _activity = state.as_ref().map(|state| state.updates.activity());
+        let language = state
+            .as_ref()
+            .map(|state| state.config.language)
+            .unwrap_or_default();
+        if state.as_ref().is_some_and(|state| state.updates.applying()) {
+            let text = language.text(
+                "Discodex is updating. Please retry this command after it reconnects. Chat messages are saved.",
+                "Discodex 업데이트 중입니다. 다시 연결되면 명령을 재시도해 주세요. 채팅 메시지는 보관합니다.",
+                "Discodex 正在更新，请重新连接后重试命令。聊天消息会被保存。",
+                "Discodexを更新中です。再接続後にコマンドを再試行してください。チャットメッセージは保存されます。"
+            );
+            let response = serenity::all::CreateInteractionResponse::Message(
+                serenity::all::CreateInteractionResponseMessage::new()
+                    .content(text)
+                    .ephemeral(true)
+                    .allowed_mentions(empty_mentions()),
+            );
+            match interaction {
+                serenity::all::Interaction::Command(command) => {
+                    let _ = command.create_response(&ctx, response).await;
+                }
+                serenity::all::Interaction::Component(component) => {
+                    let _ = component.create_response(&ctx, response).await;
+                }
+                serenity::all::Interaction::Modal(modal) => {
+                    let _ = modal.create_response(&ctx, response).await;
+                }
+                _ => {}
+            }
+            return;
+        }
         match interaction {
             serenity::all::Interaction::Command(command) => {
                 if let Err(error) = commands::handle(&ctx, &command).await {
@@ -696,6 +821,7 @@ pub async fn run(
     config: Config,
     native: Native,
     shutdown: tokio::sync::oneshot::Receiver<std::io::Result<()>>,
+    config_path: PathBuf,
 ) -> anyhow::Result<()> {
     let config = Arc::new(config);
     let token = config.token().context("Discord bot token is unavailable")?;
@@ -717,11 +843,41 @@ pub async fn run(
     let input_mode = load_input_mode(&input_mode_path)?.unwrap_or(config.input_mode);
     let mut queued_inputs = load_queue(&config.state_dir.join("discord-inputs.json"))?;
     let changed_queue = recover_submitting_inputs(&mut queued_inputs);
+    let mut changed_queue = changed_queue;
+    if queued_inputs.iter().any(|item| {
+        item.voice_inbox
+            .as_ref()
+            .is_some_and(|entry| entry.read_in_flight || entry.attachment_download_in_flight)
+    }) {
+        let thread_id = native.thread_id();
+        match native
+            .request(
+                "thread/read",
+                serde_json::json!({"threadId":thread_id,"includeTurns":true}),
+            )
+            .await
+        {
+            Ok(history) if complete_thread_history_matches(&history, &thread_id) => {
+                changed_queue |= reconcile_voice_inbox_from_history(&mut queued_inputs, &history);
+            }
+            Ok(_) => warn!(
+                "native returned incomplete or mismatched startup history; preserving unread inbox messages"
+            ),
+            Err(error) => {
+                warn!(%error, "could not reconcile pending voice inbox lookups at startup")
+            }
+        }
+        changed_queue |= clear_voice_inbox_runtime_flags(&mut queued_inputs, &thread_id);
+    }
     let queue_path = config.state_dir.join("discord-inputs.json");
     if changed_queue {
         save_queue(&queue_path, &queued_inputs)?;
     }
     let state = Arc::new(BridgeState {
+        updates: Arc::new(crate::discord_updates::UpdateController::new(
+            config.state_dir.clone(),
+            config_path,
+        )?),
         input_mode: RwLock::new(input_mode),
         input_mode_path,
         config: config.clone(),
@@ -732,6 +888,7 @@ pub async fn run(
         active_turns: Mutex::new(HashMap::new()),
         turn_observation_orders: Mutex::new(HashMap::new()),
         queued_inputs: Mutex::new(queued_inputs),
+        voice_inbox_turn_outcomes: Mutex::new(HashMap::new()),
         queue_path,
         bot_user_id: Mutex::new(None),
         input_targets: Mutex::new(HashMap::new()),
@@ -767,8 +924,11 @@ pub async fn run(
         let state = tool_state.upgrade();
         let tools = discord_tools.clone();
         Box::pin(async move {
-            let _state =
+            let state =
                 state.ok_or_else(|| anyhow::anyhow!("Discord bridge is no longer available"))?;
+            if name == "discord_read_voice_inbox" {
+                return read_voice_inbox(&state, &arguments).await;
+            }
             tools.invoke(&name, arguments).await
         })
     }));
@@ -810,6 +970,19 @@ pub async fn run(
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         warn!(count, "native event receiver lagged");
                         record_typing_observation_floor(&event_state).await;
+                        // Re-read authoritative thread status after losing events. If
+                        // the thread is idle, apply_thread_snapshot also reconciles any
+                        // persisted inbox MCP results before attempting the FIFO drain.
+                        match event_state.native.refresh_thread_state().await {
+                            Ok(thread) => {
+                                let params = serde_json::json!({
+                                    "threadId": event_state.native.thread_id(),
+                                    "thread": thread,
+                                });
+                                apply_thread_snapshot(&event_state, &params).await;
+                            }
+                            Err(error) => warn!(%error, "failed to refresh native thread state after event lag"),
+                        }
                         if let Err(error) = commands::reconcile_pending_requests(&event_http, &event_state).await {
                             warn!(%error, "failed to reconcile pending Discord requests after event lag")
                         }
@@ -827,6 +1000,13 @@ pub async fn run(
         run_typing_indicator(typing_state, typing_http, typing_stop_rx).await;
     });
 
+    let (update_stop_tx, update_stop_rx) = tokio::sync::oneshot::channel();
+    let update_state = state.clone();
+    let update_http = cleanup_http.clone();
+    let update_task = tokio::spawn(async move {
+        crate::discord_updates::run(update_state, update_http, update_stop_rx).await;
+    });
+
     let result = tokio::select! {
         result = client.start() => result.map_err(anyhow::Error::from),
         signal = shutdown => {
@@ -840,10 +1020,15 @@ pub async fn run(
             }
         }
     };
+    client.shard_manager.shutdown_all().await;
+    let _ = update_stop_tx.send(());
+    update_task.abort();
+    let _ = update_task.await;
     let _ = event_stop_tx.send(());
     let _ = typing_stop_tx.send(());
     let _ = event_task.await;
     let _ = typing_task.await;
+    state.updates.wait_for_handlers().await;
     commands::close_pending_requests(cleanup_http.as_ref(), &state).await;
     let voice_cleanup = state.voice.leave(GuildId::new(state.config.guild_id)).await;
     result?;
@@ -1036,6 +1221,760 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
     crate::attachments::format_ingress_message(&msg.content, &forwarded, source)
 }
 
+async fn enqueue_voice_inbox(
+    state: &BridgeState,
+    msg: &Message,
+    input: &str,
+    thread_id: &str,
+    call_id: uuid::Uuid,
+    preview_body: &str,
+    message_attachments: &[serenity::all::Attachment],
+    http: &serenity::http::Http,
+) -> anyhow::Result<bool> {
+    {
+        let queue = state.queued_inputs.lock().await;
+        if let Some(existing) = queue.iter().find(|item| item.message_id == msg.id.get()) {
+            return Ok(existing
+                .voice_inbox
+                .as_ref()
+                .is_some_and(|entry| !entry.pending_attachments.is_empty()));
+        }
+    }
+    let channel_name = http
+        .get_channel(msg.channel_id)
+        .await
+        .ok()
+        .and_then(|channel| channel.guild().map(|channel| channel.name))
+        .unwrap_or_else(|| format!("channel-{}", msg.channel_id.get()));
+    let pending_attachments = message_attachments
+        .iter()
+        .map(|attachment| VoiceAttachmentSource {
+            attachment_id: attachment.id.get(),
+            filename: attachment.filename.clone(),
+            url: attachment.url.clone(),
+            last_error: None,
+        })
+        .collect::<Vec<_>>();
+    let author = msg
+        .member
+        .as_ref()
+        .and_then(|member| member.nick.clone())
+        .or_else(|| msg.author.global_name.clone())
+        .unwrap_or_else(|| msg.author.name.clone());
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    if let Some(existing) = staged.iter().find(|item| item.message_id == msg.id.get()) {
+        return Ok(existing
+            .voice_inbox
+            .as_ref()
+            .is_some_and(|entry| !entry.pending_attachments.is_empty()));
+    }
+    staged.push_back(QueuedInput {
+        text: input.to_owned(),
+        attachments: Vec::new(),
+        channel_id: msg.channel_id.get(),
+        message_id: msg.id.get(),
+        native_thread_id: thread_id.to_owned(),
+        delivery: QueueDelivery::Queued,
+        submission_generation: state.native.current_generation(),
+        voice_inbox: Some(VoiceInboxEntry {
+            author,
+            author_id: msg.author.id.get(),
+            channel_name,
+            preview: truncate_voice_preview(preview_body, 80),
+            call_id: Some(call_id.to_string()),
+            read_in_flight: false,
+            attachment_download_in_flight: false,
+            pending_attachments,
+            read: false,
+        }),
+    });
+    save_queue(&state.queue_path, &staged)?;
+    *queue = staged;
+    drop(queue);
+    match download_pending_voice_attachments(state, msg.id.get()).await {
+        Ok(pending) => Ok(pending),
+        Err(error) => {
+            warn!(%error, message_id = %msg.id, "voice inbox message persisted; attachment download will be retried later");
+            Ok(true)
+        }
+    }
+}
+
+async fn download_pending_voice_attachments(
+    state: &BridgeState,
+    message_id: u64,
+) -> anyhow::Result<bool> {
+    match download_pending_voice_attachments_inner(state, message_id).await {
+        Ok(pending) => Ok(pending),
+        Err(error) => {
+            let _ = clear_attachment_download_reservation(state, message_id).await;
+            Err(error)
+        }
+    }
+}
+
+async fn clear_attachment_download_reservation(
+    state: &BridgeState,
+    message_id: u64,
+) -> anyhow::Result<()> {
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    if let Some(entry) = staged
+        .iter_mut()
+        .find(|item| item.message_id == message_id)
+        .and_then(|item| item.voice_inbox.as_mut())
+    {
+        if entry.attachment_download_in_flight {
+            entry.attachment_download_in_flight = false;
+            let persisted = save_queue(&state.queue_path, &staged);
+            *queue = staged;
+            persisted?;
+        }
+    }
+    Ok(())
+}
+
+async fn download_pending_voice_attachments_inner(
+    state: &BridgeState,
+    message_id: u64,
+) -> anyhow::Result<bool> {
+    let sources = {
+        let mut queue = state.queued_inputs.lock().await;
+        let mut staged = queue.clone();
+        let item = staged
+            .iter_mut()
+            .find(|item| item.message_id == message_id)
+            .context("voice inbox message disappeared during attachment download")?;
+        let entry = item
+            .voice_inbox
+            .as_mut()
+            .context("queued message is not a voice inbox item")?;
+        if entry.pending_attachments.is_empty() {
+            return Ok(false);
+        }
+        if entry.attachment_download_in_flight {
+            return Ok(true);
+        }
+        entry.attachment_download_in_flight = true;
+        let sources = entry.pending_attachments.clone();
+        save_queue(&state.queue_path, &staged)?;
+        *queue = staged;
+        sources
+    };
+    let mut had_error = false;
+    for source in sources {
+        let result = crate::attachments::download_attachment_source(
+            &state.config,
+            &source.url,
+            source.attachment_id,
+            &source.filename,
+        )
+        .await;
+        let mut queue = state.queued_inputs.lock().await;
+        let mut staged = queue.clone();
+        let item = staged
+            .iter_mut()
+            .find(|item| item.message_id == message_id)
+            .context("voice inbox message disappeared after attachment download")?;
+        let entry = item
+            .voice_inbox
+            .as_mut()
+            .context("queued message is not a voice inbox item")?;
+        match result {
+            Ok(downloaded) => {
+                if entry
+                    .pending_attachments
+                    .iter()
+                    .any(|candidate| candidate.attachment_id == source.attachment_id)
+                {
+                    entry
+                        .pending_attachments
+                        .retain(|candidate| candidate.attachment_id != source.attachment_id);
+                    item.attachments.push(downloaded);
+                }
+            }
+            Err(error) => {
+                had_error = true;
+                if let Some(candidate) = entry
+                    .pending_attachments
+                    .iter_mut()
+                    .find(|candidate| candidate.attachment_id == source.attachment_id)
+                {
+                    candidate.last_error = Some("download failed; retry later".to_owned());
+                }
+                warn!(%error, message_id, attachment_id = source.attachment_id, "voice inbox attachment download failed; preserving retry descriptor");
+            }
+        }
+        save_queue(&state.queue_path, &staged)?;
+        *queue = staged;
+    }
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    let item = staged
+        .iter_mut()
+        .find(|item| item.message_id == message_id)
+        .context("voice inbox message disappeared after attachment retries")?;
+    let entry = item
+        .voice_inbox
+        .as_mut()
+        .context("queued message is not a voice inbox item")?;
+    entry.attachment_download_in_flight = false;
+    let pending = !entry.pending_attachments.is_empty();
+    save_queue(&state.queue_path, &staged)?;
+    *queue = staged;
+    Ok(pending || had_error)
+}
+
+fn truncate_voice_preview(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
+
+async fn notify_voice_inbox(
+    state: &BridgeState,
+    msg: &Message,
+    call_id: uuid::Uuid,
+    thread_id: &str,
+) -> anyhow::Result<()> {
+    let phase = state.voice.input_gate.state.lock().await;
+    let transcript_channel_id = match &*phase {
+        crate::voice_input::VoiceInputPhase::Active {
+            call_id: active_call,
+            thread_id: active_thread,
+            transcript_channel_id,
+        } if *active_call == call_id && active_thread == thread_id => *transcript_channel_id,
+        _ => bail!("voice call changed before inbox notification"),
+    };
+    let (author, channel_name, preview, attachment_count, pending_count) = {
+        let queue = state.queued_inputs.lock().await;
+        let item = queue
+            .iter()
+            .find(|item| item.message_id == msg.id.get())
+            .context("queued inbox message disappeared")?;
+        let entry = item
+            .voice_inbox
+            .as_ref()
+            .context("queued message is not a voice inbox item")?;
+        (
+            entry.author.clone(),
+            entry.channel_name.clone(),
+            entry.preview.clone(),
+            item.attachments.len() + entry.pending_attachments.len(),
+            entry.pending_attachments.len(),
+        )
+    };
+    let attachment_note = if attachment_count == 0 {
+        String::new()
+    } else if pending_count > 0 {
+        match state.config.language {
+            crate::i18n::Language::English => format!(
+                " ({} attachment(s), {} pending download)",
+                attachment_count, pending_count
+            ),
+            crate::i18n::Language::Korean => format!(
+                " (첨부 {}개, {}개 다운로드 대기)",
+                attachment_count, pending_count
+            ),
+            crate::i18n::Language::Chinese => format!(
+                "（{} 个附件，{} 个待下载）",
+                attachment_count, pending_count
+            ),
+            crate::i18n::Language::Japanese => format!(
+                "（添付 {} 件、{} 件ダウンロード待ち）",
+                attachment_count, pending_count
+            ),
+        }
+    } else {
+        match state.config.language {
+            crate::i18n::Language::English => format!(" ({} attachment(s))", attachment_count),
+            crate::i18n::Language::Korean => format!(" (첨부 {}개)", attachment_count),
+            crate::i18n::Language::Chinese => format!("（{} 个附件）", attachment_count),
+            crate::i18n::Language::Japanese => format!("（添付 {} 件）", attachment_count),
+        }
+    };
+    let call_id_text = call_id.to_string();
+    let text = match state.config.language {
+        crate::i18n::Language::English => format!(
+            "[INBOX PREVIEW — UNREAD; not read] call_id={call_id_text} id={} {} in #{}: {}{}",
+            msg.id.get(),
+            author,
+            channel_name,
+            preview,
+            attachment_note
+        ),
+        crate::i18n::Language::Korean => format!(
+            "[받은편지함 미리보기 — 읽지 않음] call_id={call_id_text} id={} {} · #{}: {}{}",
+            msg.id.get(),
+            author,
+            channel_name,
+            preview,
+            attachment_note
+        ),
+        crate::i18n::Language::Chinese => format!(
+            "[收件箱预览 — 未读] call_id={call_id_text} id={} {} · #{}: {}{}",
+            msg.id.get(),
+            author,
+            channel_name,
+            preview,
+            attachment_note
+        ),
+        crate::i18n::Language::Japanese => format!(
+            "[受信トレイのプレビュー — 未読] call_id={call_id_text} id={} {} · #{}: {}{}",
+            msg.id.get(),
+            author,
+            channel_name,
+            preview,
+            attachment_note
+        ),
+    };
+    state
+        .native
+        .request(
+            "thread/realtime/appendText",
+            serde_json::json!({"threadId":thread_id,"text":text,"role":"user"}),
+        )
+        .await?;
+    let _ = transcript_channel_id;
+    Ok(())
+}
+
+async fn read_voice_inbox(
+    state: &BridgeState,
+    args: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let call_id = args
+        .get("call_id")
+        .and_then(serde_json::Value::as_str)
+        .context("call_id must be a string")?
+        .parse::<uuid::Uuid>()
+        .context("call_id must be a UUID")?;
+    let ids = args
+        .get("message_ids")
+        .and_then(serde_json::Value::as_array)
+        .context("message_ids must be an array")?;
+    let ids = ids
+        .iter()
+        .map(|id| {
+            id.as_u64()
+                .context("message_ids must contain Discord message IDs")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if ids.is_empty() || ids.iter().collect::<HashSet<_>>().len() != ids.len() {
+        bail!("message_ids must contain unique message IDs");
+    }
+    let phase = state.voice.input_gate.state.lock().await;
+    let active_thread = match &*phase {
+        crate::voice_input::VoiceInputPhase::Active {
+            call_id: active_call,
+            thread_id,
+            ..
+        } if *active_call == call_id && thread_id == &state.native.thread_id() => thread_id.clone(),
+        _ => bail!("voice inbox lookup is available only during the matching active call"),
+    };
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    let mut selected = Vec::new();
+    for id in &ids {
+        let item = staged
+            .iter_mut()
+            .find(|item| item.message_id == *id && item.native_thread_id == active_thread)
+            .context("one or more requested inbox messages are unavailable")?;
+        let entry = item
+            .voice_inbox
+            .as_mut()
+            .context("message is not a voice inbox item")?;
+        if entry.read
+            || entry.read_in_flight
+            || entry.call_id.as_deref() != Some(call_id.to_string().as_str())
+        {
+            bail!("one or more requested inbox messages are no longer unread for this call");
+        }
+        entry.read_in_flight = true;
+        selected.push(item.clone());
+    }
+    save_queue(&state.queue_path, &staged)?;
+    *queue = staged;
+    drop(queue);
+    drop(phase);
+    for id in &ids {
+        if let Err(error) = download_pending_voice_attachments(state, *id).await {
+            warn!(%error, message_id = id, "could not retry pending voice inbox attachment download");
+        }
+    }
+    let queue = state.queued_inputs.lock().await;
+    let selected = ids
+        .iter()
+        .filter_map(|id| queue.iter().find(|item| item.message_id == *id).cloned())
+        .collect::<Vec<_>>();
+    let messages = selected.iter().map(|item| {
+        let entry = item.voice_inbox.as_ref().expect("selected inbox item has metadata");
+        serde_json::json!({
+            "message_id": item.message_id,
+            "call_id": call_id.to_string(),
+            "channel": entry.channel_name,
+            "author": entry.author,
+            "content": item.text,
+            "attachments": item.attachments.iter().map(|attachment| serde_json::json!({
+                "filename": attachment.filename,
+                "path": attachment.path,
+                "kind": if attachment.is_image { "image" } else { "file" }
+            })).collect::<Vec<_>>(),
+            "attachments_unavailable": entry.pending_attachments.iter().map(|attachment| serde_json::json!({
+                "filename": attachment.filename,
+                "status": attachment.last_error.as_deref().unwrap_or("download pending; retry later")
+            })).collect::<Vec<_>>()
+        })
+    }).collect::<Vec<_>>();
+    let read_ids = selected
+        .iter()
+        .filter(|item| {
+            item.voice_inbox
+                .as_ref()
+                .is_some_and(|entry| entry.pending_attachments.is_empty())
+        })
+        .map(|item| item.message_id)
+        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"call_id":call_id.to_string(),"read_message_ids":read_ids,"messages":messages}),
+    )
+}
+
+fn apply_voice_inbox_read_result(
+    queue: &mut VecDeque<QueuedInput>,
+    call_id: uuid::Uuid,
+    requested_ids: &[u64],
+    acknowledged_ids: &[u64],
+) -> bool {
+    let call_id = call_id.to_string();
+    let mut changed = false;
+    for item in queue.iter_mut() {
+        if requested_ids.contains(&item.message_id) {
+            if let Some(entry) = &mut item.voice_inbox {
+                if entry.call_id.as_deref() == Some(call_id.as_str()) && entry.read_in_flight {
+                    entry.read_in_flight = false;
+                    if acknowledged_ids.contains(&item.message_id) {
+                        entry.read = true;
+                        item.delivery = QueueDelivery::Accepted;
+                    }
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+async fn finish_voice_inbox_read(
+    state: &BridgeState,
+    call_id: uuid::Uuid,
+    requested_ids: &[u64],
+    acknowledged_ids: &[u64],
+) -> anyhow::Result<()> {
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    if apply_voice_inbox_read_result(&mut staged, call_id, requested_ids, acknowledged_ids) {
+        save_queue(&state.queue_path, &staged)?;
+        *queue = staged;
+    }
+    Ok(())
+}
+
+fn voice_inbox_turn_key(generation: u64, thread_id: &str, turn_id: &str) -> (u64, String, String) {
+    (generation, thread_id.to_owned(), turn_id.to_owned())
+}
+
+fn apply_voice_inbox_turn_outcomes(
+    queue: &mut VecDeque<QueuedInput>,
+    outcomes: &[VoiceInboxToolOutcome],
+    turn_completed: bool,
+) -> bool {
+    let mut changed = false;
+    for outcome in outcomes {
+        let acknowledged = if turn_completed && outcome.tool_succeeded {
+            outcome.acknowledged_ids.as_slice()
+        } else {
+            &[]
+        };
+        changed |= apply_voice_inbox_read_result(
+            queue,
+            outcome.call_id,
+            &outcome.requested_ids,
+            acknowledged,
+        );
+    }
+    changed
+}
+
+async fn finish_voice_inbox_turn(
+    state: &BridgeState,
+    key: &(u64, String, String),
+    turn_completed: bool,
+) -> anyhow::Result<()> {
+    // Clone before taking the queue lock; the native event loop serializes item
+    // and turn events, so this exact generation/thread/turn key cannot gain a
+    // later item event while we persist the terminal outcome.
+    let outcomes = state
+        .voice_inbox_turn_outcomes
+        .lock()
+        .await
+        .get(key)
+        .cloned();
+    let Some(outcomes) = outcomes else {
+        return Ok(());
+    };
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    if apply_voice_inbox_turn_outcomes(&mut staged, &outcomes, turn_completed) {
+        save_queue(&state.queue_path, &staged)?;
+        *queue = staged;
+    }
+    drop(queue);
+    state.voice_inbox_turn_outcomes.lock().await.remove(key);
+    Ok(())
+}
+
+#[derive(Clone)]
+struct VoiceInboxToolOutcome {
+    call_id: uuid::Uuid,
+    requested_ids: Vec<u64>,
+    acknowledged_ids: Vec<u64>,
+    tool_succeeded: bool,
+}
+
+fn voice_inbox_tool_outcome(item: &serde_json::Value) -> Option<VoiceInboxToolOutcome> {
+    if item.get("type")?.as_str()? != "mcpToolCall"
+        || item.get("server")?.as_str()? != "discodex_voice"
+        || item.get("tool")?.as_str()? != "discord_read_voice_inbox"
+    {
+        return None;
+    }
+    let args = item.get("arguments")?;
+    let call_id = args.get("call_id")?.as_str()?.parse().ok()?;
+    let requested_ids = args
+        .get("message_ids")?
+        .as_array()?
+        .iter()
+        .map(serde_json::Value::as_u64)
+        .collect::<Option<Vec<_>>>()?;
+    let argument_ids = requested_ids.iter().copied().collect::<HashSet<_>>();
+    let status = item.get("status")?.as_str()?;
+    if status != "completed"
+        || item
+            .pointer("/result/isError")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: false,
+        });
+    }
+    let Some(output) = item
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: true,
+        });
+    };
+    let Ok(result) = serde_json::from_str::<serde_json::Value>(output) else {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: true,
+        });
+    };
+    if result.get("call_id").and_then(serde_json::Value::as_str)
+        != Some(call_id.to_string().as_str())
+    {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: true,
+        });
+    }
+    let returned = result
+        .get("read_message_ids")
+        .and_then(serde_json::Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(serde_json::Value::as_u64)
+                .collect::<HashSet<_>>()
+        });
+    let Some(returned) = returned else {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: true,
+        });
+    };
+    if !returned.is_subset(&argument_ids) {
+        return Some(VoiceInboxToolOutcome {
+            call_id,
+            requested_ids,
+            acknowledged_ids: Vec::new(),
+            tool_succeeded: false,
+        });
+    }
+    Some(VoiceInboxToolOutcome {
+        call_id,
+        requested_ids,
+        acknowledged_ids: returned.into_iter().collect(),
+        tool_succeeded: true,
+    })
+}
+
+fn reconcile_voice_inbox_from_history(
+    queue: &mut VecDeque<QueuedInput>,
+    history: &serde_json::Value,
+) -> bool {
+    // History may contain multiple attempts for the same message IDs. A later
+    // failure must not undo an earlier persisted success, so acknowledgements
+    // are accumulated monotonically before reservations are released.
+    let mut outcomes = HashMap::<(uuid::Uuid, u64), bool>::new();
+    let items = history
+        .pointer("/thread/turns")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|turn| turn.get("status").and_then(serde_json::Value::as_str) == Some("completed"))
+        .flat_map(|turn| {
+            turn.get("items")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+        });
+    for item in items {
+        if let Some(outcome) = voice_inbox_tool_outcome(item) {
+            for id in outcome.requested_ids {
+                let acknowledged = outcome.acknowledged_ids.contains(&id);
+                outcomes
+                    .entry((outcome.call_id, id))
+                    .and_modify(|read| *read |= acknowledged)
+                    .or_insert(acknowledged);
+            }
+        }
+    }
+    let mut changed = false;
+    for ((call_id, id), acknowledged) in outcomes {
+        let acknowledged_ids = if acknowledged { vec![id] } else { Vec::new() };
+        changed |= apply_voice_inbox_read_result(queue, call_id, &[id], &acknowledged_ids);
+    }
+    changed
+}
+
+fn complete_thread_history_matches(history: &serde_json::Value, thread_id: &str) -> bool {
+    history
+        .pointer("/thread/id")
+        .and_then(serde_json::Value::as_str)
+        == Some(thread_id)
+        && history
+            .pointer("/thread/turns")
+            .and_then(serde_json::Value::as_array)
+            .is_some()
+}
+
+fn clear_voice_inbox_runtime_flags(queue: &mut VecDeque<QueuedInput>, thread_id: &str) -> bool {
+    let mut changed = false;
+    for item in queue.iter_mut() {
+        if item.native_thread_id == thread_id {
+            if let Some(entry) = &mut item.voice_inbox {
+                if entry.read_in_flight || entry.attachment_download_in_flight {
+                    entry.read_in_flight = false;
+                    entry.attachment_download_in_flight = false;
+                    changed = true;
+                }
+            }
+        }
+    }
+    changed
+}
+
+async fn release_voice_inbox_reservations(
+    state: &BridgeState,
+    thread_id: &str,
+) -> anyhow::Result<()> {
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    if clear_voice_inbox_runtime_flags(&mut staged, thread_id) {
+        let persisted = save_queue(&state.queue_path, &staged);
+        *queue = staged;
+        persisted?;
+    }
+    Ok(())
+}
+
+async fn reconcile_voice_inbox_at_idle(state: &BridgeState, thread_id: &str) -> anyhow::Result<()> {
+    if thread_id != state.native.thread_id() {
+        return Ok(());
+    }
+    let has_inflight = state.queued_inputs.lock().await.iter().any(|item| {
+        item.native_thread_id == thread_id
+            && item
+                .voice_inbox
+                .as_ref()
+                .is_some_and(|entry| entry.read_in_flight)
+    });
+    if !has_inflight {
+        return Ok(());
+    }
+    let history_result = state
+        .native
+        .request(
+            "thread/read",
+            serde_json::json!({"threadId": thread_id, "includeTurns": true}),
+        )
+        .await;
+    let history = match history_result {
+        Ok(history) if complete_thread_history_matches(&history, thread_id) => history,
+        Ok(_) => {
+            release_voice_inbox_reservations(state, thread_id).await?;
+            bail!(
+                "native returned incomplete or mismatched history while reconciling voice inbox reads"
+            );
+        }
+        Err(error) => {
+            release_voice_inbox_reservations(state, thread_id).await?;
+            return Err(error).context("read native history while reconciling voice inbox");
+        }
+    };
+    let mut queue = state.queued_inputs.lock().await;
+    let mut staged = queue.clone();
+    let changed = reconcile_voice_inbox_from_history(&mut staged, &history);
+    // A confirmed idle turn plus complete history means every lookup has a
+    // terminal record. Any still-reserved IDs were not successfully read.
+    let mut released = false;
+    for item in &mut staged {
+        if item.native_thread_id == thread_id {
+            if let Some(entry) = &mut item.voice_inbox {
+                if entry.read_in_flight {
+                    entry.read_in_flight = false;
+                    released = true;
+                }
+            }
+        }
+    }
+    if changed || released {
+        save_queue(&state.queue_path, &staged)?;
+        *queue = staged;
+    }
+    Ok(())
+}
+
 async fn submit_voice_input(
     state: &BridgeState,
     input: &str,
@@ -1126,19 +2065,38 @@ async fn submit_input(
     target: ReplyTarget,
     voice_attachment: Option<VoiceAttachmentAdmission>,
 ) -> anyhow::Result<()> {
+    if state.updates.applying() {
+        return record_input(
+            state,
+            input,
+            attachments,
+            &target,
+            &state.native.thread_id(),
+            QueueDelivery::Queued,
+        )
+        .await;
+    }
     // Hold admission through the native write. Voice start/stop uses this same
     // mutex, so a captured voice attachment cannot cross a realtime transition.
     let phase = state.voice.input_gate.state.lock().await;
     let thread_id = state.native.thread_id();
     if let Some(admission) = voice_attachment.as_ref()
-        && !voice_attachment_admission_matches(&phase, admission, target.channel_id.get(), &thread_id)
+        && !voice_attachment_admission_matches(
+            &phase,
+            admission,
+            target.channel_id.get(),
+            &thread_id,
+        )
     {
-        bail!("{}", state.config.language.text(
-            "The voice call that received this message has ended or changed.",
-            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-            "接收此消息的语音通话已结束或发生变化。",
-            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-        ));
+        bail!(
+            "{}",
+            state.config.language.text(
+                "The voice call that received this message has ended or changed.",
+                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+                "接收此消息的语音通话已结束或发生变化。",
+                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+            )
+        );
     }
     if should_queue_input_for_voice_phase(&phase, voice_attachment.is_some()) {
         return record_input(
@@ -1181,12 +2139,15 @@ async fn submit_input(
             &state.native.thread_id(),
         )
     {
-        bail!("{}", state.config.language.text(
-            "The voice call that received this message has ended or changed.",
-            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-            "接收此消息的语音通话已结束或发生变化。",
-            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-        ));
+        bail!(
+            "{}",
+            state.config.language.text(
+                "The voice call that received this message has ended or changed.",
+                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+                "接收此消息的语音通话已结束或发生变化。",
+                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+            )
+        );
     }
     if recovery.is_some() {
         // Another caller may have reconnected before this guard was acquired.
@@ -1216,14 +2177,22 @@ async fn submit_input(
     }
     let thread_id = state.native.thread_id();
     if let Some(admission) = voice_attachment.as_ref()
-        && !voice_attachment_admission_matches(&phase, admission, target.channel_id.get(), &thread_id)
+        && !voice_attachment_admission_matches(
+            &phase,
+            admission,
+            target.channel_id.get(),
+            &thread_id,
+        )
     {
-        bail!("{}", state.config.language.text(
-            "The voice call that received this message has ended or changed.",
-            "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-            "接收此消息的语音通话已结束或发生变化。",
-            "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-        ));
+        bail!(
+            "{}",
+            state.config.language.text(
+                "The voice call that received this message has ended or changed.",
+                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+                "接收此消息的语音通话已结束或发生变化。",
+                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+            )
+        );
     }
     if let Some(turn_id) = active.clone() {
         if voice_attachment.is_some() || *state.input_mode.read().await == InputMode::Steering {
@@ -1487,6 +2456,7 @@ fn admit_input(
         native_thread_id: native_thread_id.to_owned(),
         delivery,
         submission_generation,
+        voice_inbox: None,
     });
     Ok(())
 }
@@ -1536,7 +2506,63 @@ fn transition_input_delivery(
     true
 }
 
+fn queued_input_submission_text(item: &QueuedInput, language: crate::i18n::Language) -> String {
+    let Some(entry) = item
+        .voice_inbox
+        .as_ref()
+        .filter(|entry| !entry.pending_attachments.is_empty())
+    else {
+        return item.text.clone();
+    };
+    let names = entry
+        .pending_attachments
+        .iter()
+        .map(|attachment| attachment.filename.clone())
+        .collect::<Vec<_>>();
+    let message = language.text(
+        "Some attachments were unavailable at dispatch; the message body is preserved.",
+        "일부 첨부 파일을 전송하지 못했지만 메시지 본문은 보존되어 있습니다.",
+        "部分附件在发送时不可用；消息正文已保留。",
+        "送信時に利用できない添付ファイルがありました。メッセージ本文は保持されています。",
+    );
+    if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&item.text) {
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "attachment_status".to_owned(),
+                serde_json::json!({
+                    "state": "unavailable", "message": message, "filenames": names,
+                }),
+            );
+            return serde_json::to_string(&value).unwrap_or_else(|_| item.text.clone());
+        }
+    }
+    format!("{}\n\n{}: {}", item.text, message, names.join(", "))
+}
+
 async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyhow::Result<()> {
+    let _activity = state.updates.activity();
+    if state.updates.applying() {
+        return Ok(());
+    }
+    let retry_message = {
+        let queue = state.queued_inputs.lock().await;
+        queue
+            .iter()
+            .find(|item| {
+                item.native_thread_id == thread_id && item.delivery == QueueDelivery::Queued
+            })
+            .and_then(|item| {
+                item.voice_inbox
+                    .as_ref()
+                    .filter(|entry| !entry.pending_attachments.is_empty())
+                    .map(|_| item.message_id)
+            })
+    };
+    if let Some(message_id) = retry_message {
+        if let Err(error) = download_pending_voice_attachments(state, message_id).await {
+            warn!(%error, message_id, "post-call attachment retry failed; message body will still be dispatched with unavailable attachment status");
+        }
+    }
     let phase = state.voice.input_gate.state.lock().await;
     let mut current = state.current_turn.lock().await;
     if (thread_id == state.native.thread_id() && current.is_some())
@@ -1559,7 +2585,7 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
     let result = start_turn_locked(
         state,
         &item.native_thread_id,
-        &item.text,
+        &queued_input_submission_text(&item, state.config.language),
         &item.attachments,
         &target,
         &mut current,
@@ -1622,13 +2648,26 @@ fn claim_next_queued_input(
     }) {
         return None;
     }
+    // The first unread queued inbox item is a FIFO barrier while its native
+    // MCP completion is still being recorded. Do not let a later message pass it.
     queue
         .iter_mut()
-        .find(|item| item.native_thread_id == thread_id && item.delivery == QueueDelivery::Queued)
-        .map(|item| {
+        .find(|item| {
+            item.native_thread_id == thread_id
+                && item.delivery == QueueDelivery::Queued
+                && item.voice_inbox.as_ref().is_none_or(|entry| !entry.read)
+        })
+        .and_then(|item| {
+            if item
+                .voice_inbox
+                .as_ref()
+                .is_some_and(|entry| entry.read_in_flight)
+            {
+                return None;
+            }
             item.delivery = QueueDelivery::Submitting;
             item.submission_generation = generation;
-            item.clone()
+            Some(item.clone())
         })
 }
 
@@ -1868,6 +2907,7 @@ async fn handle_native_event(
     state: &BridgeState,
     envelope: serde_json::Value,
 ) {
+    let _activity = state.updates.activity();
     let method = envelope
         .get("method")
         .and_then(serde_json::Value::as_str)
@@ -2008,7 +3048,28 @@ async fn handle_native_event(
                     )
                 };
                 drop(current);
+                let generation = params
+                    .get("_discodex_connection_generation")
+                    .and_then(serde_json::Value::as_u64);
+                let status = params
+                    .pointer("/turn/status/type")
+                    .or_else(|| params.pointer("/turn/status"))
+                    .and_then(serde_json::Value::as_str);
+                let turn_completed = status == Some("completed");
+                if thread_id == state.native.thread_id() {
+                    if let Some(generation) = generation {
+                        let key = voice_inbox_turn_key(generation, thread_id, turn_id);
+                        if let Err(error) =
+                            finish_voice_inbox_turn(state, &key, turn_completed).await
+                        {
+                            warn!(%error, native_thread_id = thread_id, native_turn_id = turn_id, "failed to persist voice inbox lookup outcome");
+                        }
+                    }
+                }
                 if was_active {
+                    if let Err(error) = reconcile_voice_inbox_at_idle(state, thread_id).await {
+                        warn!(%error, "failed to reconcile voice inbox reads at turn completion");
+                    }
                     if let Err(error) = submit_next_queued_input(state, thread_id).await {
                         warn!(%error, "failed to dispatch next-turn input after completion");
                     }
@@ -2118,6 +3179,35 @@ async fn handle_native_event(
         }
         "item/completed" => {
             let item = params.get("item").cloned().unwrap_or_default();
+            if let Some(outcome) = voice_inbox_tool_outcome(&item) {
+                let thread_id = params.get("threadId").and_then(serde_json::Value::as_str);
+                let turn_id = params.get("turnId").and_then(serde_json::Value::as_str);
+                let generation = params
+                    .get("_discodex_connection_generation")
+                    .and_then(serde_json::Value::as_u64);
+                if !outcome.tool_succeeded && !outcome.requested_ids.is_empty() {
+                    if let Err(error) =
+                        finish_voice_inbox_read(state, outcome.call_id, &outcome.requested_ids, &[])
+                            .await
+                    {
+                        warn!(%error, "failed to release failed voice inbox lookup");
+                    }
+                } else if let (Some(thread_id), Some(turn_id), Some(generation)) =
+                    (thread_id, turn_id, generation)
+                {
+                    if thread_id == state.native.thread_id()
+                        && generation == state.native.current_generation()
+                    {
+                        state
+                            .voice_inbox_turn_outcomes
+                            .lock()
+                            .await
+                            .entry(voice_inbox_turn_key(generation, thread_id, turn_id))
+                            .or_default()
+                            .push(outcome);
+                    }
+                }
+            }
             if item.get("type").and_then(serde_json::Value::as_str) == Some("agentMessage") {
                 let remembered_voice_destination = take_voice_item_destination(
                     &mut *state.voice_item_destinations.lock().await,
@@ -2174,7 +3264,8 @@ async fn handle_native_event(
                                 )
                             };
                             let builder = {
-                                let files = file_batches.get(index)
+                                let files = file_batches
+                                    .get(index)
                                     .map(|range| &prepared.files[range.clone()])
                                     .unwrap_or(&[]);
                                 builder.add_files(files.iter().map(|file| {
@@ -2194,12 +3285,14 @@ async fn handle_native_event(
                                         "无法确认附件已发送，请重试。",
                                         "添付ファイルの送信を確認できませんでした。もう一度お試しください。",
                                     );
-                                    let _ = channel.send_message(
-                                        http,
-                                        CreateMessage::new()
-                                            .content(notice)
-                                            .allowed_mentions(empty_mentions()),
-                                    ).await;
+                                    let _ = channel
+                                        .send_message(
+                                            http,
+                                            CreateMessage::new()
+                                                .content(notice)
+                                                .allowed_mentions(empty_mentions()),
+                                        )
+                                        .await;
                                 }
                                 break;
                             }
@@ -2278,6 +3371,9 @@ async fn apply_thread_snapshot(state: &BridgeState, params: &serde_json::Value) 
     let authoritative_idle = active_turn.is_none();
     drop(current);
     if authoritative_idle {
+        if let Err(error) = reconcile_voice_inbox_at_idle(state, thread_id).await {
+            warn!(%error, "failed to reconcile voice inbox reads at idle observation");
+        }
         if let Err(error) = submit_next_queued_input(state, thread_id).await {
             warn!(%error, "failed to dispatch next-turn input after idle observation");
         }
@@ -2510,6 +3606,247 @@ fn empty_mentions() -> serenity::builder::CreateAllowedMentions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn voice_inbox_preview_truncates_on_unicode_character_boundaries() {
+        assert_eq!(super::truncate_voice_preview("한글🙂abc", 4), "한글🙂a…");
+        assert_eq!(super::truncate_voice_preview("short", 8), "short");
+    }
+
+    fn inbox_item(
+        message_id: u64,
+        call_id: uuid::Uuid,
+        read_in_flight: bool,
+        read: bool,
+    ) -> QueuedInput {
+        QueuedInput {
+            text: format!("original message {message_id}"),
+            attachments: Vec::new(),
+            channel_id: 42,
+            message_id,
+            native_thread_id: "thread".to_owned(),
+            delivery: QueueDelivery::Queued,
+            submission_generation: 1,
+            voice_inbox: Some(VoiceInboxEntry {
+                author: "User".to_owned(),
+                author_id: 7,
+                channel_name: "general".to_owned(),
+                preview: "preview".to_owned(),
+                call_id: Some(call_id.to_string()),
+                read_in_flight,
+                attachment_download_in_flight: false,
+                pending_attachments: Vec::new(),
+                read,
+            }),
+        }
+    }
+
+    #[test]
+    fn voice_inbox_result_marks_only_returned_ids_after_success_and_releases_failures() {
+        let call = uuid::Uuid::new_v4();
+        let mut queue = VecDeque::from([
+            inbox_item(1, call, true, false),
+            inbox_item(2, call, true, false),
+        ]);
+        assert!(super::apply_voice_inbox_read_result(
+            &mut queue,
+            call,
+            &[1, 2],
+            &[1]
+        ));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read);
+        assert_eq!(queue[0].delivery, QueueDelivery::Accepted);
+        assert!(!queue[1].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[1].voice_inbox.as_ref().unwrap().read);
+
+        queue[1].voice_inbox.as_mut().unwrap().read_in_flight = true;
+        assert!(super::apply_voice_inbox_read_result(
+            &mut queue,
+            call,
+            &[2],
+            &[]
+        ));
+        assert!(!queue[1].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[1].voice_inbox.as_ref().unwrap().read);
+        assert_eq!(queue[1].delivery, QueueDelivery::Queued);
+    }
+
+    #[test]
+    fn successful_voice_inbox_read_waits_for_matching_terminal_turn() {
+        let call = uuid::Uuid::new_v4();
+        let mut queue = VecDeque::from([inbox_item(11, call, true, false)]);
+        let outcome = super::VoiceInboxToolOutcome {
+            call_id: call,
+            requested_ids: vec![11],
+            acknowledged_ids: vec![11],
+            tool_succeeded: true,
+        };
+        let key = super::voice_inbox_turn_key(4, "thread", "turn-a");
+        let other_turn = super::voice_inbox_turn_key(4, "thread", "turn-b");
+        let mut pending = HashMap::from([(key.clone(), vec![outcome.clone()])]);
+
+        // Merely receiving item/completed does not acknowledge the message.
+        assert!(pending.contains_key(&key));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read);
+
+        // A different turn cannot commit the result.
+        assert!(!pending.contains_key(&other_turn));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read);
+
+        // Failed/aborted matching turn releases the reservation but leaves unread.
+        assert!(super::apply_voice_inbox_turn_outcomes(
+            &mut queue,
+            &pending[&key],
+            false,
+        ));
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read);
+
+        queue[0].voice_inbox.as_mut().unwrap().read_in_flight = true;
+        assert!(super::apply_voice_inbox_turn_outcomes(
+            &mut queue,
+            &pending[&key],
+            true,
+        ));
+        pending.remove(&key);
+        assert!(!pending.contains_key(&key));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read);
+        assert_eq!(queue[0].delivery, QueueDelivery::Accepted);
+    }
+
+    #[test]
+    fn voice_inbox_tool_result_requires_success_and_confirms_only_requested_ids() {
+        let call = uuid::Uuid::new_v4();
+        let item = serde_json::json!({"type":"mcpToolCall","server":"discodex_voice","tool":"discord_read_voice_inbox","status":"completed","arguments":{"call_id":call.to_string(),"message_ids":[1,2]},"result":{"isError":false,"content":[{"type":"text","text":serde_json::json!({"call_id":call.to_string(),"read_message_ids":[2]}).to_string()}]}});
+        let outcome = super::voice_inbox_tool_outcome(&item).unwrap();
+        assert_eq!(outcome.call_id, call);
+        assert_eq!(outcome.requested_ids, vec![1, 2]);
+        assert_eq!(outcome.acknowledged_ids, vec![2]);
+        assert!(outcome.tool_succeeded);
+        let failed = serde_json::json!({"type":"mcpToolCall","server":"discodex_voice","tool":"discord_read_voice_inbox","status":"failed","arguments":{"call_id":call.to_string(),"message_ids":[1]},"error":{"message":"failed"}});
+        let outcome = super::voice_inbox_tool_outcome(&failed).unwrap();
+        assert_eq!(outcome.call_id, call);
+        assert_eq!(outcome.requested_ids, vec![1]);
+        assert!(outcome.acknowledged_ids.is_empty());
+        assert!(!outcome.tool_succeeded);
+        let wrong = serde_json::json!({"type":"mcpToolCall","server":"discodex_voice","tool":"discord_read_voice_inbox","status":"completed","arguments":{"call_id":call.to_string(),"message_ids":[1]},"result":{"isError":false,"content":[{"type":"text","text":serde_json::json!({"call_id":call.to_string(),"read_message_ids":[3]}).to_string()}]}});
+        let outcome = super::voice_inbox_tool_outcome(&wrong).unwrap();
+        assert_eq!(outcome.call_id, call);
+        assert_eq!(outcome.requested_ids, vec![1]);
+        assert!(outcome.acknowledged_ids.is_empty());
+    }
+
+    #[test]
+    fn history_reconciliation_keeps_success_when_an_earlier_attempt_failed() {
+        let call = uuid::Uuid::new_v4();
+        let mut queue = VecDeque::from([inbox_item(7, call, true, false)]);
+        let failed = serde_json::json!({"type":"mcpToolCall","server":"discodex_voice","tool":"discord_read_voice_inbox","status":"failed","arguments":{"call_id":call.to_string(),"message_ids":[7]}});
+        let succeeded = serde_json::json!({"type":"mcpToolCall","server":"discodex_voice","tool":"discord_read_voice_inbox","status":"completed","arguments":{"call_id":call.to_string(),"message_ids":[7]},"result":{"isError":false,"content":[{"type":"text","text":serde_json::json!({"call_id":call.to_string(),"read_message_ids":[7]}).to_string()}]}});
+        let active_history = serde_json::json!({"thread":{"id":"thread","turns":[{"status":"inProgress","items":[succeeded.clone()]}]}});
+        assert!(!super::reconcile_voice_inbox_from_history(
+            &mut queue,
+            &active_history
+        ));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read_in_flight);
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read);
+        let history = serde_json::json!({"thread":{"id":"thread","turns":[{"status":"completed","items":[failed,succeeded]}]}});
+        assert!(super::complete_thread_history_matches(&history, "thread"));
+        assert!(!super::complete_thread_history_matches(
+            &history,
+            "another-thread"
+        ));
+        assert!(super::reconcile_voice_inbox_from_history(
+            &mut queue, &history
+        ));
+        assert!(queue[0].voice_inbox.as_ref().unwrap().read);
+        assert!(!queue[0].voice_inbox.as_ref().unwrap().read_in_flight);
+    }
+
+    #[test]
+    fn orphaned_read_reservation_can_be_released_after_history_failure_without_marking_read() {
+        let call = uuid::Uuid::new_v4();
+        let mut item = inbox_item(9, call, true, false);
+        item.voice_inbox
+            .as_mut()
+            .unwrap()
+            .pending_attachments
+            .push(VoiceAttachmentSource {
+                attachment_id: 501,
+                filename: "report.pdf".to_owned(),
+                url: "https://cdn.discordapp.com/attachments/1/501/report.pdf?token=test"
+                    .to_owned(),
+                last_error: Some("download failed; retry later".to_owned()),
+            });
+        let mut queue = VecDeque::from([item]);
+        assert!(super::clear_voice_inbox_runtime_flags(&mut queue, "thread"));
+        let entry = queue[0].voice_inbox.as_ref().unwrap();
+        assert!(!entry.read_in_flight);
+        assert!(!entry.read);
+        assert_eq!(entry.pending_attachments[0].filename, "report.pdf");
+        assert!(super::claim_next_queued_input(&mut queue, "thread", 1).is_some());
+    }
+
+    #[test]
+    fn pending_attachment_descriptor_survives_journal_and_dispatch_text_is_explicit() {
+        let call = uuid::Uuid::new_v4();
+        let mut item = inbox_item(10, call, false, false);
+        item.text = r#"{"source":{"channel":"general"},"body":"hello"}"#.to_owned();
+        item.voice_inbox
+            .as_mut()
+            .unwrap()
+            .pending_attachments
+            .push(VoiceAttachmentSource {
+                attachment_id: 502,
+                filename: "image.png".to_owned(),
+                url: "https://cdn.discordapp.com/attachments/1/502/image.png?token=test".to_owned(),
+                last_error: Some("download failed; retry later".to_owned()),
+            });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("voice-queue.json");
+        let queue = VecDeque::from([item.clone()]);
+        super::save_queue(&path, &queue).unwrap();
+        let reopened = super::load_queue(&path).unwrap();
+        assert_eq!(reopened[0].text, item.text);
+        assert_eq!(
+            reopened[0]
+                .voice_inbox
+                .as_ref()
+                .unwrap()
+                .pending_attachments,
+            item.voice_inbox.as_ref().unwrap().pending_attachments
+        );
+        let dispatched =
+            super::queued_input_submission_text(&reopened[0], crate::i18n::Language::English);
+        let value: serde_json::Value = serde_json::from_str(&dispatched).unwrap();
+        assert_eq!(value["body"], "hello");
+        assert_eq!(value["attachment_status"]["state"], "unavailable");
+        assert_eq!(value["attachment_status"]["filenames"][0], "image.png");
+    }
+
+    #[test]
+    fn read_and_inflight_inbox_items_are_not_reinjected_but_unread_fifo_is_preserved() {
+        let call = uuid::Uuid::new_v4();
+        let mut read = inbox_item(1, call, false, true);
+        read.delivery = QueueDelivery::Accepted;
+        let mut inflight = inbox_item(2, call, true, false);
+        inflight.delivery = QueueDelivery::Queued;
+        let unread = inbox_item(3, call, false, false);
+        let mut queue = VecDeque::from([read, inflight, unread]);
+        assert!(super::claim_next_queued_input(&mut queue, "thread", 1).is_none());
+        // Once completion reconciliation releases the earlier reservation, it
+        // is still the next unread message and the later item remains behind it.
+        assert!(super::apply_voice_inbox_read_result(
+            &mut queue,
+            call,
+            &[2],
+            &[]
+        ));
+        let next = super::claim_next_queued_input(&mut queue, "thread", 1).unwrap();
+        assert_eq!(next.message_id, 2);
+        assert_eq!(next.text, "original message 2");
+    }
+
     use super::*;
 
     #[test]
@@ -2909,6 +4246,7 @@ mod tests {
                 native_thread_id: "thread".to_owned(),
                 delivery: QueueDelivery::Queued,
                 submission_generation: 1,
+                voice_inbox: None,
             }]);
             let claimed = claim_next_queued_input(&mut queue, "thread", 1)
                 .expect("idle permits the production claim");
@@ -4029,10 +5367,19 @@ mod tests {
 
         assert!(should_queue_input_for_voice_phase(&phase, false));
         assert!(!should_queue_input_for_voice_phase(&phase, true));
-        assert!(voice_attachment_admission_matches(&phase, &admission, 30, "thread-a"));
-        assert!(!voice_attachment_admission_matches(&phase, &admission, 30, "thread-b"));
-        assert!(!voice_attachment_admission_matches(&phase, &admission, 31, "thread-a"));
-        assert!(should_queue_input_for_voice_phase(&VoiceInputPhase::Ending, false));
+        assert!(voice_attachment_admission_matches(
+            &phase, &admission, 30, "thread-a"
+        ));
+        assert!(!voice_attachment_admission_matches(
+            &phase, &admission, 30, "thread-b"
+        ));
+        assert!(!voice_attachment_admission_matches(
+            &phase, &admission, 31, "thread-a"
+        ));
+        assert!(should_queue_input_for_voice_phase(
+            &VoiceInputPhase::Ending,
+            false
+        ));
         assert!(!voice_attachment_admission_matches(
             &VoiceInputPhase::Ending,
             &admission,
@@ -4080,6 +5427,7 @@ mod tests {
                 native_thread_id: "thread".to_owned(),
                 delivery: QueueDelivery::Unknown,
                 submission_generation: 7,
+                voice_inbox: None,
             },
             QueuedInput {
                 attachments: Vec::new(),
@@ -4089,6 +5437,7 @@ mod tests {
                 native_thread_id: "thread".to_owned(),
                 delivery: QueueDelivery::Queued,
                 submission_generation: 7,
+                voice_inbox: None,
             },
         ]);
         save_queue(&path, &queue).expect("original queued journal");
@@ -4145,6 +5494,7 @@ mod tests {
             native_thread_id: "thread-old".to_owned(),
             delivery: QueueDelivery::Submitting,
             submission_generation: 7,
+            voice_inbox: None,
         }]);
         save_queue(&path, &queue).expect("durable submitting admission");
         let blocked_temp = path.with_extension("json.tmp");
@@ -4199,6 +5549,7 @@ mod tests {
             native_thread_id: "thread-a".to_owned(),
             delivery: QueueDelivery::Queued,
             submission_generation: 0,
+            voice_inbox: None,
         });
         save_queue(&path, &queue).expect("persist next-turn input");
         let reopened = load_queue(&path).expect("load next-turn input");
@@ -4217,6 +5568,7 @@ mod tests {
             native_thread_id: "thread-a".to_owned(),
             delivery: QueueDelivery::Submitting,
             submission_generation: 7,
+            voice_inbox: None,
         }]);
         save_queue(&path, &queue).expect("persist submitting input");
         queue = load_queue(&path).expect("reopen submitting input");
@@ -4274,6 +5626,7 @@ mod tests {
                 native_thread_id: "thread-a".to_owned(),
                 delivery: QueueDelivery::Submitting,
                 submission_generation: 7,
+                voice_inbox: None,
             },
             QueuedInput {
                 attachments: Vec::new(),
@@ -4283,6 +5636,7 @@ mod tests {
                 native_thread_id: "thread-a".to_owned(),
                 delivery: QueueDelivery::Queued,
                 submission_generation: 7,
+                voice_inbox: None,
             },
             QueuedInput {
                 attachments: Vec::new(),
@@ -4292,6 +5646,7 @@ mod tests {
                 native_thread_id: "thread-a".to_owned(),
                 delivery: QueueDelivery::Queued,
                 submission_generation: 7,
+                voice_inbox: None,
             },
         ]);
         save_queue(&path, &queue).expect("persist reconnect queue");
@@ -4336,6 +5691,7 @@ mod tests {
                 native_thread_id: "thread-a".to_owned(),
                 delivery: QueueDelivery::Rejected,
                 submission_generation: 7,
+                voice_inbox: None,
             },
             QueuedInput {
                 attachments: Vec::new(),
@@ -4345,6 +5701,7 @@ mod tests {
                 native_thread_id: "thread-a".to_owned(),
                 delivery: QueueDelivery::Queued,
                 submission_generation: 7,
+                voice_inbox: None,
             },
         ]);
         save_queue(&path, &queue).expect("persist rejected input");

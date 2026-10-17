@@ -122,3 +122,11 @@ macOS에서도 위의 공통 `./update --config "<path-to-existing-config.json>"
 `config.json`의 선택적 `memoryEnabled: true`는 해당 worker의 공식 Codex 메모리 기능·생성·사용과 기존 thread의 메모리 생성을 켠다. `false`는 해당 worker에서 끄며, 생략하면 기존 native 설정을 유지한다. 재설치 때 이 필드를 보존한다. 설치 질문은 추가하지 않으며 다른 Codex 앱의 전역 설정이나 계정 파일을 수정하지 않는다. 메모리 기능이 켜져 있어도 실제 기억 추출·통합은 native의 대기 시간과 사용량 조건을 따른다.
 
 공식 근거: [설정 참조](https://learn.chatgpt.com/docs/config-file/config-reference), [기존 thread 재개 구현](https://github.com/openai/codex/blob/main/codex-rs/app-server/src/request_processors/thread_processor.rs), [기본 지침 선택 우선순위](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/mod.rs).
+
+## Discord에서 업데이트
+
+GitHub에 더 새 정식 Release가 게시되면 Discodex가 백그라운드로 확인하고 작업과 통화가 끝난 뒤 5분간 유휴 상태일 때 홈채널에 알립니다. Update는 표시한 버전을 예약하고, Skip this version은 그 버전만 건너뛰며, Never notify again은 해당 프로필의 알림을 끕니다. /discodex settings의 업데이트 알림 항목에서 다시 켤 수 있습니다. 실제 버튼 문구는 프로필 언어를 따릅니다.
+
+현재 배포 방식에서는 승인한 Release의 소스를 별도 디렉터리에 받아 release 바이너리를 빌드하므로 설치 때 사용한 Rust Cargo와 플랫폼 빌드 의존성이 필요합니다. 사용자의 소스 체크아웃은 변경하지 않습니다. 준비 단계에는 빌드 자원을 사용하며 실행 파일 교체는 유휴 상태를 다시 확인한 뒤 별도 업데이터가 처리합니다. 기존 세션·설정·자동 시작과 Mac 서명 정체성을 유지하며 짧게 재접속합니다. 실패 시 자동으로 반복 적용하지 않고 같은 알림에 결과를 표시합니다.
+
+알림의 기준은 main 브랜치의 모든 커밋이 아니라 정식 GitHub Release입니다. 배포할 때 Cargo 패키지 버전과 Release의 vX.Y.Z 태그를 일치시킵니다. 기존 수동 업데이트 스크립트는 계속 사용할 수 있습니다.

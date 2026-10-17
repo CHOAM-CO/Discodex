@@ -36,11 +36,14 @@ async fn main() -> Result<()> {
 
     match command.as_str() {
         "run" => {
-            let config = Config::load(config_path(&rest)?)?;
+            let selected_config_path = config_path(&rest)?;
+            let config = Config::load(&selected_config_path)?;
             let _token = config.token()?;
             let shutdown = start_shutdown_listener();
             let native = Native::start(&config).await?;
-            let result = discodex::discord::run(config, native.clone(), shutdown).await;
+            let result =
+                discodex::discord::run(config, native.clone(), shutdown, selected_config_path)
+                    .await;
             let shutdown = native.shutdown().await;
             result?;
             shutdown?;
@@ -125,6 +128,7 @@ async fn main() -> Result<()> {
         "install" => discodex::install::install()?,
         "migrate" => discodex::install::migrate_installation(&config_path(&rest)?)?,
         "update" => discodex::install::update(&rest)?,
+        "update-helper" => discodex::install::updates::run_helper(&rest)?,
         "uninstall" => discodex::install::uninstall()?,
         "install-plan" => discodex::install::print_plan()?,
         #[cfg(target_os = "macos")]
@@ -205,7 +209,10 @@ fn voice_tools_endpoint(args: &[String]) -> Result<PathBuf> {
 
 fn voice_tools_language(args: &[String]) -> Result<discodex::i18n::Language> {
     match args.iter().position(|arg| arg == "--language") {
-        Some(index) => args.get(index + 1).context("--language requires en, ko, zh, or ja")?.parse(),
+        Some(index) => args
+            .get(index + 1)
+            .context("--language requires en, ko, zh, or ja")?
+            .parse(),
         None => Ok(discodex::i18n::Language::default()),
     }
 }

@@ -3,9 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use codex_uds::UnixStream;
 use serde_json::{Value, json};
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 // The summary replaces one Discord message (no prefix is added).
 pub(crate) const MAX_VOICE_LEAVE_SUMMARY_CHARS: usize = 2000;
@@ -115,6 +113,16 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
                     }
                 })];
                 tools.extend(crate::discord_tools::tool_definitions(language));
+                tools.push(json!({
+                    "name":"discord_read_voice_inbox",
+                    "description":language.text(
+                        "Read selected unread Discord messages received outside the current transcript thread during the active voice call. Call only when a message matters to this conversation or the user asks about it. Reading is separate from completing or acting on the message.",
+                        "활성 음성 통화 중 현재 전사 스레드 밖에서 받은 읽지 않은 Discord 메시지 중 선택한 항목을 읽습니다. 메시지가 이 대화에 중요하거나 사용자가 물을 때만 호출하세요. 읽음은 메시지의 요청을 완료하거나 실행한 것이 아닙니다.",
+                        "读取当前语音通话期间在当前转录线程之外收到的指定未读 Discord 消息。仅当消息与当前对话有关或用户询问时调用。读取不代表已完成或执行消息中的请求。",
+                        "アクティブな音声通話中に現在の文字起こしスレッド外で受信した未読Discordメッセージから、指定したものを読みます。会話に関係する場合、またはユーザーが尋ねた場合にのみ呼び出してください。読むことはメッセージへの対応や実行を意味しません。"
+                    ),
+                    "inputSchema":{"type":"object","properties":{"call_id":{"type":"string","description":language.text("Active call ID shown in the inbox preview", "받은편지함 미리보기에 표시된 활성 통화 ID", "收件箱预览中显示的当前通话 ID", "受信トレイのプレビューに表示された現在の通話 ID")},"message_ids":{"type":"array","minItems":1,"items":{"type":"integer","minimum":1},"description":language.text("Message IDs from inbox previews", "받은편지함 미리보기에 표시된 메시지 ID", "收件箱预览中的消息 ID", "受信トレイのプレビューに表示されたメッセージ ID")}},"required":["call_id","message_ids"],"additionalProperties":false}
+                }));
                 json!({
                     "jsonrpc":"2.0",
                     "id":id,
@@ -137,7 +145,7 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
                             json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":error.to_string()}})
                         }
                     }
-                } else if DISCORD_TOOL_NAMES.contains(&name) {
+                } else if name == "discord_read_voice_inbox" || DISCORD_TOOL_NAMES.contains(&name) {
                     if !args.is_object() {
                         json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":language.text("Discord tool arguments must be an object", "Discord 도구 인수는 객체여야 합니다", "Discord 工具参数必须是对象", "Discordツールの引数はオブジェクトである必要があります")}})
                     } else {

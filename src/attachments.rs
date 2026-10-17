@@ -77,7 +77,23 @@ pub async fn download_attachment(
     config: &Config,
     attachment: &Attachment,
 ) -> Result<DownloadedAttachment> {
-    let url = validate_discord_cdn_url(&attachment.url)?;
+    download_attachment_source(
+        config,
+        &attachment.url,
+        attachment.id.get(),
+        &attachment.filename,
+    )
+    .await
+}
+
+/// Download from a durable message attachment descriptor retained by the queue.
+pub async fn download_attachment_source(
+    config: &Config,
+    source_url: &str,
+    attachment_id: u64,
+    filename: &str,
+) -> Result<DownloadedAttachment> {
+    let url = validate_discord_cdn_url(source_url)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(15))
@@ -126,16 +142,12 @@ pub async fn download_attachment(
 
     let image_extension = supported_image_extension(&prefix);
     let stored_filename = match image_extension {
-        Some(extension) => format!(
-            "{}-{}-image.{extension}",
-            attachment.id.get(),
-            Uuid::new_v4()
-        ),
+        Some(extension) => format!("{}-{}-image.{extension}", attachment_id, Uuid::new_v4()),
         None => format!(
             "{}-{}-{}",
-            attachment.id.get(),
+            attachment_id,
             Uuid::new_v4(),
-            safe_filename(&attachment.filename)
+            safe_filename(&filename)
         ),
     };
     let path = directory.join(stored_filename);
@@ -144,7 +156,7 @@ pub async fn download_attachment(
     fs::remove_file(&temporary_path).context("remove temporary Discord attachment file")?;
     cleanup.disarm();
     Ok(DownloadedAttachment {
-        filename: attachment.filename.clone(),
+        filename: filename.to_owned(),
         path,
         is_image: image_extension.is_some(),
     })
@@ -520,15 +532,20 @@ mod tests {
         let text = native_input_text("", &files);
         let (body, manifest_json) = text.rsplit_once(ATTACHMENT_MANIFEST_MARKER).unwrap();
         assert_eq!(body, "");
-        assert_eq!(serde_json::from_str::<Value>(manifest_json).unwrap(), json!([
-            {"filename":"forwarded.png", "path":"/state/attachments/forwarded.png", "kind":"image"},
-            {"filename":"report.pdf", "path":"/state/attachments/report.pdf", "kind":"file"},
-        ]));
+        assert_eq!(
+            serde_json::from_str::<Value>(manifest_json).unwrap(),
+            json!([
+                {"filename":"forwarded.png", "path":"/state/attachments/forwarded.png", "kind":"image"},
+                {"filename":"report.pdf", "path":"/state/attachments/report.pdf", "kind":"file"},
+            ])
+        );
 
         let ordinary = native_input("", &files);
         assert_eq!(ordinary.len(), 2);
         assert_eq!(ordinary[0]["text"], text);
-        assert_eq!(ordinary[1], json!({"type":"localImage", "path":"/state/attachments/forwarded.png"}));
+        assert_eq!(
+            ordinary[1],
+            json!({"type":"localImage", "path":"/state/attachments/forwarded.png"})
+        );
     }
-
 }

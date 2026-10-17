@@ -45,7 +45,6 @@ pub type VoiceLeaveHandler =
 pub type DiscordToolHandler =
     Arc<dyn Fn(String, Value) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
 
-
 struct ServerRequestState {
     generation: u64,
     responded: bool,
@@ -349,8 +348,13 @@ impl Native {
                 };
             }
         };
-        let worker_args =
-            serde_json::to_string(&["voice-tools", "--endpoint", voice_endpoint_arg, "--language", config.language.code()])?;
+        let worker_args = serde_json::to_string(&[
+            "voice-tools",
+            "--endpoint",
+            voice_endpoint_arg,
+            "--language",
+            config.language.code(),
+        ])?;
         let worker_path_value = serde_json::to_string(worker_path)?;
 
         let mut command = Command::new(&codex_path);
@@ -372,7 +376,10 @@ impl Native {
             .arg("--config")
             .arg(format!(
                 "experimental_realtime_ws_backend_prompt={}",
-                serde_json::to_string(&crate::realtime_prompt::for_agent(&config.name, config.language))?
+                serde_json::to_string(&crate::realtime_prompt::for_agent(
+                    &config.name,
+                    config.language
+                ))?
             ));
         if let Some(enabled) = config.memory_enabled {
             for (key, value) in [
@@ -1496,6 +1503,7 @@ fn is_discord_tool_method(method: &str) -> bool {
     matches!(
         method,
         "discord_list_channels"
+            | "discord_read_voice_inbox"
             | "discord_send_message"
             | "discord_get_messages"
             | "discord_download_attachment"

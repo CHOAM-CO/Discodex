@@ -1,13 +1,14 @@
 pub mod attachments;
 pub mod commands;
 pub mod config;
-pub mod i18n;
 pub mod discord;
+mod discord_updates;
 pub mod discord_tools;
+pub mod i18n;
 pub mod install;
-mod legacy_commands;
 pub mod installation_check;
 mod instructions;
+mod legacy_commands;
 pub mod native;
 pub mod reply_files;
 pub mod state;

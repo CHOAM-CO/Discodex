@@ -339,12 +339,14 @@ fn posted_reply_files_from_attachments(
     Ok(files
         .iter()
         .zip(ids)
-        .filter_map(|(file, id)| id.map(|id| PostedReplyFile {
-            page,
-            id,
-            filename: file.filename.clone(),
-            digest: reply_file_digest(file),
-        }))
+        .filter_map(|(file, id)| {
+            id.map(|id| PostedReplyFile {
+                page,
+                id,
+                filename: file.filename.clone(),
+                digest: reply_file_digest(file),
+            })
+        })
         .collect())
 }
 

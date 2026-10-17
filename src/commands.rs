@@ -30,6 +30,7 @@ pub(crate) enum SettingsKind {
     Permissions,
     Input,
     Voice,
+    Updates,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -732,6 +733,13 @@ async fn build_settings_menu(
                 ),
                 ("fast", "Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
                 (
+                    "updates",
+                    "Update notifications",
+                    "업데이트 알림",
+                    "更新通知",
+                    "更新通知",
+                ),
+                (
                     "permissions",
                     "Permission profile",
                     "권한 프로필",
@@ -760,6 +768,22 @@ async fn build_settings_menu(
             })
             .collect();
             (None, current, choices)
+        }
+        SettingsKind::Updates => {
+            let muted = state.updates.muted().await;
+            let choices = [
+                ("on", language.text("On", "켜기", "开启", "オン")),
+                ("off", language.text("Off", "끄기", "关闭", "オフ")),
+            ]
+            .into_iter()
+            .map(|(value, label)| SettingsChoice {
+                value: value.to_owned(),
+                label: label.to_owned(),
+            })
+            .collect::<Vec<_>>();
+            let value = if muted { "off" } else { "on" };
+            let current = choice_current_label(&choices, Some(value), language);
+            (Some(value.to_owned()), current, choices)
         }
         SettingsKind::Model => {
             let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
@@ -1013,6 +1037,12 @@ fn choice_current_label(
 fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &'static str {
     match kind {
         SettingsKind::Hub => language.text("Settings", "설정", "设置", "設定"),
+        SettingsKind::Updates => language.text(
+            "Update notifications",
+            "업데이트 알림",
+            "更新通知",
+            "更新通知",
+        ),
         SettingsKind::Model => language.text("Model", "모델", "模型", "モデル"),
         SettingsKind::Effort => {
             language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ")
@@ -1224,6 +1254,7 @@ fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
         "permissions" => Some(SettingsKind::Permissions),
         "input" => Some(SettingsKind::Input),
         "voice" => Some(SettingsKind::Voice),
+        "updates" => Some(SettingsKind::Updates),
         _ => None,
     }
 }
@@ -1628,6 +1659,22 @@ async fn apply_setting_choice(
         .unwrap_or_else(|| state.native.thread_id());
     let language = state.config.language;
     match kind {
+        SettingsKind::Updates => {
+            let muted = match requested {
+                "on" => false,
+                "off" => true,
+                _ => bail!("unknown update notification choice"),
+            };
+            state.updates.set_muted(muted).await?;
+            Ok(language
+                .text(
+                    "Update notification preference saved. Manual updates remain available.",
+                    "업데이트 알림 설정을 저장했습니다. 수동 업데이트는 계속 사용할 수 있습니다.",
+                    "更新通知设置已保存。仍可手动更新。",
+                    "更新通知の設定を保存しました。手動更新は引き続き利用できます。",
+                )
+                .to_owned())
+        }
         SettingsKind::Permissions => {
             let catalog = full_catalog(
                 state,
@@ -1826,6 +1873,9 @@ pub(crate) async fn handle_component(
         interaction.user.id,
         state.config.language,
     )?;
+    if interaction.data.custom_id.starts_with("discodex:update:") {
+        return crate::discord_updates::handle_component(ctx, interaction, &state).await;
+    }
     if interaction.data.custom_id.starts_with("codex:settings:") {
         return handle_settings_component(ctx, interaction, &state).await;
     }

@@ -1,5 +1,5 @@
-use std::{fmt, str::FromStr};
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Language {
@@ -15,14 +15,26 @@ pub enum Language {
 }
 impl Language {
     pub const fn code(self) -> &'static str {
-        match self { Self::English => "en", Self::Korean => "ko", Self::Chinese => "zh", Self::Japanese => "ja" }
+        match self {
+            Self::English => "en",
+            Self::Korean => "ko",
+            Self::Chinese => "zh",
+            Self::Japanese => "ja",
+        }
     }
     pub fn text<'a>(self, en: &'a str, ko: &'a str, zh: &'a str, ja: &'a str) -> &'a str {
-        match self { Self::English => en, Self::Korean => ko, Self::Chinese => zh, Self::Japanese => ja }
+        match self {
+            Self::English => en,
+            Self::Korean => ko,
+            Self::Chinese => zh,
+            Self::Japanese => ja,
+        }
     }
 }
 impl fmt::Display for Language {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str(self.code()) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.code())
+    }
 }
 impl FromStr for Language {
     type Err = anyhow::Error;
@@ -41,10 +53,18 @@ mod tests {
     use super::*;
     #[test]
     fn language_codes_round_trip_and_select_requested_message() {
-        for (language, code, expected) in [(Language::English, "en", "English"), (Language::Korean, "ko", "Korean"), (Language::Chinese, "zh", "Chinese"), (Language::Japanese, "ja", "Japanese")] {
+        for (language, code, expected) in [
+            (Language::English, "en", "English"),
+            (Language::Korean, "ko", "Korean"),
+            (Language::Chinese, "zh", "Chinese"),
+            (Language::Japanese, "ja", "Japanese"),
+        ] {
             assert_eq!(code.parse::<Language>().unwrap(), language);
             assert_eq!(serde_json::to_value(language).unwrap(), code);
-            assert_eq!(language.text("English", "Korean", "Chinese", "Japanese"), expected);
+            assert_eq!(
+                language.text("English", "Korean", "Chinese", "Japanese"),
+                expected
+            );
         }
         assert_eq!(Language::default(), Language::English);
         assert!("unknown".parse::<Language>().is_err());
