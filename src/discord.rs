@@ -513,14 +513,17 @@ impl EventHandler for Handler {
             return;
         }
         let bot_id = *state.bot_user_id.lock().await;
-        if bot_id == Some(msg.author.id) {
-            return;
-        }
-        if !state.config.operator_ids.contains(&msg.author.id.get()) {
+        let is_self = bot_id == Some(msg.author.id);
+        let mentioned = bot_id.is_some_and(|id| msg.mentions.iter().any(|user| user.id == id));
+        if !admit_discord_message_author(
+            msg.author.bot,
+            is_self,
+            state.config.operator_ids.contains(&msg.author.id.get()),
+            mentioned,
+        ) {
             return;
         }
         let home_channel = msg.channel_id.get() == state.config.home_channel_id;
-        let mentioned = bot_id.is_some_and(|id| msg.mentions.iter().any(|user| user.id == id));
         let route = state.voice.input_gate.state.lock().await.route(
             msg.channel_id.get(),
             state.config.home_channel_id,
@@ -929,6 +932,18 @@ pub async fn run(
             if name == "discord_read_voice_inbox" {
                 return read_voice_inbox(&state, &arguments).await;
             }
+            if name == "voice_join" {
+                let _activity = state.updates.activity();
+                let channel = tools.resolve_voice_channel(&arguments).await?;
+                let result = state
+                    .voice
+                    .join_from_agent(channel.guild_id, channel.id)
+                    .await?;
+                let mut value =
+                    serde_json::to_value(result).context("serialize voice join result")?;
+                value["channel"] = serde_json::json!(channel.name);
+                return Ok(value);
+            }
             tools.invoke(&name, arguments).await
         })
     }));
@@ -1217,8 +1232,36 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
             "author": author_name,
         })
     };
+    let source = add_bot_source_metadata(source, msg.author.bot);
     let forwarded = crate::attachments::forwarded_message_data(msg);
     crate::attachments::format_ingress_message(&msg.content, &forwarded, source)
+}
+
+fn admit_discord_message_author(
+    author_is_bot: bool,
+    is_self: bool,
+    is_operator: bool,
+    mentioned_this_bot: bool,
+) -> bool {
+    if is_self {
+        return false;
+    }
+    if author_is_bot {
+        return mentioned_this_bot;
+    }
+    is_operator
+}
+
+fn add_bot_source_metadata(
+    mut source: serde_json::Value,
+    author_is_bot: bool,
+) -> serde_json::Value {
+    if author_is_bot {
+        if let Some(source) = source.as_object_mut() {
+            source.insert("authorIsBot".to_owned(), serde_json::Value::Bool(true));
+        }
+    }
+    source
 }
 
 async fn enqueue_voice_inbox(
@@ -3606,6 +3649,38 @@ fn empty_mentions() -> serenity::builder::CreateAllowedMentions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn discord_message_author_admission_requires_direct_bot_mention() {
+        assert!(super::admit_discord_message_author(
+            false, false, true, false
+        ));
+        assert!(!super::admit_discord_message_author(
+            false, false, false, true
+        ));
+        assert!(super::admit_discord_message_author(
+            true, false, false, true
+        ));
+        assert!(!super::admit_discord_message_author(
+            true, false, false, false
+        ));
+        assert!(!super::admit_discord_message_author(true, true, true, true));
+        assert!(!super::admit_discord_message_author(
+            true, false, true, false
+        ));
+    }
+
+    #[test]
+    fn bot_source_metadata_is_present_only_for_bot_authors() {
+        let source = serde_json::json!({"author":"Agent"});
+        assert_eq!(
+            super::add_bot_source_metadata(source.clone(), true),
+            serde_json::json!({"author":"Agent", "authorIsBot":true})
+        );
+        assert_eq!(
+            super::add_bot_source_metadata(source.clone(), false),
+            source
+        );
+    }
     #[test]
     fn voice_inbox_preview_truncates_on_unicode_character_boundaries() {
         assert_eq!(super::truncate_voice_preview("한글🙂abc", 4), "한글🙂a…");

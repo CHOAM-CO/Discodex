@@ -372,6 +372,8 @@ impl Native {
             .arg("--config")
             .arg("mcp_servers.discodex_voice.tools.voice_leave.approval_mode=\"approve\"")
             .arg("--config")
+            .arg("mcp_servers.discodex_voice.tools.voice_join.approval_mode=\"approve\"")
+            .arg("--config")
             .arg("features.realtime_conversation=true")
             .arg("--config")
             .arg(format!(
@@ -1502,7 +1504,8 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
 fn is_discord_tool_method(method: &str) -> bool {
     matches!(
         method,
-        "discord_list_channels"
+        "voice_join"
+            | "discord_list_channels"
             | "discord_read_voice_inbox"
             | "discord_send_message"
             | "discord_get_messages"

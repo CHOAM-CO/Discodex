@@ -2101,6 +2101,39 @@ pub struct VoiceSessionInfo {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct VoiceJoinResult {
+    pub status: &'static str,
+    pub voice_call_active: bool,
+    pub native_thread_id: String,
+    pub voice_channel_id: u64,
+    pub transcript_thread_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoiceJoinAction {
+    Start,
+    AlreadyConnected,
+}
+
+fn plan_voice_join(
+    active_channel: Option<ChannelId>,
+    channel_id: ChannelId,
+    language: Language,
+) -> Result<VoiceJoinAction> {
+    match active_channel {
+        None => Ok(VoiceJoinAction::Start),
+        Some(active) if active == channel_id => Ok(VoiceJoinAction::AlreadyConnected),
+        Some(_) => bail!("{}", language.text(
+            "A voice call is already connected in another channel. End it before joining a different channel.",
+            "다른 채널의 음성 통화에 이미 연결되어 있습니다. 다른 채널에 들어가려면 먼저 현재 통화를 종료하세요.",
+            "已连接另一个频道的语音通话。请先结束当前通话，再加入其他频道。",
+            "別のチャンネルで音声通話に接続中です。別のチャンネルに入る前に現在の通話を終了してください。",
+        )),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VoiceOperationResult {
     pub attempted: bool,
     pub ok: Option<bool>,
@@ -2240,18 +2273,42 @@ impl VoiceBridge {
         requested_by: UserId,
     ) -> Result<()> {
         authorize_voice_join(&self.config, guild_id, channel_id, requested_by)?;
+        self.join_with_result(guild_id, channel_id)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn join_from_agent(
+        &self,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+    ) -> Result<VoiceJoinResult> {
+        authorize_voice_channel(&self.config, guild_id, channel_id)?;
+        self.join_with_result(guild_id, channel_id).await
+    }
+
+    async fn join_with_result(
+        &self,
+        guild_id: GuildId,
+        channel_id: ChannelId,
+    ) -> Result<VoiceJoinResult> {
         let _lifecycle = self.lifecycle.lock().await;
         let language = self.config.language;
-        if self.active.lock().await.contains_key(&guild_id.get()) {
-            bail!(
-                "{}",
-                language.text(
-                    "A voice call is already connected in this server.",
-                    "이미 이 서버의 음성 통화에 연결되어 있습니다.",
-                    "此服务器中已连接语音通话。",
-                    "このサーバーではすでに音声通話に接続しています。",
-                )
-            );
+        {
+            let active = self.active.lock().await;
+            let call = active.get(&guild_id.get());
+            if plan_voice_join(call.map(|call| call.channel_id), channel_id, language)?
+                == VoiceJoinAction::AlreadyConnected
+            {
+                let call = call.expect("already connected call exists");
+                return Ok(VoiceJoinResult {
+                    status: "already_connected",
+                    voice_call_active: true,
+                    native_thread_id: call.native_thread_id.clone(),
+                    voice_channel_id: call.channel_id.get(),
+                    transcript_thread_id: call.transcript_thread_id.get(),
+                });
+            }
         }
         if matches!(
             *self.input_gate.state.lock().await,
@@ -2298,7 +2355,18 @@ impl VoiceBridge {
             }
         };
         self.input_gate.set(phase).await;
-        result
+        result?;
+        let active = self.active.lock().await;
+        let call = active
+            .get(&guild_id.get())
+            .expect("successful join installs its call");
+        Ok(VoiceJoinResult {
+            status: "joined",
+            voice_call_active: true,
+            native_thread_id: call.native_thread_id.clone(),
+            voice_channel_id: call.channel_id.get(),
+            transcript_thread_id: call.transcript_thread_id.get(),
+        })
     }
 
     async fn join_locked(&self, guild_id: GuildId, channel_id: ChannelId) -> Result<()> {
@@ -2784,6 +2852,27 @@ fn authorize_voice_join(
     channel_id: ChannelId,
     requested_by: UserId,
 ) -> Result<()> {
+    authorize_voice_channel(config, guild_id, channel_id)?;
+    let language = config.language;
+    if !config.operator_ids.contains(&requested_by.get()) {
+        bail!(
+            "{}",
+            language.text(
+                "Only a configured operator can start a voice call.",
+                "설정된 조작자만 음성 통화를 시작할 수 있습니다.",
+                "只有已配置的操作员可以开始语音通话。",
+                "設定済みの操作者のみ音声通話を開始できます。",
+            )
+        );
+    }
+    Ok(())
+}
+
+fn authorize_voice_channel(
+    config: &Config,
+    guild_id: GuildId,
+    channel_id: ChannelId,
+) -> Result<()> {
     let language = config.language;
     if guild_id.get() != config.guild_id {
         bail!(
@@ -2793,17 +2882,6 @@ fn authorize_voice_join(
                 "음성 입장은 설정된 Discord 서버에서만 가능합니다.",
                 "只能在已配置的 Discord 服务器中进行语音通话。",
                 "設定済みの Discord サーバーでのみ音声通話を開始できます。",
-            )
-        );
-    }
-    if !config.operator_ids.contains(&requested_by.get()) {
-        bail!(
-            "{}",
-            language.text(
-                "Only a configured operator can start a voice call.",
-                "설정된 조작자만 음성 통화를 시작할 수 있습니다.",
-                "只有已配置的操作员可以开始语音通话。",
-                "設定済みの操作者のみ音声通話を開始できます。",
             )
         );
     }
@@ -9443,6 +9521,20 @@ mod tests {
     }
 
     #[test]
+    fn join_planning_is_idempotent_and_does_not_move_an_active_call() {
+        let channel = ChannelId::new(40);
+        assert_eq!(
+            plan_voice_join(None, channel, Language::English).unwrap(),
+            VoiceJoinAction::Start
+        );
+        assert_eq!(
+            plan_voice_join(Some(channel), channel, Language::English).unwrap(),
+            VoiceJoinAction::AlreadyConnected
+        );
+        assert!(plan_voice_join(Some(channel), ChannelId::new(41), Language::English).is_err());
+    }
+
+    #[test]
     fn voice_join_is_limited_by_operator_server_and_channel_ids() {
         let config = Config {
             language: Language::English,
@@ -9468,6 +9560,9 @@ mod tests {
             worker_path: None,
             input_mode: Default::default(),
         };
+        assert!(authorize_voice_channel(&config, GuildId::new(20), ChannelId::new(40)).is_ok());
+        assert!(authorize_voice_channel(&config, GuildId::new(23), ChannelId::new(40)).is_err());
+        assert!(authorize_voice_channel(&config, GuildId::new(20), ChannelId::new(41)).is_err());
         assert!(
             authorize_voice_join(
                 &config,

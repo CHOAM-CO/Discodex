@@ -219,25 +219,13 @@ impl DiscordTools {
             .map(|c| (c.id, c.name.clone()))
             .collect();
         let mut matches = Vec::new();
-        for channel in all
-            .iter()
-            .filter(|c| c.kind != ChannelType::Category && c.name == leaf)
-        {
-            let channel = channel.clone();
-            if category.is_some_and(|cat| {
-                channel
-                    .parent_id
-                    .and_then(|id| categories.get(&id))
-                    .is_none_or(|n| n != cat)
-            }) {
-                continue;
-            }
-            if !permissions_in(&guild, &bot_member, &channel, &all)?
+        for channel in matching_named_channels(&all, &categories, category, leaf, None) {
+            if !permissions_in(&guild, &bot_member, channel, &all)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
                 continue;
             }
-            matches.push(channel);
+            matches.push(channel.clone());
         }
         match matches.as_slice() {
             [] => bail!("no visible current channel matches {query:?} in configured guild"),
@@ -250,6 +238,83 @@ impl DiscordTools {
                 }
                 Ok(json!({"error":"ambiguous channel name","candidates":candidates}))
                     .and_then(|v| Err(anyhow::anyhow!("{v}")))
+            }
+        }
+    }
+
+    pub(crate) async fn resolve_voice_channel(&self, args: &Value) -> Result<GuildChannel> {
+        validate_voice_channel_selection(args)?;
+        let guild = self.guild().await?;
+        let all = self.fresh_channels(&guild).await?;
+        let bot_member = self
+            .current_bot_member()
+            .await
+            .context("fetch current bot member for voice-channel resolution")?;
+
+        if let Some(key) = args.get("channel_choice").and_then(Value::as_str) {
+            let Pick::Channel { id, name, parent } = self.get_pick(key)? else {
+                bail!("choice is not a channel")
+            };
+            let channel = all
+                .iter()
+                .find(|channel| channel.id == id)
+                .ok_or_else(|| anyhow::anyhow!("channel choice is stale; list channels again"))?;
+            if channel.name != name || channel.parent_id != parent {
+                bail!("channel was renamed or moved; list channels again");
+            }
+            require_voice_channel(channel)?;
+            if !permissions_in(&guild, &bot_member, channel, &all)?
+                .contains(Permissions::VIEW_CHANNEL)
+            {
+                bail!("bot cannot view selected voice channel");
+            }
+            return Ok(channel.clone());
+        }
+
+        let query = channel_name_query(required(args, "channel")?);
+        if query.trim().is_empty() {
+            bail!("channel must be a non-empty name");
+        }
+        let (category, leaf) = query
+            .split_once('/')
+            .map(|(a, b)| (Some(a), b))
+            .unwrap_or((None, query));
+        let categories: HashMap<ChannelId, String> = all
+            .iter()
+            .filter(|channel| channel.kind == ChannelType::Category)
+            .map(|channel| (channel.id, channel.name.clone()))
+            .collect();
+        let mut matches = Vec::new();
+        for channel in
+            matching_named_channels(&all, &categories, category, leaf, Some(ChannelType::Voice))
+        {
+            if !permissions_in(&guild, &bot_member, channel, &all)?
+                .contains(Permissions::VIEW_CHANNEL)
+            {
+                continue;
+            }
+            matches.push(channel.clone());
+        }
+        match matches.as_slice() {
+            [] => bail!("no visible current voice channel matches {query:?} in configured guild"),
+            [one] => Ok(one.clone()),
+            many => {
+                let mut candidates = Vec::new();
+                for channel in many {
+                    let category = channel
+                        .parent_id
+                        .and_then(|id| categories.get(&id))
+                        .cloned();
+                    candidates.push(json!({
+                        "name": category.as_ref().map(|name| format!("{name}/{}", channel.name)).unwrap_or_else(|| channel.name.clone()),
+                        "type": format!("{:?}", channel.kind),
+                        "choice": self.save_pick(Pick::Channel { id: channel.id, name: channel.name.clone(), parent: channel.parent_id })?
+                    }));
+                }
+                bail!(
+                    "{}",
+                    json!({"error":"ambiguous voice channel name","candidates":candidates})
+                );
             }
         }
     }
@@ -277,6 +342,10 @@ impl DiscordTools {
                 .map(|x| format!("{x}/{}", c.name))
                 .unwrap_or_else(|| c.name.clone());
             let mut item = json!({"name":name,"channel":c.name,"category":cat,"home":c.id.get() == self.config.home_channel_id,"type":format!("{:?}",c.kind),"choice":self.save_pick(Pick::Channel{id:c.id,name:c.name.clone(),parent:c.parent_id})?});
+            if c.kind == ChannelType::Voice {
+                item["voice_join_allowed"] =
+                    json!(self.config.voice_channel_ids.contains(&c.id.get()));
+            }
             if thread(c) {
                 item["thread_id"] = json!(c.id.get().to_string());
             }
@@ -1095,6 +1164,48 @@ fn parse_message_link(link: &str, guild_id: u64, channel_id: u64) -> Result<Mess
 fn message_link(guild_id: u64, channel_id: u64, message_id: u64) -> String {
     format!("https://discord.com/channels/{guild_id}/{channel_id}/{message_id}")
 }
+fn validate_voice_channel_selection(v: &Value) -> Result<()> {
+    validate_keys(v, &["channel", "channel_choice"])?;
+    match (v.get("channel"), v.get("channel_choice")) {
+        (Some(name), None) if name.as_str().is_some_and(|value| !value.trim().is_empty()) => Ok(()),
+        (None, Some(choice)) if choice.as_str().is_some_and(is_choice) => Ok(()),
+        (Some(_), Some(_)) => bail!("provide exactly one of channel or channel_choice"),
+        (Some(_), None) => bail!("channel must be a non-empty name string"),
+        (None, Some(_)) => bail!("channel_choice must be an opaque choice string"),
+        (None, None) => bail!("channel or channel_choice is required"),
+    }
+}
+
+fn require_voice_channel(channel: &GuildChannel) -> Result<()> {
+    if channel.kind != ChannelType::Voice {
+        bail!("selected channel is not a voice channel");
+    }
+    Ok(())
+}
+
+fn matching_named_channels<'a>(
+    channels: &'a [GuildChannel],
+    categories: &HashMap<ChannelId, String>,
+    category: Option<&str>,
+    leaf: &str,
+    kind: Option<ChannelType>,
+) -> Vec<&'a GuildChannel> {
+    channels
+        .iter()
+        .filter(|channel| {
+            channel.kind != ChannelType::Category
+                && kind.is_none_or(|kind| channel.kind == kind)
+                && channel.name == leaf
+                && category.is_none_or(|wanted| {
+                    channel
+                        .parent_id
+                        .and_then(|id| categories.get(&id))
+                        .is_some_and(|name| name == wanted)
+                })
+        })
+        .collect()
+}
+
 fn channel_name_query(query: &str) -> &str {
     query.strip_prefix('#').unwrap_or(query)
 }
@@ -1552,6 +1663,75 @@ mod tests {
         assert_eq!(channel_name_query("2026"), "2026");
         assert_eq!(user_name_query("@123"), "123");
         assert_eq!(user_name_query("123"), "123");
+    }
+
+    #[test]
+    fn voice_channel_selection_accepts_exactly_name_or_opaque_choice() {
+        assert!(validate_voice_channel_selection(&json!({"channel":"Stage 1"})).is_ok());
+        assert!(
+            validate_voice_channel_selection(
+                &json!({"channel_choice":"choice_0123456789abcdef0123456789abcdef"})
+            )
+            .is_ok()
+        );
+        for args in [
+            json!({}),
+            json!({"channel":"Stage 1","channel_choice":"choice_0123456789abcdef0123456789abcdef"}),
+            json!({"thread_id":"123"}),
+            json!({"channel":"Stage 1","thread_id":"123"}),
+            json!({"channel_choice":"not-a-choice"}),
+            json!({"channel":12}),
+            json!({"extra":"ignored"}),
+        ] {
+            assert!(
+                validate_voice_channel_selection(&args).is_err(),
+                "accepted {args}"
+            );
+        }
+    }
+
+    #[test]
+    fn voice_name_lookup_filters_same_named_text_channels_and_respects_category() {
+        let mut category_a = GuildChannel::default();
+        category_a.id = ChannelId::new(1);
+        category_a.name = "Games".into();
+        category_a.kind = ChannelType::Category;
+        let mut voice_a = GuildChannel::default();
+        voice_a.id = ChannelId::new(2);
+        voice_a.name = "Lobby".into();
+        voice_a.parent_id = Some(ChannelId::new(1));
+        voice_a.kind = ChannelType::Voice;
+        let mut text_a = GuildChannel::default();
+        text_a.id = ChannelId::new(3);
+        text_a.name = "Lobby".into();
+        text_a.parent_id = Some(ChannelId::new(1));
+        text_a.kind = ChannelType::Text;
+        let mut voice_b = voice_a.clone();
+        voice_b.id = ChannelId::new(4);
+        voice_b.parent_id = None;
+        let channels = vec![category_a, voice_a.clone(), text_a, voice_b.clone()];
+        let categories = HashMap::from([(ChannelId::new(1), "Games".to_owned())]);
+        let matches = matching_named_channels(
+            &channels,
+            &categories,
+            Some("Games"),
+            "Lobby",
+            Some(ChannelType::Voice),
+        );
+        assert_eq!(
+            matches.iter().map(|channel| channel.id).collect::<Vec<_>>(),
+            vec![voice_a.id]
+        );
+        assert!(require_voice_channel(&voice_a).is_ok());
+        assert!(require_voice_channel(&channels[2]).is_err());
+        let unqualified = matching_named_channels(
+            &channels,
+            &categories,
+            None,
+            "Lobby",
+            Some(ChannelType::Voice),
+        );
+        assert_eq!(unqualified.len(), 2);
     }
 
     #[test]

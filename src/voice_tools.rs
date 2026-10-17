@@ -8,7 +8,8 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufRea
 // The summary replaces one Discord message (no prefix is added).
 pub(crate) const MAX_VOICE_LEAVE_SUMMARY_CHARS: usize = 2000;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
-const DISCORD_TOOL_NAMES: [&str; 6] = [
+const DISCORD_TOOL_NAMES: [&str; 7] = [
+    "voice_join",
     "discord_list_channels",
     "discord_send_message",
     "discord_get_messages",
@@ -112,6 +113,7 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
                         "additionalProperties":false
                     }
                 })];
+                tools.push(voice_join_definition(language));
                 tools.extend(crate::discord_tools::tool_definitions(language));
                 tools.push(json!({
                     "name":"discord_read_voice_inbox",
@@ -163,6 +165,32 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
         };
         write_response(&mut writer, &response).await?;
     }
+}
+
+fn voice_join_definition(language: crate::i18n::Language) -> Value {
+    json!({
+        "name":"voice_join",
+        "description":crate::instructions::voice_join_policy(language),
+        "inputSchema":{
+            "type":"object",
+            "properties":{
+                "channel":{"type":"string","minLength":1,"description":language.text(
+                    "Voice channel name, optionally category/channel",
+                    "음성 채널 이름. 필요하면 카테고리/채널 형식으로 지정",
+                    "语音频道名称，可使用分类/频道格式",
+                    "音声チャンネル名。必要に応じてカテゴリ/チャンネルで指定"
+                )},
+                "channel_choice":{"type":"string","minLength":1,"description":language.text(
+                    "Choice from discord_list_channels or an ambiguous lookup",
+                    "discord_list_channels 또는 중복 이름 조회 결과의 선택 값",
+                    "discord_list_channels 或名称歧义查询返回的选项值",
+                    "discord_list_channelsまたは候補一覧で返された選択値"
+                )}
+            },
+            "oneOf":[{"required":["channel"]},{"required":["channel_choice"]}],
+            "additionalProperties":false
+        }
+    })
 }
 
 async fn read_line<R>(reader: &mut R, line: &mut Vec<u8>) -> Result<bool>
