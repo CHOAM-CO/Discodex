@@ -1320,6 +1320,7 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
             "author": author_name,
         })
     };
+    let source = add_author_mention_metadata(source, msg.author.id.get());
     let source = add_bot_source_metadata(source, msg.author.bot);
     let forwarded = crate::attachments::forwarded_message_data(msg);
     crate::attachments::format_ingress_message(&msg.content, &forwarded, source)
@@ -1333,6 +1334,16 @@ fn add_bot_source_metadata(
         if let Some(source) = source.as_object_mut() {
             source.insert("authorIsBot".to_owned(), serde_json::Value::Bool(true));
         }
+    }
+    source
+}
+
+fn add_author_mention_metadata(mut source: serde_json::Value, author_id: u64) -> serde_json::Value {
+    if let Some(source) = source.as_object_mut() {
+        source.insert(
+            "authorMention".to_owned(),
+            serde_json::Value::String(format!("<@{author_id}>")),
+        );
     }
     source
 }
@@ -3449,14 +3460,9 @@ async fn handle_native_event(
                             let content = (*chunk).to_owned();
                             let home = ChannelId::new(state.config.home_channel_id);
                             let (channel, builder) = if index > 0 && target.channel_id != home {
-                                (
-                                    home,
-                                    CreateMessage::new()
-                                        .content(content)
-                                        .allowed_mentions(empty_mentions()),
-                                )
+                                (home, assistant_continuation_message(&content))
                             } else {
-                                conversation_reply_message_localized(
+                                assistant_conversation_reply_message_localized(
                                     &target,
                                     home,
                                     state.config.guild_id,
@@ -3742,6 +3748,33 @@ pub(crate) fn conversation_reply_message_localized(
     (home_channel, builder)
 }
 
+fn assistant_conversation_reply_message_localized(
+    target: &ReplyTarget,
+    home_channel: ChannelId,
+    guild_id: u64,
+    content: &str,
+    language: &crate::i18n::Language,
+) -> (ChannelId, CreateMessage) {
+    let (channel, builder) =
+        conversation_reply_message_localized(target, home_channel, guild_id, content, language);
+    (channel, builder.allowed_mentions(allowed_user_mentions()))
+}
+
+fn assistant_continuation_message(content: &str) -> CreateMessage {
+    CreateMessage::new()
+        .content(content)
+        .allowed_mentions(allowed_user_mentions())
+}
+
+fn allowed_user_mentions() -> serenity::builder::CreateAllowedMentions {
+    serenity::builder::CreateAllowedMentions::new()
+        .everyone(false)
+        .all_roles(false)
+        .all_users(true)
+        .replied_user(false)
+        .empty_roles()
+}
+
 fn assistant_reply_message(target: &ReplyTarget, content: &str) -> CreateMessage {
     CreateMessage::new()
         .content(content)
@@ -3865,6 +3898,14 @@ mod tests {
         assert_eq!(
             super::add_bot_source_metadata(source.clone(), false),
             source
+        );
+    }
+
+    #[test]
+    fn live_source_includes_the_author_mention_token() {
+        assert_eq!(
+            super::add_author_mention_metadata(serde_json::json!({"author":"Agent"}), 123456),
+            serde_json::json!({"author":"Agent", "authorMention":"<@123456>"})
         );
     }
     #[test]
@@ -4798,6 +4839,34 @@ mod tests {
         assert_eq!(payload["message_reference"]["message_id"], "76");
         assert_eq!(payload["message_reference"]["channel_id"], "42");
         assert_eq!(payload["allowed_mentions"]["replied_user"], false);
+    }
+
+    #[test]
+    fn generated_conversation_reply_allows_explicit_user_mentions() {
+        let target = ReplyTarget {
+            source_guild: None,
+            channel_id: ChannelId::new(42),
+            message_id: serenity::all::MessageId::new(76),
+        };
+        let (_, message) = assistant_conversation_reply_message_localized(
+            &target,
+            ChannelId::new(42),
+            9,
+            "<@123456> hello",
+            &crate::i18n::Language::English,
+        );
+        let payload = serde_json::to_value(message).expect("serialize assistant reply");
+
+        assert_eq!(payload["content"], "<@123456> hello");
+        assert_eq!(
+            payload["allowed_mentions"]["parse"],
+            serde_json::json!(["users"])
+        );
+        assert_eq!(payload["allowed_mentions"]["replied_user"], false);
+
+        let status = serde_json::to_value(assistant_reply_message(&target, "status"))
+            .expect("serialize status reply");
+        assert_eq!(status["allowed_mentions"]["parse"], serde_json::json!([]));
     }
 
     fn approval_item_event(generation: u64, item_type: &str, status: &str) -> serde_json::Value {
