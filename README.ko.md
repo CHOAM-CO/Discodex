@@ -17,11 +17,9 @@ Discodex는 Discord 앱 프로필 하나를 공식 Codex app-server의 지속 �
 
 ## 시작하기
 
-Rust 1.94 이상, Cargo, 운영체제의 빌드 도구가 필요합니다.
+[최신 릴리스](https://github.com/CHOAM-CO/Discodex/releases/latest)에서 `discodex-installers.zip`을 내려받아 압축을 풀고 해당 폴더에서 실행합니다. 설치 스크립트가 운영체제와 아키텍처에 맞는 완성 바이너리를 받으므로 Rust·Cargo·Git은 필요하지 않습니다.
 
 ```sh
-git clone https://github.com/CHOAM-CO/Discodex.git
-cd Discodex
 ./install
 ```
 
@@ -31,7 +29,7 @@ Windows PowerShell에서는 `./scripts/install.ps1`을 실행합니다. 설치�
 
 ## 업데이트
 
-추적 파일에 로컬 변경이 없는 소스 checkout에서 기존 설정 파일로 프로필을 업데이트합니다.
+설치 스크립트 묶음의 업데이터에 기존 설정 파일을 지정합니다.
 
 ```sh
 ./update --config "<기존-config.json-경로>"
@@ -43,7 +41,7 @@ Windows PowerShell에서는 다음을 실행합니다.
 ./scripts/update.ps1 -Config "<기존-config.json-경로>"
 ```
 
-업데이터는 로컬 추적 파일이 깨끗할 때만 checkout을 fast-forward하고 release 바이너리를 빌드한 뒤 `--config`가 지정한 프로필에 적용합니다. 언어를 다시 묻거나 프로필 설정을 다시 쓰지 않습니다. 선택한 언어, 자격증명, 지속되는 Codex 대화 상태는 해당 프로필에 남습니다. 소유 바이너리 교체에 실패하면 이전 바이너리와 서비스 상태로 복구합니다. `./install --update --config ...` 및 `./scripts/install.ps1 -Update -Config ...`도 같은 업데이트를 실행합니다.
+업데이터는 플랫폼에 맞는 릴리스 바이너리를 다운로드·검증하고 `--config`가 지정한 프로필에 적용합니다. Discord의 업데이트 버튼도 같은 완성 바이너리를 사용합니다. 언어를 다시 묻거나 프로필 설정을 다시 쓰지 않습니다. 선택한 언어, 자격증명, 지속되는 Codex 대화 상태는 해당 프로필에 남습니다. 소유 바이너리 교체에 실패하면 이전 바이너리와 서비스 상태로 복구합니다. `./install --update --config ...` 및 `./scripts/install.ps1 -Update -Config ...`도 같은 업데이트를 실행합니다.
 
 ## Discord 명령
 

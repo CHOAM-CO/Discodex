@@ -21,18 +21,18 @@ msg() {
   key=$1
   shift
   case "$key:$DISCODEX_LANGUAGE" in
-    unsupported:en) printf 'This source bootstrap supports Linux and macOS x86_64/aarch64; detected %s %s.\n' "$@" ;;
-    unsupported:ko) printf '이 설치 bootstrap은 Linux/macOS x86_64/aarch64를 지원합니다. 감지한 환경: %s %s.\n' "$@" ;;
-    unsupported:zh) printf '此安装引导程序支持 Linux 和 macOS x86_64/aarch64；检测到：%s %s。\n' "$@" ;;
-    unsupported:ja) printf 'このインストール用ブートストラップは Linux/macOS x86_64/aarch64 に対応しています。検出値: %s %s。\n' "$@" ;;
-    cargo:en) printf '%s\n' 'Rust Cargo is required. Install Rust with the official rustup instructions, reopen the shell, and rerun this script.' ;;
-    cargo:ko) printf '%s\n' 'Rust Cargo가 필요합니다. 공식 rustup 안내에 따라 Rust를 설치하고 셸을 다시 연 뒤 이 스크립트를 실행하세요.' ;;
-    cargo:zh) printf '%s\n' '需要 Rust Cargo。请按照 rustup 官方说明安装 Rust，重新打开 shell，然后再次运行此脚本。' ;;
-    cargo:ja) printf '%s\n' 'Rust Cargo が必要です。rustup の公式手順で Rust をインストールし、シェルを開き直してから再実行してください。' ;;
+    unsupported:en) printf 'No prebuilt Discodex release is available for %s %s.\n' "$@" ;;
+    unsupported:ko) printf '감지한 환경(%s %s)에 사용할 Discodex 사전 빌드 릴리스가 없습니다.\n' "$@" ;;
+    unsupported:zh) printf '没有适用于检测到的环境 %s %s 的 Discodex 预构建版本。\n' "$@" ;;
+    unsupported:ja) printf '検出された環境 %s %s 用の Discodex ビルド済みリリースはありません。\n' "$@" ;;
+    download:en) printf '%s\n' 'curl is required to download the official Discodex release.' ;;
+    download:ko) printf '%s\n' '공식 Discodex 릴리스를 다운로드하려면 curl이 필요합니다.' ;;
+    download:zh) printf '%s\n' '下载 Discodex 官方预构建版本需要 curl。' ;;
+    download:ja) printf '%s\n' 'Discodex 公式ビルド済みリリースのダウンロードには curl が必要です。' ;;
     help:en) printf '%s\n' './install (new installation)' './update --config <profile-config> (update)' './install --update --config <profile-config> (update alias)' ;;
     help:ko) printf '%s\n' './install (새 설치)' './update --config <profile-config> (업데이트)' './install --update --config <profile-config> (업데이트 별칭)' ;;
     help:zh) printf '%s\n' './install（新安装）' './update --config <profile-config>（更新）' './install --update --config <profile-config>（更新别名）' ;;
-    help:ja) printf '%s\n' './install（新規インストール）' './update --config <profile-config>（更新）' './install --update --config <profile-config>（更新エイリアス）' ;;
+    help:ja) printf '%s\n' './install（新規インストール）' './update --config <profile-config>（更新）' './install --update --config <profile-config>（更新別名）' ;;
     unknown:en) printf '%s\n' 'Unknown install option; use ./install --help.' ;;
     unknown:ko) printf '%s\n' '알 수 없는 설치 옵션입니다. ./install --help를 사용하세요.' ;;
     unknown:zh) printf '%s\n' '未知的安装选项；请使用 ./install --help。' ;;
@@ -49,7 +49,10 @@ msg() {
 }
 
 case "$(uname -s):$(uname -m)" in
-  Linux:x86_64|Linux:aarch64|Linux:arm64|Darwin:x86_64|Darwin:arm64|Darwin:aarch64) ;;
+  Linux:x86_64|Linux:amd64) TARGET=x86_64-unknown-linux-gnu ;;
+  Linux:aarch64|Linux:arm64) TARGET=aarch64-unknown-linux-gnu ;;
+  Darwin:x86_64|Darwin:amd64) TARGET=x86_64-apple-darwin ;;
+  Darwin:arm64|Darwin:aarch64) TARGET=aarch64-apple-darwin ;;
   *) msg unsupported "$(uname -s)" "$(uname -m)" >&2; exit 2 ;;
 esac
 
@@ -58,15 +61,7 @@ case "${1:-}" in
   '') ;;
   *) msg unknown >&2; exit 2 ;;
 esac
-command -v cargo >/dev/null 2>&1 || {
-  msg cargo >&2
-  exit 2
-}
-
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-BUILD_ROOT=${CARGO_TARGET_DIR:-"$REPOSITORY_ROOT/target"}
-cargo build --locked --release --manifest-path "$REPOSITORY_ROOT/Cargo.toml" --target-dir "$BUILD_ROOT"
+command -v curl >/dev/null 2>&1 || { msg download >&2; exit 2; }
 
 DATA_ROOT=${XDG_DATA_HOME:-"${HOME:?HOME is not set}/.local/share"}/discodex
 BIN_ROOT="$DATA_ROOT/bin"
@@ -77,17 +72,41 @@ if [ -e "$INSTALLED" ]; then
   msg refuse "$INSTALLED" >&2
   exit 2
 fi
-STAGED="$BIN_ROOT/.discodex.installing"
-cp "$BUILD_ROOT/release/discodex" "$STAGED"
+
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/discodex-install.XXXXXX")
+STAGED=$(mktemp "$BIN_ROOT/.discodex.installing.XXXXXX")
+cleanup() { rm -f "$STAGED"; rm -rf "$TEMP_DIR"; }
+trap cleanup EXIT HUP INT TERM
+ASSET="discodex-${TARGET}"
+BASE_URL="https://github.com/CHOAM-CO/Discodex/releases/latest/download"
+BINARY="$TEMP_DIR/$ASSET"
+CHECKSUM="$TEMP_DIR/$ASSET.sha256"
+curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET" --output "$BINARY"
+curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET.sha256" --output "$CHECKSUM"
+EXPECTED=$(awk 'NR == 1 { print $1 }' "$CHECKSUM")
+case "$EXPECTED" in
+  ''|*[!0123456789abcdefABCDEF]*) printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1 ;;
+esac
+[ "${#EXPECTED}" -eq 64 ] || { printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1; }
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "$BINARY" | awk '{ print $1 }')
+else
+  ACTUAL=$(shasum -a 256 "$BINARY" | awk '{ print $1 }')
+fi
+[ "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$ACTUAL" | tr '[:upper:]' '[:lower:]')" ] || {
+  printf '%s\n' 'The downloaded release binary failed SHA256 verification.' >&2
+  exit 1
+}
+cp "$BINARY" "$STAGED"
 chmod 700 "$STAGED"
-trap 'rm -f "$STAGED"' EXIT HUP INT TERM
 if [ "$(uname -s)" = Darwin ]; then
-  "$BUILD_ROOT/release/discodex" mac-sign --binary "$STAGED"
+  "$STAGED" mac-sign --binary "$STAGED"
 fi
 if ! ln "$STAGED" "$INSTALLED"; then
-  rm -f "$STAGED"
   msg raced "$INSTALLED" >&2
   exit 2
 fi
-rm "$STAGED"
+rm -f "$STAGED"
+rm -rf "$TEMP_DIR"
+trap - EXIT HUP INT TERM
 exec "$INSTALLED" install

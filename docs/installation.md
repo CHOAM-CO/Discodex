@@ -1,6 +1,6 @@
 # 설치와 제거
 
-이 안내는 소스 checkout에서 사용자 범위 설치를 시작하는 방법이다. Rust 1.94 이상과 각 OS의 빌드 도구가 필요하다. 저장소 루트 Cargo 패키지를 빌드한다.
+이 안내는 사용자 범위 설치와 업데이트를 시작하는 방법이다. 설치 스크립트는 GitHub 정식 Release에서 OS·아키텍처에 맞는 사전 빌드 실행 파일과 SHA-256 체크섬을 내려받아 확인한다. 로컬 Rust/Cargo나 플랫폼 빌드 도구는 필요하지 않다. Linux 사전 빌드는 Ubuntu 22.04(glibc 2.35)에서 만들며, 이를 Linux 호환성 기준으로 삼는다.
 
 Linux/macOS:
 
@@ -33,15 +33,15 @@ $env:DISCODEX_LANGUAGE = 'ko'
 
 ## 기존 프로필 옮기기
 
-기존 Codex Worker 설치에서 프로필 하나를 옮기려면 checkout에서 해당 설정 파일을 지정해 migration을 실행한다. Windows에서는 실제 설정 파일을 PowerShell 경로로 지정한다.
+기존 Codex Worker 설치에서 프로필 하나를 옮기려면 내려받은 Discodex 실행 파일에 해당 설정 파일을 지정해 migration을 실행한다. Windows에서는 실제 설정 파일을 PowerShell 경로로 지정한다.
 
 ```sh
-cargo run --locked --release --bin discodex -- migrate --config "<path-to-legacy-config.json>"
+./discodex migrate --config "<path-to-legacy-config.json>"
 ```
 
 macOS, Linux, Windows에서 migration은 지정한 프로필만 소유 기록과 서비스로 확인한 뒤 설정·자격증명·설치 목록·상태를 새 `discodex` 경로에 복사한다. 원본 경로는 롤백과 데이터 보존을 위해 남는다. 옮긴 프로필을 확인하기 전에는 원본을 삭제하지 않는다.
 
-또는 Linux/macOS에서 직접 `sh scripts/install.sh`를 실행한다. 설치 bootstrap은 루트 `Cargo.toml`을 사용해 release 바이너리를 만들고 `discodex` 이름과 사용자 데이터 기본 경로를 사용한다. 대상 파일이 이미 있으면 덮어쓰지 않는다.
+또는 Linux/macOS에서 직접 `sh scripts/install.sh`를 실행한다. 설치 bootstrap은 GitHub Release의 플랫폼별 실행 파일을 내려받아 SHA-256 체크섬을 확인하고 `discodex` 이름과 사용자 데이터 기본 경로를 사용한다. 대상 파일이 이미 있으면 덮어쓰지 않는다.
 
 ## 첫 설치
 
@@ -51,7 +51,7 @@ macOS, Linux, Windows에서 migration은 지정한 프로필만 소유 기록과
 
 ## 업데이트
 
-기존 프로필을 업데이트하려면 최신 소스 checkout에서 그 프로필의 기존 config 파일을 명시한다. 한 기기에 여러 프로필이 있어도 선택을 추측하지 않는다. 업데이트는 저장된 프로필 언어를 그대로 사용하며 언어 선택을 다시 묻지 않는다.
+기존 프로필을 업데이트할 때는 설치 스크립트에 그 프로필의 기존 config 파일을 명시한다. 한 기기에 여러 프로필이 있어도 선택을 추측하지 않는다. 업데이트는 저장된 프로필 언어를 그대로 사용하며 언어 선택을 다시 묻지 않는다.
 
 macOS와 Linux:
 
@@ -65,7 +65,7 @@ Windows PowerShell:
 ./scripts/update.ps1 -Config "<path-to-existing-config.json>"
 ```
 
-업데이터는 추적 파일에 로컬 변경이 없을 때만 저장소의 설정된 upstream을 fast-forward하고 release 바이너리를 빌드한다. 로컬 추적 변경이 있거나 branch가 fast-forward될 수 없으면 파일을 덮어쓰지 않고 중단한다. 빌드한 바이너리는 `discodex update --source <new-binary> --config <existing-config>`에 전달되어 지정된 소유 프로필만 업데이트한다. `./install --update --config ...`와 Windows의 `./scripts/install.ps1 -Update -Config ...`는 같은 업데이트 경로의 별칭이다.
+업데이트 스크립트는 GitHub 정식 Release에서 현재 플랫폼의 사전 빌드 실행 파일과 SHA-256 체크섬을 내려받아 확인한다. 소스 checkout을 변경하거나 소스에서 바이너리를 빌드하지 않는다. 확인된 바이너리는 `discodex update --source <new-binary> --config <existing-config>`에 전달되어 지정된 소유 프로필만 업데이트한다. `./install --update --config ...`와 Windows의 `./scripts/install.ps1 -Update -Config ...`는 같은 업데이트 경로의 별칭이다.
 
 업데이트는 기존 프로필의 언어, 설정, 자격증명과 지속 Codex 대화 상태를 보존하고 새 프로필을 만들지 않는다. 실행 파일 교체나 서비스 재시작이 실패하면 이전 소유 실행 파일과 소유 기록, 이전 서비스 상태로 롤백한다. 롤백/데이터 보존을 위해 남겨둔 레거시 디렉터리는 자동 삭제하지 않는다. 기존 설정이나 대화 상태를 변경하는 작업은 별도의 명시적 migration 절차이며 업데이트가 이를 대신하지 않는다.
 
@@ -111,7 +111,7 @@ macOS 첫 설치는 이 Mac의 로그인 키체인에 로컬 코드 서명 키�
 
 서명 메타데이터와 공개 인증서는 `~/Library/Application Support/Discodex/signing/`에 보존한다. 이전 `Codex Worker/signing/` 경로의 디렉터리가 있으면 새 경로가 없는 경우 전체 디렉터리를 원자적으로 옮겨 기존 서명 정체성을 보존한다. 서명 정체성 보존만으로 경로 기반 TCC 권한이 새 실행 파일 경로에 자동 적용되지는 않는다. 경로가 바뀌는 설치는 위 FDA 안내로 새 실행 파일 경로를 보여 주며, Files & Folders 및 AppleEvents 권한은 macOS가 별도로 요청할 수 있다. 새 경로가 이미 비어 있지만 기존 서명 identity/certificate가 남아 있으면 기존 signing 경로를 계속 사용한다. 프로필 제거 시에도 이 공유 서명 키와 메타데이터는 재설치를 위해 보존한다. 이 디렉터리나 키체인의 서명 키를 삭제하면 기존 코드 정체성을 유지할 수 없으므로 자동으로 새 키를 만들지 않는다. 이 로컬 서명은 Developer ID 서명·공증을 대신하는 공개 배포 수단이 아니다.
 
-macOS에서도 위의 공통 `./update --config "<path-to-existing-config.json>"`을 사용한다. 이 스크립트는 최신 소스를 fast-forward하고 release 바이너리를 빌드한 뒤 앱의 업데이트 경로를 호출한다. 기존 임시(ad-hoc) 서명 설치를 최초 전환할 때만 `--migrate-adhoc`를 추가한다. `./install --update --config ...`는 같은 공통 업데이트 경로의 이전 설치 별칭이다. 업데이트는 기존 서명 정체성을 유지하고 선택된 프로필의 서비스만 재시작한다. 원래 실행 중이지 않던 서비스는 시작하지 않는다. 설정·자격증명·Codex 대화 상태는 보존되며 업데이트 실패 시 이전 실행 파일과 소유 기록 및 서비스 상태를 복원한다.
+macOS에서도 위의 공통 `./update --config "<path-to-existing-config.json>"`을 사용한다. 이 스크립트는 GitHub 정식 Release의 macOS 실행 파일과 SHA-256 체크섬을 내려받아 확인한 뒤 앱의 업데이트 경로를 호출한다. 기존 임시(ad-hoc) 서명 설치를 최초 전환할 때만 `--migrate-adhoc`를 추가한다. `./install --update --config ...`는 같은 공통 업데이트 경로의 이전 설치 별칭이다. 업데이트는 기존 서명 정체성을 유지하고 선택된 프로필의 서비스만 재시작한다. 원래 실행 중이지 않던 서비스는 시작하지 않는다. 설정·자격증명·Codex 대화 상태는 보존되며 업데이트 실패 시 이전 실행 파일과 소유 기록 및 서비스 상태를 복원한다.
 
 전체 디스크 접근의 실제 유지 여부는 사용자가 macOS에서 확인한다. 제품은 TCC 데이터베이스를 수정하거나 권한 허용을 자동화하지 않는다. Apple 근거: [안정적인 서명과 파일 접근 권한](https://developer.apple.com/forums/thread/678819), [코드 서명의 동일성 및 자체 서명](https://developer.apple.com/library/archive/technotes/tn2206/_index.html).
 
@@ -127,9 +127,9 @@ macOS에서도 위의 공통 `./update --config "<path-to-existing-config.json>"
 
 GitHub에 더 새 정식 Release가 게시되면 Discodex가 백그라운드로 확인하고 작업과 통화가 끝난 뒤 5분간 유휴 상태일 때 홈채널에 알립니다. Update는 표시한 버전을 예약하고, Skip this version은 그 버전만 건너뛰며, Never notify again은 해당 프로필의 알림을 끕니다. /discodex settings의 업데이트 알림 항목에서 다시 켤 수 있습니다. 실제 버튼 문구는 프로필 언어를 따릅니다.
 
-현재 배포 방식에서는 승인한 Release의 소스를 별도 디렉터리에 받아 release 바이너리를 빌드하므로 설치 때 사용한 Rust Cargo와 플랫폼 빌드 의존성이 필요합니다. 사용자의 소스 체크아웃은 변경하지 않습니다. 준비 단계에는 빌드 자원을 사용하며 실행 파일 교체는 유휴 상태를 다시 확인한 뒤 별도 업데이터가 처리합니다. 기존 세션·설정·자동 시작과 Mac 서명 정체성을 유지하며 짧게 재접속합니다. 실패 시 자동으로 반복 적용하지 않고 같은 알림에 결과를 표시합니다.
+Discodex는 승인한 GitHub Release에서 현재 OS와 아키텍처에 맞는 사전 빌드 실행 파일을 내려받아 GitHub Release API의 SHA-256 digest와 크기를 확인합니다. 클라이언트는 소스를 내려받거나 빌드하지 않으므로 이 업데이트에 Rust Cargo나 플랫폼 빌드 도구가 필요하지 않습니다. 실행 파일 교체는 유휴 상태를 다시 확인한 뒤 별도 업데이터가 처리합니다. Release에 현재 플랫폼용 실행 파일이 없거나 digest 검증에 실패하면 업데이트 준비를 중단하고 결과를 표시합니다. 기존 세션·설정·자동 시작과 Mac 서명 정체성을 유지하며 짧게 재접속합니다. 실패 시 자동으로 반복 적용하지 않고 같은 알림에 결과를 표시합니다.
 
-알림의 기준은 main 브랜치의 모든 커밋이 아니라 정식 GitHub Release입니다. 배포할 때 Cargo 패키지 버전과 Release의 vX.Y.Z 태그를 일치시킵니다. 기존 수동 업데이트 스크립트는 계속 사용할 수 있습니다.
+알림의 기준은 main 브랜치의 모든 커밋이 아니라 정식 GitHub Release입니다. 배포할 때 Cargo 패키지 버전과 Release의 vX.Y.Z 태그를 일치시킵니다. 수동 업데이트 스크립트도 같은 플랫폼별 Release 실행 파일을 내려받아 SHA-256 체크섬을 확인합니다.
 
 ## 작업 도구 업데이트
 

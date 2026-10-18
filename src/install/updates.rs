@@ -1,25 +1,24 @@
-//! Release discovery and pinned-source update preparation for Discord notifications.
+//! Release discovery and prebuilt-asset update preparation for Discord notifications.
 //!
 //! Discovery, preparation, state changes, and the eventual service update are kept
-//! separate so the Discord loop can do network/build work without holding its state
+//! separate so the Discord loop can do network work without holding its state
 //! mutex and can make the final idle decision immediately before handoff.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use tar::Archive;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const RELEASE_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/releases/latest";
 const COMMIT_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/commits/";
-const ARCHIVE_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/tarball/";
+const RELEASE_BY_ID_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/releases/";
 pub const DEFAULT_CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -30,6 +29,8 @@ pub struct ReleaseNotice {
     pub tag: String,
     pub commit: String,
     pub url: String,
+    #[serde(default)]
+    pub asset: Option<ReleaseAsset>,
     pub body: String,
     pub published_at: Option<String>,
 }
@@ -42,6 +43,17 @@ pub struct PinnedRelease {
     pub tag: String,
     pub commit: String,
     pub url: String,
+    #[serde(default)]
+    pub asset: Option<ReleaseAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseAsset {
+    pub name: String,
+    pub download_url: String,
+    pub digest: Option<String>,
+    pub size: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130,6 +142,16 @@ struct GithubRelease {
     published_at: Option<String>,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
+    size: u64,
 }
 
 #[derive(Deserialize)]
@@ -222,6 +244,7 @@ impl UpdateStore {
             tag: release.tag.clone(),
             commit: release.commit.clone(),
             url: release.url.clone(),
+            asset: release.asset.clone(),
         };
         self.snapshot.pending = Some(pinned.clone());
         self.snapshot.status = UpdateStatus::Selected;
@@ -659,12 +682,15 @@ pub fn check_release(
             release: None,
         });
     }
+    let asset_name = platform_asset_name()?;
+    let asset = release_asset(release.assets, asset_name);
     let notice = ReleaseNotice {
         release_id: release.id,
         version: release.tag_name.trim_start_matches('v').to_owned(),
         tag: release.tag_name,
         commit: commit.sha,
         url: release.html_url,
+        asset,
         body: release.body.unwrap_or_default(),
         published_at: release.published_at,
     };
@@ -691,82 +717,66 @@ fn is_newer_version(candidate: &str, installed: &str) -> bool {
     }
 }
 
-/// Download the immutable commit archive and build into profile state. The checkout
-/// is not moved or modified, and the result is a separate executable for handoff.
-pub fn prepare_update(pinned: PinnedRelease, state_dir: &Path) -> Result<PreparedUpdate> {
+/// Download the pinned release's prebuilt platform executable into profile state.
+/// Legacy pending records without asset metadata resolve that same release ID once.
+pub fn prepare_update(mut pinned: PinnedRelease, state_dir: &Path) -> Result<PreparedUpdate> {
     ensure!(
         !pinned.commit.is_empty(),
         "pinned release has no commit SHA"
     );
-    let update_root = state_dir.join("updates");
-    let work_root = update_root.join("source");
-    let binary_root = update_root
-        .join("prepared")
-        .join(pinned.release_id.to_string());
-    fs::create_dir_all(&work_root)?;
-    fs::create_dir_all(&binary_root)?;
-    let temp = tempfile::Builder::new()
-        .prefix("source-")
-        .tempdir_in(&work_root)?;
-    let archive_url = format!("{ARCHIVE_URL}{}", pinned.commit);
+    let asset_name = platform_asset_name()?;
     let client = Client::builder()
         .user_agent(concat!("Discodex/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(120))
         .build()?;
+    if pinned.asset.is_none() {
+        let release: GithubRelease = client
+            .get(format!("{RELEASE_BY_ID_URL}{}", pinned.release_id))
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .context("resolve selected GitHub release assets")?
+            .error_for_status()
+            .context("GitHub could not resolve selected release")?
+            .json()
+            .context("parse selected release assets")?;
+        ensure!(
+            release.id == pinned.release_id,
+            "GitHub returned a different release ID"
+        );
+        pinned.asset = release_asset(release.assets, asset_name);
+    }
+    let asset = require_release_asset(pinned.asset.clone(), &pinned.tag, asset_name)?;
+    ensure!(
+        asset.name == asset_name,
+        "pinned release asset does not match this platform"
+    );
+    let update_root = state_dir.join("updates");
+    let binary_root = update_root
+        .join("prepared")
+        .join(pinned.release_id.to_string());
+    fs::create_dir_all(&binary_root)?;
     let mut response = client
-        .get(archive_url)
-        .header("Accept", "application/vnd.github+json")
+        .get(&asset.download_url)
+        .header("Accept", "application/octet-stream")
         .send()
-        .context("download pinned release source")?
+        .context("download prebuilt release executable")?
         .error_for_status()
-        .context("GitHub rejected pinned source archive")?;
-    let archive_path = temp.path().join("source.tar.gz");
-    let mut archive_file = File::create(&archive_path)?;
-    io::copy(&mut response, &mut archive_file).context("save pinned source archive")?;
-    archive_file.sync_all()?;
-    let unpack = temp.path().join("unpacked");
-    fs::create_dir(&unpack)?;
-    let decoder = GzDecoder::new(File::open(&archive_path)?);
-    Archive::new(decoder)
-        .unpack(&unpack)
-        .context("unpack pinned source archive")?;
-    let source = fs::read_dir(&unpack)?
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| path.is_dir() && path.join("Cargo.toml").is_file())
-        .context("pinned archive contains no Cargo project")?;
-    let target_dir = update_root.join("cargo-target");
-    let cargo = cargo_executable();
-    let mut command = build_command(&cargo);
-    let status = command
-        .args(["build", "--locked", "--release", "--manifest-path"])
-        .arg(source.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(&target_dir)
-        .env("DISCODEX_BUILD_COMMIT", &pinned.commit)
-        .env("PATH", extended_build_path(&cargo)?)
-        .stdin(Stdio::null())
-        .status()
-        .context("start pinned release build (Cargo is required)")?;
-    ensure!(
-        status.success(),
-        "pinned Discodex release build failed: {status}"
-    );
-    let exe_name = if cfg!(windows) {
-        "discodex.exe"
-    } else {
-        "discodex"
-    };
-    let built = target_dir.join("release").join(exe_name);
-    ensure!(
-        built.is_file(),
-        "pinned release build did not produce {}",
-        built.display()
-    );
-    let binary = binary_root.join(exe_name);
+        .context("GitHub rejected prebuilt release executable download")?;
+    let binary = binary_root.join(asset_name);
     let staged = tempfile::NamedTempFile::new_in(&binary_root)?;
-    fs::copy(&built, staged.path()).context("stage built pinned binary")?;
-    staged.as_file().sync_all()?;
+    let mut output = staged.reopen()?;
+    copy_verified_asset(&mut response, &mut output, &asset)?;
+    output
+        .sync_all()
+        .context("flush prepared release executable")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        staged
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))?;
+    }
+    drop(output);
     staged
         .persist(&binary)
         .map_err(|error| anyhow!("save prepared update: {}", error.error))?;
@@ -778,58 +788,87 @@ pub fn prepare_update(pinned: PinnedRelease, state_dir: &Path) -> Result<Prepare
     })
 }
 
-fn cargo_executable() -> PathBuf {
-    if let Some(cargo) = std::env::var_os("CARGO")
-        .map(PathBuf::from)
-        .filter(|p| p.is_file())
-    {
-        return cargo;
-    }
-    if let Some(path) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&path) {
-            let candidate = directory.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
-            if candidate.is_file() {
-                return candidate;
-            }
+fn copy_verified_asset(
+    reader: &mut impl Read,
+    output: &mut impl Write,
+    asset: &ReleaseAsset,
+) -> Result<()> {
+    let digest = asset
+        .digest
+        .as_deref()
+        .context("GitHub release asset has no SHA-256 digest")?;
+    let expected_hash = digest
+        .strip_prefix("sha256:")
+        .context("GitHub release asset digest is not SHA-256")?;
+    ensure!(
+        expected_hash.len() == 64 && expected_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "GitHub release asset SHA-256 digest is malformed"
+    );
+    let mut hasher = Sha256::new();
+    let mut size = 0u64;
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .context("read prebuilt release executable")?;
+        if read == 0 {
+            break;
         }
+        output
+            .write_all(&buffer[..read])
+            .context("save prebuilt release executable")?;
+        hasher.update(&buffer[..read]);
+        size += read as u64;
     }
-    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        let candidate = PathBuf::from(home)
-            .join(".cargo")
-            .join("bin")
-            .join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
-        if candidate.is_file() {
-            return candidate;
-        }
-    }
-    PathBuf::from(if cfg!(windows) { "cargo.exe" } else { "cargo" })
+    ensure!(
+        size == asset.size,
+        "release executable size mismatch (expected {}, received {size})",
+        asset.size
+    );
+    let actual_hash = format!("{:x}", hasher.finalize());
+    ensure!(
+        actual_hash.eq_ignore_ascii_case(expected_hash),
+        "release executable SHA-256 mismatch"
+    );
+    Ok(())
 }
 
-fn extended_build_path(cargo: &Path) -> Result<std::ffi::OsString> {
-    let mut paths = Vec::new();
-    if cfg!(target_os = "macos") {
-        paths.push(PathBuf::from("/opt/homebrew/bin"));
-        paths.push(PathBuf::from("/usr/local/bin"));
-    }
-    if let Some(parent) = cargo.parent() {
-        paths.push(parent.to_owned());
-    }
-    if let Some(existing) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&existing));
-    }
-    std::env::join_paths(paths).context("compose release build PATH")
+fn release_asset(assets: Vec<GithubAsset>, expected_name: &str) -> Option<ReleaseAsset> {
+    assets
+        .into_iter()
+        .find(|asset| asset.name == expected_name)
+        .map(|asset| ReleaseAsset {
+            name: asset.name,
+            download_url: asset.browser_download_url,
+            digest: asset.digest,
+            size: asset.size,
+        })
 }
 
-fn build_command(cargo: &Path) -> Command {
-    #[cfg(unix)]
-    {
-        if Path::new("/usr/bin/nice").is_file() {
-            let mut command = Command::new("/usr/bin/nice");
-            command.arg("-n").arg("10").arg(cargo);
-            return command;
-        }
+fn require_release_asset(
+    asset: Option<ReleaseAsset>,
+    release_tag: &str,
+    asset_name: &str,
+) -> Result<ReleaseAsset> {
+    asset.with_context(|| {
+        format!("release {release_tag} has no prebuilt executable for this platform ({asset_name})")
+    })
+}
+
+fn platform_asset_name() -> Result<&'static str> {
+    platform_asset_name_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn platform_asset_name_for(os: &str, arch: &str) -> Result<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Ok("discodex-x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Ok("discodex-aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Ok("discodex-x86_64-apple-darwin"),
+        ("macos", "aarch64") => Ok("discodex-aarch64-apple-darwin"),
+        ("windows", "x86_64") => Ok("discodex-x86_64-pc-windows-msvc.exe"),
+        ("windows", "aarch64") => Ok("discodex-aarch64-pc-windows-msvc.exe"),
+        (os, arch) => bail!("automatic release updates are not available for {arch}-{os}"),
     }
-    Command::new(cargo)
 }
 
 /// Run the detached updater and persist its outcome after rollback/restart.
@@ -1124,7 +1163,7 @@ fn launch_windows_task(
     let task = label.to_owned();
     let script_path = ps_quote(&task_script.display().to_string());
     let registration = format!(
-        "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{script_path}\"'; $principal=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel '{run_level}'; $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{task}' -TaskPath '\\' -Action $action -Principal $principal -Settings $settings | Out-Null; Start-ScheduledTask -TaskName '{task}' -TaskPath '\\'"
+        "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{script_path}\"'; $principal=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel '{run_level}'; $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{task}' -TaskPath '\\' -Action $action -Principal $principal -Settings $settings | Out-Null; Start-ScheduledTask -TaskName '{task}' -TaskPath '\\'"
     );
     let status = Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
@@ -1165,6 +1204,7 @@ mod tests {
             tag: "v1.2.3".into(),
             commit: "abc".into(),
             url: "https://example.test/release".into(),
+            asset: None,
             body: String::new(),
             published_at: None,
         }
@@ -1413,6 +1453,64 @@ mod tests {
                 .begin_helper(5, &attempt, &pinned.commit)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn release_asset_copy_checks_official_size_and_sha256() {
+        let bytes = b"verified executable";
+        let digest = format!("sha256:{:x}", Sha256::digest(bytes));
+        let asset = ReleaseAsset {
+            name: "discodex-test".into(),
+            download_url: "https://example.test/asset".into(),
+            digest: Some(digest),
+            size: bytes.len() as u64,
+        };
+        let mut output = Vec::new();
+        copy_verified_asset(&mut &bytes[..], &mut output, &asset).unwrap();
+        assert_eq!(output, bytes);
+
+        let mut wrong_size = asset.clone();
+        wrong_size.size += 1;
+        assert!(copy_verified_asset(&mut &bytes[..], &mut Vec::new(), &wrong_size).is_err());
+        let mut wrong_digest = asset;
+        wrong_digest.digest = Some(format!("sha256:{}", "0".repeat(64)));
+        assert!(copy_verified_asset(&mut &bytes[..], &mut Vec::new(), &wrong_digest).is_err());
+    }
+
+    #[test]
+    fn release_assets_map_to_all_six_supported_platforms() {
+        for ((os, arch), expected) in [
+            (("linux", "x86_64"), "discodex-x86_64-unknown-linux-gnu"),
+            (("linux", "aarch64"), "discodex-aarch64-unknown-linux-gnu"),
+            (("macos", "x86_64"), "discodex-x86_64-apple-darwin"),
+            (("macos", "aarch64"), "discodex-aarch64-apple-darwin"),
+            (("windows", "x86_64"), "discodex-x86_64-pc-windows-msvc.exe"),
+            (
+                ("windows", "aarch64"),
+                "discodex-aarch64-pc-windows-msvc.exe",
+            ),
+        ] {
+            assert_eq!(platform_asset_name_for(os, arch).unwrap(), expected);
+        }
+        assert!(platform_asset_name_for("freebsd", "x86_64").is_err());
+    }
+
+    #[test]
+    fn missing_platform_asset_returns_a_clear_error() {
+        let error = require_release_asset(None, "v1.2.3", "discodex-aarch64-apple-darwin")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("v1.2.3"));
+        assert!(error.contains("discodex-aarch64-apple-darwin"));
+    }
+
+    #[test]
+    fn legacy_pinned_release_without_asset_metadata_deserializes_for_id_refetch() {
+        let pinned: PinnedRelease = serde_json::from_str(
+            r#"{"releaseId":7,"version":"1.2.3","tag":"v1.2.3","commit":"abc","url":"https://example.test/release"}"#,
+        ).unwrap();
+        assert_eq!(pinned.release_id, 7);
+        assert!(pinned.asset.is_none());
     }
 
     #[test]

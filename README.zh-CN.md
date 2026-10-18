@@ -17,11 +17,9 @@ Discodex 将一个 Discord 应用配置连接到一个官方 Codex app-server �
 
 ## 快速开始
 
-需要 Rust 1.94 或更高版本、Cargo 和操作系统对应的构建工具。
+从[最新发行版](https://github.com/CHOAM-CO/Discodex/releases/latest)下载 `discodex-installers.zip`，解压并在该文件夹中运行。脚本会下载适合当前操作系统和架构的预编译程序，无需 Rust、Cargo 或 Git。
 
 ```sh
-git clone https://github.com/CHOAM-CO/Discodex.git
-cd Discodex
 ./install
 ```
 
@@ -31,7 +29,7 @@ Windows PowerShell 请运行 `./scripts/install.ps1`。安装程序可选择 Eng
 
 ## 更新
 
-在跟踪文件没有本地修改的源码 checkout 中，使用现有配置文件更新指定配置：
+使用安装包中的更新脚本，并指定现有配置文件：
 
 ```sh
 ./update --config "<现有-config.json-路径>"
@@ -43,7 +41,7 @@ Windows PowerShell：
 ./scripts/update.ps1 -Config "<现有-config.json-路径>"
 ```
 
-只有跟踪文件干净时，更新程序才会 fast-forward checkout；随后构建 release 二进制并更新 `--config` 指定的配置。它不会再次询问语言，也不会重写配置。所选语言、凭据和持久 Codex 对话状态仍属于该配置。若替换本产品拥有的二进制失败，程序会恢复旧二进制和服务状态。`./install --update --config ...` 与 `./scripts/install.ps1 -Update -Config ...` 也会调用相同更新流程。
+更新程序会下载并校验对应平台的发行版程序，然后更新 `--config` 指定的配置。Discord 的更新按钮也使用相同的预编译程序。它不会再次询问语言，也不会重写配置。所选语言、凭据和持久 Codex 对话状态仍属于该配置。若替换本产品拥有的二进制失败，程序会恢复旧二进制和服务状态。`./install --update --config ...` 与 `./scripts/install.ps1 -Update -Config ...` 也会调用相同更新流程。
 
 ## Discord 命令
 

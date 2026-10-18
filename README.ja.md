@@ -17,11 +17,9 @@ Discodexは、1つのDiscordアプリプロファイルを公式Codex app-server
 
 ## はじめに
 
-Rust 1.94以降、Cargo、および各OSのビルドツールが必要です。
+[最新リリース](https://github.com/CHOAM-CO/Discodex/releases/latest)から `discodex-installers.zip` をダウンロードして展開し、そのフォルダーで実行します。スクリプトがOSとアーキテクチャに対応するビルド済み実行ファイルを取得するため、Rust・Cargo・Gitは不要です。
 
 ```sh
-git clone https://github.com/CHOAM-CO/Discodex.git
-cd Discodex
 ./install
 ```
 
@@ -31,7 +29,7 @@ Windows PowerShellでは `./scripts/install.ps1` を実行します。インス�
 
 ## 更新
 
-追跡ファイルにローカル変更がないソース checkout から、既存の設定ファイルでプロファイルを更新します。
+インストーラーバンドルの更新スクリプトに既存の設定ファイルを指定します。
 
 ```sh
 ./update --config "<既存-config.json-のパス>"
@@ -43,7 +41,7 @@ Windows PowerShell：
 ./scripts/update.ps1 -Config "<既存-config.json-のパス>"
 ```
 
-追跡ファイルがクリーンな場合のみ checkout を fast-forward し、release バイナリをビルドして `--config` で指定したプロファイルに適用します。言語の再選択や設定の書き換えは行いません。選択済みの言語、資格情報、永続 Codex 会話状態はそのプロファイルに保持されます。製品所有バイナリの置換に失敗した場合は、以前のバイナリとサービス状態に戻します。`./install --update --config ...` と `./scripts/install.ps1 -Update -Config ...` も同じ更新処理を実行します。
+更新スクリプトは対応するリリースの実行ファイルをダウンロード・検証し、`--config` で指定したプロファイルに適用します。Discordの更新ボタンも同じビルド済み実行ファイルを使用します。言語の再選択や設定の書き換えは行いません。選択済みの言語、資格情報、永続 Codex 会話状態はそのプロファイルに保持されます。製品所有バイナリの置換に失敗した場合は、以前のバイナリとサービス状態に戻します。`./install --update --config ...` と `./scripts/install.ps1 -Update -Config ...` も同じ更新処理を実行します。
 
 ## Discordコマンド
 

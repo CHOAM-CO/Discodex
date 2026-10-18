@@ -808,6 +808,7 @@ mod tests {
             tag: "v2.0.0".into(),
             commit: "abc".into(),
             url: "https://example.invalid/release".into(),
+            asset: None,
             body: String::new(),
             published_at: None,
         });
@@ -838,6 +839,7 @@ mod tests {
             tag: "v1.0.0".into(),
             commit: "old".into(),
             url: "https://example.invalid/1".into(),
+            asset: None,
         };
         let mut snapshot = UpdateSnapshot::default();
         snapshot.last_result = Some(previous.clone());
@@ -849,6 +851,7 @@ mod tests {
             tag: "v2.0.0".into(),
             commit: "new".into(),
             url: "https://example.invalid/2".into(),
+            asset: None,
             body: String::new(),
             published_at: None,
         });

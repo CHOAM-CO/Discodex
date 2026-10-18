@@ -1,0 +1,166 @@
+name: Build release binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing draft release tag to receive the verified build assets
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      LIBOPUS_BUNDLED: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            suffix: ''
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            suffix: ''
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            suffix: ''
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            suffix: ''
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            suffix: '.exe'
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            suffix: '.exe'
+    steps:
+      - name: Check out requested release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Parse PowerShell scripts with Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $files = @('scripts/install.ps1', 'scripts/update.ps1')
+          foreach ($file in $files) {
+            $tokens = $null
+            $parseErrors = $null
+            $path = Join-Path $PWD $file
+            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+              $parseErrors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
+      - name: Test
+        shell: bash
+        run: cargo test --locked --all-targets --target '${{ matrix.target }}'
+      - name: Build release binary
+        shell: bash
+        run: cargo build --locked --release --target '${{ matrix.target }}'
+      - name: Prepare release assets
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          name="discodex-${TARGET}${SUFFIX}"
+          source="target/${TARGET}/release/discodex${SUFFIX}"
+          test -f "$source"
+          cp "$source" "$name"
+          if [[ "$RUNNER_OS" != "Windows" ]]; then chmod +x "$name"; fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$name" > "${name}.sha256"
+          else
+            shasum -a 256 "$name" > "${name}.sha256"
+          fi
+      - name: Upload runner artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            discodex-${{ matrix.target }}${{ matrix.suffix }}
+            discodex-${{ matrix.target }}${{ matrix.suffix }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  package-installers:
+    name: Package source-free installers
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out requested release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+      - name: Package installer scripts only
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -q discodex-installers.zip install update scripts/install.sh scripts/install.ps1 scripts/update.sh scripts/update.ps1
+          sha256sum discodex-installers.zip > discodex-installers.zip.sha256
+      - name: Upload installer bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-installers
+          path: |
+            discodex-installers.zip
+            discodex-installers.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  upload-draft:
+    name: Upload to draft release
+    needs: [build, package-installers]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download runner artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Confirm target release is still a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [[ "$is_draft" != "true" ]]; then
+            echo "Release $RELEASE_TAG does not exist as a draft." >&2
+            exit 1
+          fi
+      - name: Upload assets without publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo 'No build artifacts were downloaded.' >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"

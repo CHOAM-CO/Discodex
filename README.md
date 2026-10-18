@@ -27,12 +27,7 @@ Discodex connects one Discord app profile to one persistent conversation with th
 
 ## Getting started
 
-Install from source. You need **Rust 1.94 or later**, Cargo, and the build tools for your operating system.
-
-```sh
-git clone https://github.com/CHOAM-CO/Discodex.git
-cd Discodex
-```
+Download `discodex-installers.zip` from the [latest release](https://github.com/CHOAM-CO/Discodex/releases/latest), extract it, and open the extracted folder in a terminal. The scripts download the prebuilt executable for your operating system and architecture; Rust, Cargo, and Git are not required.
 
 On macOS or Linux, run:
 
@@ -52,7 +47,7 @@ The setup connects your Codex installation and Discord bot, then configures a pr
 
 ## Updating
 
-From a clean source checkout, update the selected profile with its existing config file:
+Use the updater from the installer bundle with the existing profile config:
 
 ```sh
 ./update --config "<path-to-existing-config.json>"
@@ -64,7 +59,7 @@ On Windows PowerShell:
 ./scripts/update.ps1 -Config "<path-to-existing-config.json>"
 ```
 
-The updater fast-forwards the checkout only when tracked files have no local changes, builds the release binary, and applies it to the profile named by `--config`. It does not prompt for a language or rewrite profile settings. The selected language, credentials, and persistent Codex conversation state stay with that profile. If an owned binary replacement fails, the updater restores the previous binary and service state. `./install --update --config ...` and `./scripts/install.ps1 -Update -Config ...` are aliases.
+The updater downloads and verifies the matching release executable, then applies it to the profile named by `--config`. The Discord Update button uses the same prebuilt release artifacts. It does not prompt for a language or rewrite profile settings. The selected language, credentials, and persistent Codex conversation state stay with that profile. If an owned binary replacement fails, the updater restores the previous binary and service state. `./install --update --config ...` and `./scripts/install.ps1 -Update -Config ...` are aliases.
 
 ## Discord commands
 

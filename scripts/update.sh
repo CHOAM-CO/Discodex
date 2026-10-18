@@ -5,8 +5,8 @@ usage() {
   cat <<'USAGE'
 Usage: ./update --config <existing-profile-config.json> [--migrate-adhoc]
 
-Updates the source checkout with a fast-forward-only pull, builds the release binary,
-and asks that binary to update the explicitly selected profile.
+Downloads the official Discodex release for this operating system and architecture,
+then asks that binary to update the explicitly selected profile.
 USAGE
 }
 
@@ -37,34 +37,42 @@ done
 
 [ -n "$CONFIG" ] || { printf '%s\n' 'An existing profile config is required with --config.' >&2; usage >&2; exit 2; }
 [ -f "$CONFIG" ] || { printf 'Config file not found: %s\n' "$CONFIG" >&2; exit 2; }
+command -v curl >/dev/null 2>&1 || { printf '%s\n' 'curl is required to download the official Discodex release.' >&2; exit 2; }
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPOSITORY_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-command -v git >/dev/null 2>&1 || { printf '%s\n' 'Git is required to update this source checkout.' >&2; exit 2; }
-command -v cargo >/dev/null 2>&1 || { printf '%s\n' 'Rust Cargo is required to build Discodex.' >&2; exit 2; }
+OS=$(uname -s)
+ARCH=$(uname -m)
+case "$OS:$ARCH" in
+  Linux:x86_64|Linux:amd64) TARGET=x86_64-unknown-linux-gnu ;;
+  Linux:aarch64|Linux:arm64) TARGET=aarch64-unknown-linux-gnu ;;
+  Darwin:x86_64|Darwin:amd64) TARGET=x86_64-apple-darwin ;;
+  Darwin:arm64|Darwin:aarch64) TARGET=aarch64-apple-darwin ;;
+  *) printf 'No prebuilt Discodex release is available for %s/%s.\n' "$OS" "$ARCH" >&2; exit 2 ;;
+esac
 
-git -C "$REPOSITORY_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  printf '%s\n' 'The update script must run from a Git source checkout.' >&2
-  exit 2
-}
-if ! git -C "$REPOSITORY_ROOT" diff --quiet HEAD --; then
-  printf '%s\n' 'Tracked source changes are present. Commit, stash, or otherwise preserve them before updating.' >&2
-  exit 2
+ASSET="discodex-${TARGET}"
+BASE_URL="https://github.com/CHOAM-CO/Discodex/releases/latest/download"
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/discodex-update.XXXXXX")
+cleanup() { rm -rf "$TEMP_DIR"; }
+trap cleanup EXIT HUP INT TERM
+BINARY="$TEMP_DIR/$ASSET"
+CHECKSUM="$TEMP_DIR/$ASSET.sha256"
+curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET" --output "$BINARY"
+curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET.sha256" --output "$CHECKSUM"
+EXPECTED=$(awk 'NR == 1 { print $1 }' "$CHECKSUM")
+case "$EXPECTED" in
+  ''|*[!0123456789abcdefABCDEF]*) printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1 ;;
+esac
+[ "${#EXPECTED}" -eq 64 ] || { printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1; }
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL=$(sha256sum "$BINARY" | awk '{ print $1 }')
+else
+  ACTUAL=$(shasum -a 256 "$BINARY" | awk '{ print $1 }')
 fi
-
-# A fast-forward-only pull never rewrites a divergent local branch.
-git -C "$REPOSITORY_ROOT" pull --ff-only
-
-BUILD_ROOT=${CARGO_TARGET_DIR:-"$REPOSITORY_ROOT/target"}
-cargo build --locked --release --manifest-path "$REPOSITORY_ROOT/Cargo.toml" --target-dir "$BUILD_ROOT"
-SOURCE_BINARY="$BUILD_ROOT/release/discodex"
-if [ ! -x "$SOURCE_BINARY" ]; then
-  printf 'Release binary was not produced: %s\n' "$SOURCE_BINARY" >&2
+[ "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$ACTUAL" | tr '[:upper:]' '[:lower:]')" ] || {
+  printf '%s\n' 'The downloaded release binary failed SHA256 verification.' >&2
   exit 1
-fi
-
-set -- update --source "$SOURCE_BINARY" --config "$CONFIG"
-if [ "$MIGRATE_ADHOC" -eq 1 ]; then
-  set -- "$@" --migrate-adhoc
-fi
-exec "$SOURCE_BINARY" "$@"
+}
+chmod +x "$BINARY"
+set -- update --source "$BINARY" --config "$CONFIG"
+if [ "$MIGRATE_ADHOC" -eq 1 ]; then set -- "$@" --migrate-adhoc; fi
+"$BINARY" "$@"
