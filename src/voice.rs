@@ -4803,6 +4803,9 @@ fn observe_native_transcript_item(
         }
         "thread/realtime/item/completed" | "item/completed" => {
             let item = params.get("item")?;
+            if item.get("delivery").and_then(Value::as_str) == Some("async") {
+                return None;
+            }
             let item_id = item.get("id").and_then(Value::as_str)?;
             let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
             let role = match item_type {

@@ -26,8 +26,12 @@ Discodex connects one Discord app profile to one persistent conversation with th
 | Message routing and mentions | Choose which senders are authorized with Everyone, RegisteredServer, RegisteredChannels, or Paired, plus independent allow and block lists. Routing also applies the home-channel, mention, registered-channel/thread, and admitted-DM rules. Normal replies can mention the message author, including for home-channel messages. |
 | Voice inbox | Get a short preview of messages received during a call; unread messages are handled after the call, with attachments checked before an item is marked read. |
 | Discord context and files | Read messages, channels, and users; pass images and files into the conversation; send a separate message when explicitly requested. |
-| Plans and task tools | View Codex plans in the home channel and manage Codex threads and worktrees through `discodex_tasks`. |
+| Plans and task tools | Each changed Codex plan gets a new home-channel Embed card, never an edit to the prior card. Cards show completed/total counts, completion check and strike-through, active-step arrow, pending marker, and status color; identical replays are suppressed, and full plan text is paged at Discord’s actual limits without truncation. Manage threads and worktrees through `discodex_tasks`. |
 | Release updates | Receive an idle-time notice for published releases and update from a verified prebuilt executable. |
+| Native features | Profile-owned `native-features.json` enables supported official app-server capabilities; settings distinguish effective state from saved values and identify restart-required changes. |
+| Plugins | Browse the current native plugin catalog and use Discord buttons for supported read, install, and uninstall flows in `/discodex plugins`; native recommendations and authorization remain in the official flow. |
+| Async questions and notices | Answer native questions with Discord buttons or free-form responses tied to their original question and thread. Async notifications appear in the home channel without ending the active turn. |
+| Reliability and logs | A supervised consumer handles main-control events, with persistent profile-scoped logs for GUI-launched Windows workers. Updates use prebuilt releases, so client machines do not build from source. |
 
 ## Getting started
 

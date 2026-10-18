@@ -139,4 +139,14 @@ Discodex는 승인한 GitHub Release에서 현재 OS와 아키텍처에 맞는 �
 
 ## 작업 도구 업데이트
 
-업데이트 후 worker를 재시작하면 기존 Codex thread를 유지한 채 native `update_plan`과 CLI 작업·관리 워크트리 도구가 활성화된다. 별도 MCP 설치나 사용자 전역 Codex 설정 편집은 필요하지 않다. 작업 조회·생성·분기와 워크트리 생성은 동일한 공식 app-server 연결을 사용한다. 새 작업은 호출한 작업의 native 설정을 상속하며 기존 대화와 프로필 설정을 초기화하지 않는다.
+업데이트 후 worker를 재시작하면 기존 Codex thread를 유지한 채 native `update_plan`과 CLI 작업·관리 워크트리 도구를 사용할 수 있다. 변경된 계획은 새 홈채널 Embed 카드로 표시하며 이전 카드는 수정하지 않는다. 동일 이벤트 재생은 생략하고 전체 계획 텍스트는 Discord 한도를 넘을 때만 페이지로 나눠 보낸다. 별도 MCP 설치나 사용자 전역 Codex 설정 편집은 필요하지 않다. 작업 조회·생성·분기와 워크트리 생성은 동일한 공식 app-server 연결을 사용한다. 새 작업은 호출한 작업의 native 설정을 상속하며 기존 대화와 프로필 설정을 초기화하지 않는다.
+
+## Native 기능·플러그인·운영 로그
+
+Native app-server 기능 선택은 프로필별 `native-features.json`에 저장됩니다. CodeMode, host, multiagent v2와 `wait_agent`, 일반 모드 질문, clock, token budget/history notes, 비동기 알림을 포함합니다. 설정 화면은 실제 적용된 native 상태와 저장값을 별도로 보여 주고 worker 재시작이 필요한 변경을 표시합니다.
+
+`/discodex plugins`에서 native 플러그인 카탈로그를 확인하고 Discord 버튼으로 지원되는 읽기·설치·제거 작업을 호출할 수 있습니다. 추천은 native elicitation을 사용합니다. 플러그인 인증·승인, 계정의 이용 가능 여부와 entitlement는 공식 native 흐름에서 결정하며 계정과 카탈로그에 따라 달라집니다.
+
+비동기 native 질문에는 Discord 버튼이나 자유 입력으로 답할 수 있으며 원래 질문 ID와 native thread 연결을 보존합니다. 비동기 알림은 활성 turn을 끝내지 않고 홈채널에 전달됩니다.
+
+메인 제어 이벤트 큐는 감시되는 worker가 소비하고 프로필별 영속 로그를 저장합니다. 콘솔 없이 실행하는 Windows GUI worker의 문제도 확인할 수 있습니다. 업데이트는 사전 빌드 Release 파일을 사용하므로 클라이언트에서 소스 빌드를 할 필요가 없습니다.

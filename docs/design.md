@@ -50,7 +50,7 @@ Messages with attachments in the active transcript thread enter the same persist
 
 The `discodex_tasks` MCP exposes the official Codex CLI thread tools (`list_threads`, `list_archived_threads`, `read_thread`, `wait_threads`, `send_message_to_thread`, `create_thread`, `fork_thread`, `set_thread_title`, and `set_thread_archived`) and managed-worktree tools (`create_worktree`, `get_worktree_creation_status`, and `list_worktrees`). The tools use the worker-owned app-server process and do not edit the user's global Codex configuration. Other threads remain separate tasks; their replies are not mixed into the profile's home channel or voice transcript.
 
-Native `update_plan` progress is shown in a home-channel message associated with the current thread, connection generation, and turn. Discord length limits are handled by splitting the content. This progress view is separate from switching Codex into Plan mode.
+Native `update_plan` progress is associated with the current thread, connection generation, and turn. Each changed plan creates a distinct Discord Embed card in the home channel; later plans always create new cards and never edit earlier cards. Cards show completed/total counts, completion marks and strike-through for completed items, an arrow for the active step, pending markers, and a status color. Identical event replays are suppressed. Plan titles and step text are preserved in full; when content exceeds Discord limits, it is split across pages at the actual limits without truncation. This progress view is separate from switching Codex into Plan mode.
 
 ## Memory
 
@@ -69,3 +69,13 @@ Release automation builds six prebuilt targets (Windows, macOS, and Linux, each 
 ## Installation ownership
 
 The installer registers a user-scoped Linux systemd user service, macOS LaunchAgent, or Windows logon scheduled task. It records owned resources and only updates or removes those resources. It preserves Codex credentials, threads, projects, Discord history, and external Codex installations. See the [installation guide](installation.md) for setup, migration, update, removal, and platform permissions.
+
+## Native features, plugins, and asynchronous requests
+
+Each Discodex profile owns its `native-features.json`. It enables official app-server capabilities including CodeMode, host, multiagent v2 and `wait_agent`, normal-mode questions, clock, token budget and history notes, and asynchronous notifications. The native feature settings view distinguishes effective native state from saved values and identifies changes that require a restart.
+
+`/discodex plugins` uses the current official native plugin catalog and Discord buttons for its supported read, install, and uninstall operations. Recommendations use official elicitation, and any plugin authentication or approval stays in the native flow. Availability and entitlements are determined by the native app-server and account; the catalog does not imply that every plugin is available to every account.
+
+Native questions can be answered in Discord with buttons or free-form text. Discodex preserves the original question ID and native thread association. Asynchronous notifications are delivered to the home channel without ending the current turn.
+
+The main-control event queue uses a supervised consumer. Profile-scoped logs are persisted, including for GUI-launched Windows workers that have no attached console. Client updates continue to use prebuilt release assets rather than source builds.

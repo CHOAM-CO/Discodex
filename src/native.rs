@@ -11,7 +11,7 @@ use futures_util::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
-use tokio::sync::{Mutex as AsyncMutex, broadcast, oneshot, watch};
+use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -20,6 +20,13 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::state::StateStore;
+
+#[path = "native_features.rs"]
+mod native_features;
+pub use native_features::{
+    NativeFeatureApplyResult, NativeFeatureDescriptor, NativeFeaturePreferences,
+    NativeFeatureSnapshot, NativeFeatureStore, feature_config_read_params,
+};
 
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
@@ -54,6 +61,59 @@ struct PendingRequest {
     sender: oneshot::Sender<std::result::Result<Value, NativeRequestError>>,
     method: String,
     observation_fence: u64,
+}
+
+struct BridgeEventBuffer {
+    sender: mpsc::UnboundedSender<Value>,
+    receiver: Option<mpsc::UnboundedReceiver<Value>>,
+    startup_events: Vec<Value>,
+    live: bool,
+    enabled: bool,
+}
+
+impl BridgeEventBuffer {
+    fn new(enabled: bool) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self {
+            sender,
+            receiver: enabled.then_some(receiver),
+            startup_events: Vec::new(),
+            live: false,
+            enabled,
+        }
+    }
+
+    fn publish(&mut self, event: Value) {
+        if !self.enabled || !is_bridge_control_event(&event) {
+            return;
+        }
+        if self.live {
+            let _ = self.sender.send(event);
+        } else {
+            self.startup_events.push(event);
+        }
+    }
+
+    fn subscribe(&mut self) -> Result<mpsc::UnboundedReceiver<Value>> {
+        let receiver = self
+            .receiver
+            .take()
+            .context("native bridge event receiver was already claimed")?;
+        for event in self.startup_events.drain(..) {
+            let _ = self.sender.send(event);
+        }
+        self.live = true;
+        Ok(receiver)
+    }
+}
+
+fn is_bridge_control_event(event: &Value) -> bool {
+    let Some(method) = event.get("method").and_then(Value::as_str) else {
+        return false;
+    };
+    !method.starts_with("thread/realtime/")
+        && !method.ends_with("/delta")
+        && !method.ends_with("Delta")
 }
 
 #[derive(Debug)]
@@ -144,6 +204,7 @@ struct Inner {
     pending: Mutex<HashMap<String, PendingRequest>>,
     server_requests: AsyncMutex<HashMap<ServerRequestKey, ServerRequestState>>,
     events: broadcast::Sender<Value>,
+    bridge_events: Mutex<BridgeEventBuffer>,
     harness_worktrees: tokio::sync::OnceCell<crate::worktree_tools::WorktreeTools>,
     startup_events: Mutex<Vec<Value>>,
     live_events: AtomicBool,
@@ -310,7 +371,17 @@ pub struct Native {
 
 impl Native {
     pub async fn start(config: &Config) -> Result<Self> {
-        let native = Self::connect(config).await?;
+        Self::start_internal(config, false).await
+    }
+
+    /// Starts with lossless buffering for the Discord bridge event consumer.
+    /// One-shot probes and setup connections should use start or connect.
+    pub async fn start_for_bridge(config: &Config) -> Result<Self> {
+        Self::start_internal(config, true).await
+    }
+
+    async fn start_internal(config: &Config, bridge_events_enabled: bool) -> Result<Self> {
+        let native = Self::connect_internal(config, bridge_events_enabled).await?;
         let initialized = async {
             let saved = StateStore::new(&config.state_dir).load()?;
             if saved.pending_new_thread {
@@ -369,10 +440,17 @@ impl Native {
     /// a thread. Setup can inspect account and permission catalogs without
     /// leaving a thread ID that has no durable rollout behind it.
     pub async fn connect(config: &Config) -> Result<Self> {
+        Self::connect_internal(config, false).await
+    }
+
+    async fn connect_internal(config: &Config, bridge_events_enabled: bool) -> Result<Self> {
         let codex_path = resolve_codex_path(&config.codex_path)?;
         tokio::fs::create_dir_all(&config.state_dir)
             .await
             .with_context(|| format!("create state directory {}", config.state_dir.display()))?;
+
+        let native_feature_store = NativeFeatureStore::new(&config.state_dir);
+        let native_feature_overrides = native_feature_store.startup_overrides()?;
 
         let endpoint_dir = private_socket_endpoint_dir(&std::env::temp_dir());
         let endpoint = endpoint_dir.join("app-server.sock");
@@ -494,6 +572,9 @@ impl Native {
                 ))?
             ));
         apply_memory_config(&mut command, config.memory_enabled);
+        for (key, value) in native_feature_overrides {
+            command.arg("--config").arg(format!("{key}={value}"));
+        }
         command
             .arg("app-server")
             .arg("--listen")
@@ -501,7 +582,11 @@ impl Native {
             .current_dir(&config.project_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(if bridge_events_enabled {
+                Stdio::from(crate::logging::native_stderr_file(&config.state_dir)?)
+            } else {
+                Stdio::inherit()
+            })
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
@@ -594,6 +679,7 @@ impl Native {
             pending: Mutex::new(HashMap::new()),
             server_requests: AsyncMutex::new(HashMap::new()),
             events,
+            bridge_events: Mutex::new(BridgeEventBuffer::new(bridge_events_enabled)),
             harness_worktrees: tokio::sync::OnceCell::new(),
             startup_events: Mutex::new(Vec::new()),
             live_events: AtomicBool::new(false),
@@ -868,17 +954,23 @@ impl Native {
             .contains_key(&server_request_key(connection_generation, id))
     }
 
+    /// Registers the single lossless bridge consumer. Startup control events are
+    /// drained before the live stream begins, preserving receive order.
+    pub fn subscribe_bridge_events(&self) -> Result<mpsc::UnboundedReceiver<Value>> {
+        subscribe_bridge_events(
+            &self.inner.bridge_events,
+            &self.inner.events,
+            &self.inner.startup_events,
+            &self.inner.live_events,
+        )
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
-        let receiver = self.inner.events.subscribe();
-        if !self.inner.live_events.load(Ordering::Acquire) {
-            if let Ok(mut buffered) = self.inner.startup_events.lock() {
-                for event in buffered.drain(..) {
-                    let _ = self.inner.events.send(event);
-                }
-                self.inner.live_events.store(true, Ordering::Release);
-            }
-        }
-        receiver
+        activate_broadcast_events(
+            &self.inner.events,
+            &self.inner.startup_events,
+            &self.inner.live_events,
+        )
     }
 
     /// Voice reads this existing receive counter while holding its call-boundary lock.
@@ -921,6 +1013,66 @@ impl Native {
             .lock()
             .map(|state| state.clone())
             .unwrap_or(Value::Null)
+    }
+
+    pub fn list_native_feature_settings(
+        &self,
+    ) -> Result<Vec<(NativeFeatureDescriptor, Option<Value>)>> {
+        NativeFeatureStore::new(&self.inner.config.state_dir).list()
+    }
+
+    pub fn read_native_feature_preferences(&self) -> Result<NativeFeaturePreferences> {
+        NativeFeatureStore::new(&self.inner.config.state_dir).read()
+    }
+
+    /// Read the persisted profile preferences together with Codex's effective config and origins.
+    pub async fn read_native_feature_snapshot(&self) -> Result<NativeFeatureSnapshot> {
+        let preferences = self.read_native_feature_preferences()?;
+        let native_config = self
+            .request(
+                "config/read",
+                feature_config_read_params(&self.inner.config.project_dir),
+            )
+            .await
+            .context("read effective native feature configuration")?;
+        Ok(NativeFeatureSnapshot {
+            preferences,
+            native_config,
+        })
+    }
+
+    /// Save per-profile choices for the next owned app-server start. Session-level CLI
+    /// overrides outrank user config, so this deliberately does not claim hot application.
+    pub async fn apply_native_feature_preferences(
+        &self,
+        preferences: &NativeFeaturePreferences,
+    ) -> Result<NativeFeatureApplyResult> {
+        if let Some(model) = preferences.subagent_model.as_deref() {
+            let mut params = json!({"includeHidden": false});
+            loop {
+                let page = self
+                    .request("model/list", params.clone())
+                    .await
+                    .context("read native model catalog for subagent default")?;
+                let data = page
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .context("native model catalog omitted its data list")?;
+                if data
+                    .iter()
+                    .any(|item| item.get("slug").and_then(Value::as_str) == Some(model))
+                {
+                    break;
+                }
+                match page.get("nextCursor").and_then(Value::as_str) {
+                    Some(cursor) => params["cursor"] = Value::String(cursor.to_owned()),
+                    None => {
+                        bail!("subagent model is not present in the current native model catalog")
+                    }
+                }
+            }
+        }
+        NativeFeatureStore::new(&self.inner.config.state_dir).apply(preferences)
     }
 
     pub async fn permission_profiles(&self) -> Result<Value> {
@@ -1367,7 +1519,46 @@ async fn send_json_for_generation(
         .context("write Codex app-server WebSocket frame")
 }
 
+fn activate_broadcast_events(
+    events: &broadcast::Sender<Value>,
+    startup_events: &Mutex<Vec<Value>>,
+    live_events: &AtomicBool,
+) -> broadcast::Receiver<Value> {
+    let receiver = events.subscribe();
+    if !live_events.load(Ordering::Acquire) {
+        if let Ok(mut buffered) = startup_events.lock() {
+            for event in buffered.drain(..) {
+                let _ = events.send(event);
+            }
+            live_events.store(true, Ordering::Release);
+        }
+    }
+    receiver
+}
+
+fn subscribe_bridge_events(
+    bridge_events: &Mutex<BridgeEventBuffer>,
+    events: &broadcast::Sender<Value>,
+    startup_events: &Mutex<Vec<Value>>,
+    live_events: &AtomicBool,
+) -> Result<mpsc::UnboundedReceiver<Value>> {
+    // Activate and flush the legacy broadcast path too. Otherwise its startup
+    // vector keeps growing even though the bridge has switched to its own queue.
+    drop(activate_broadcast_events(
+        events,
+        startup_events,
+        live_events,
+    ));
+    bridge_events
+        .lock()
+        .map_err(|_| anyhow!("native bridge event buffer lock poisoned"))?
+        .subscribe()
+}
+
 fn publish_event(inner: &Inner, value: Value) {
+    if let Ok(mut bridge_events) = inner.bridge_events.lock() {
+        bridge_events.publish(value.clone());
+    }
     if inner.live_events.load(Ordering::Acquire) {
         let _ = inner.events.send(value);
     } else if let Ok(mut events) = inner.startup_events.lock() {
@@ -2016,15 +2207,7 @@ fn spawn_reader(
                 .lock()
                 .await
                 .retain(|key, _| key.generation != generation);
-            if inner.live_events.load(Ordering::Acquire) {
-                let _ = inner.events.send(connection_closed);
-            } else if let Ok(mut events) = inner.startup_events.lock() {
-                if inner.live_events.load(Ordering::Acquire) {
-                    let _ = inner.events.send(connection_closed);
-                } else {
-                    events.push(connection_closed);
-                }
-            }
+            publish_event(&inner, connection_closed);
             if inner.connection_generation.load(Ordering::Acquire) == generation {
                 mark_disconnected(&inner);
                 inner.writer.lock().await.take();
@@ -2468,5 +2651,121 @@ mod harness_native_tests {
             ""
         ));
         assert!(!snapshot_belongs_to_primary(&json!({}), "main"));
+    }
+}
+
+#[cfg(test)]
+mod bridge_event_buffer_tests {
+    use super::{BridgeEventBuffer, is_bridge_control_event};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn startup_and_live_control_events_are_lossless_and_ordered() {
+        let mut buffer = BridgeEventBuffer::new(true);
+        for index in 0..300 {
+            buffer.publish(json!({
+                "method": "item/completed",
+                "params": {"index": index}
+            }));
+        }
+
+        let mut receiver = buffer.subscribe().expect("claim bridge receiver");
+        buffer.publish(json!({
+            "method": "turn/completed",
+            "params": {"index": 300}
+        }));
+
+        for index in 0..301 {
+            let event = receiver.recv().await.expect("receive queued event");
+            let method = event["method"].as_str().expect("event method");
+            let expected_method = if index == 300 {
+                "turn/completed"
+            } else {
+                "item/completed"
+            };
+            assert_eq!(method, expected_method);
+            assert_eq!(event["params"]["index"], index);
+        }
+    }
+
+    #[test]
+    fn bridge_queue_keeps_questions_and_discards_realtime_and_delta_events() {
+        assert!(is_bridge_control_event(&json!({
+            "method":"item/tool/requestUserInput",
+            "id":17,
+            "params":{"questions":[]}
+        })));
+        assert!(is_bridge_control_event(&json!({"method":"turn/completed"})));
+        assert!(!is_bridge_control_event(
+            &json!({"method":"item/agentMessage/delta"})
+        ));
+        assert!(!is_bridge_control_event(
+            &json!({"method":"thread/realtime/audio"})
+        ));
+        assert!(!is_bridge_control_event(&json!({"id":17,"result":{}})));
+    }
+
+    #[test]
+    fn bridge_receiver_can_be_claimed_only_once() {
+        let mut buffer = BridgeEventBuffer::new(true);
+        assert!(buffer.subscribe().is_ok());
+        assert!(buffer.subscribe().is_err());
+    }
+
+    #[test]
+    fn ordinary_native_instances_do_not_retain_bridge_control_events() {
+        let mut buffer = BridgeEventBuffer::new(false);
+        buffer.publish(serde_json::json!({"method":"turn/completed"}));
+
+        assert!(buffer.startup_events.is_empty());
+        assert!(buffer.subscribe().is_err());
+    }
+
+    #[tokio::test]
+    async fn claiming_bridge_queue_also_flushes_legacy_startup_events() {
+        use super::subscribe_bridge_events;
+        use std::sync::Mutex;
+        use std::sync::atomic::AtomicBool;
+        use tokio::sync::broadcast;
+
+        let (events, _) = broadcast::channel(8);
+        let startup_events = Mutex::new(vec![
+            serde_json::json!({"method":"thread/started","params":{"index":0}}),
+            serde_json::json!({"method":"turn/started","params":{"index":1}}),
+        ]);
+        let live_events = AtomicBool::new(false);
+        let bridge_events = Mutex::new(BridgeEventBuffer::new(true));
+        bridge_events
+            .lock()
+            .expect("bridge queue lock")
+            .publish(serde_json::json!({"method":"turn/started","params":{"index":1}}));
+
+        let mut legacy =
+            subscribe_bridge_events(&bridge_events, &events, &startup_events, &live_events)
+                .expect("claim bridge stream");
+
+        assert!(live_events.load(std::sync::atomic::Ordering::Acquire));
+        assert!(
+            startup_events
+                .lock()
+                .expect("startup queue lock")
+                .is_empty()
+        );
+        assert_eq!(
+            legacy.recv().await.expect("first legacy event")["params"]["index"],
+            0
+        );
+        assert_eq!(
+            legacy.recv().await.expect("second legacy event")["params"]["index"],
+            1
+        );
+
+        events
+            .send(serde_json::json!({"method":"turn/completed"}))
+            .expect("publish live event");
+        assert_eq!(
+            legacy.recv().await.expect("live legacy event")["method"],
+            "turn/completed"
+        );
     }
 }

@@ -34,7 +34,7 @@ Discord 普通消息接收范围可设为 `Everyone`、`RegisteredServer`、`Reg
 
 配置文件的默认对话 thread 保持不变。工具创建或读取的其他 thread 是独立任务，不会混入主页回复或语音转录；其问题和批准仍按原请求 ID 处理。任务列表读取 native Codex 保存的历史与状态；项目目录表示为 `cwd`，独立 Git checkout 表示为管理工作树。产品不另建项目数据库。管理工作树使用官方路径、所有权记录和 thread attachment 登记。
 
-启用 native `update_plan` 后，`turn/plan/updated` 会更新与当前配置、连接代次和 turn 关联的主页消息。计划和说明使用安装语言；超出 Discord 单条消息长度时拆分发送，不丢失内容。旧连接或乱序事件不能覆盖最新计划。此工具显示任务进度，不等同于 Codex 的 Plan 模式切换。
+Native `update_plan` 进度关联当前配置、连接代次和 turn。每次计划变化都会在主页频道创建新的 Discord Embed 卡片，绝不编辑旧卡片。卡片显示完成/总数、已完成标记与删除线、当前步骤箭头、待处理标记和状态颜色。相同事件的重复回放会被抑制。计划标题和步骤文本完整保留；超出 Discord 实际限制时分页发送，不截断内容。旧连接或乱序事件不能覆盖最新计划。此任务进度视图不等同于切换 Codex Plan 模式。
 
 ## 语音
 
@@ -105,3 +105,13 @@ Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.auth
 通知提供“更新”“跳过此版本”“不再通知”三个按钮。更新会固定并批准通知中 Release 的 commit；仅在任务和通话空闲时准备，并在应用前重新检查空闲状态。准备期间若有新任务开始，会推迟替换二进制。跳过只针对该 Release；关闭通知的设置保存在当前安装配置文件中，可在设置里重新启用。关闭通知不影响手动更新。按钮和说明使用安装语言。
 
 选择、跳过、通知设置、发送尝试、消息 ID 和进度都会持久化，避免重启后重复创建相同通知。若 Discord 发送结果不明确，会查找保存发送时点之后的既有通知并关联。独立 updater 会下载获准 Release 中当前系统和架构的预编译程序，校验 GitHub 提供的 SHA-256 digest 和大小，再交给现有安装替换流程。Release ID 和 commit 会固定，即使准备期间出现更新版本也不会改变选择；恢复之前保存的选择时，会重新查询同一 Release ID 的 asset 元数据。不下载源码或运行 Cargo 构建。应用后保留设置和 Codex thread，但 Discord 连接会短暂重连。其他设备不会自动更新。
+
+## Native 功能、插件与异步请求
+
+每个 Discodex 配置文件拥有自己的 `native-features.json`，用于启用 CodeMode、host、multiagent v2 与 `wait_agent`、普通模式问题、clock、token budget 与 history notes、异步通知等官方 app-server 功能。Native 功能设置界面会区分实际生效状态与保存值，并标明需要重启的更改。
+
+`/discodex plugins` 使用当前官方 native 插件目录以及用于读取、安装和卸载的 Discord 按钮。推荐通过官方 elicitation 提供，插件认证或批准继续使用 native 流程。插件是否可用以及 entitlement 由 native app-server 和账户决定；目录不表示每个账户都能使用所有插件。
+
+Native 问题可在 Discord 中通过按钮或自由文本回答。Discodex 保留原问题 ID 与 native thread 关联。异步通知会发送到主页频道，且不会结束当前 turn。
+
+主控制事件队列由受监督的消费者处理。系统持久保存配置文件级日志，也覆盖没有附加控制台的 Windows GUI worker。客户端更新仍使用预编译 Release 资产，不要求本机从源码构建。

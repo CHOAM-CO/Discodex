@@ -93,7 +93,49 @@ struct ApprovalExecution {
 #[derive(Default)]
 struct TaskPlanDisplay {
     observation_order: Option<u64>,
-    messages: Vec<serenity::all::MessageId>,
+    last_plan: Option<crate::task_plan::TaskPlan>,
+    pending_observation_order: Option<u64>,
+    pending_plan: Option<crate::task_plan::TaskPlan>,
+    published_pages: usize,
+}
+
+impl TaskPlanDisplay {
+    fn begin(&mut self, observation_order: u64, plan: &crate::task_plan::TaskPlan) -> bool {
+        if !crate::task_plan::accepts_observation(self.observation_order, observation_order) {
+            return false;
+        }
+        if let Some(pending_order) = self.pending_observation_order {
+            if observation_order < pending_order {
+                return false;
+            }
+            if observation_order == pending_order {
+                return self.pending_plan.as_ref() == Some(plan);
+            }
+            if self.pending_plan.as_ref() == Some(plan) {
+                self.pending_observation_order = Some(observation_order);
+                return true;
+            }
+            self.pending_observation_order = None;
+            self.pending_plan = None;
+            self.published_pages = 0;
+        }
+        if self.last_plan.as_ref() == Some(plan) {
+            self.observation_order = Some(observation_order);
+            return false;
+        }
+        self.pending_observation_order = Some(observation_order);
+        self.pending_plan = Some(plan.clone());
+        self.published_pages = 0;
+        true
+    }
+
+    fn complete(&mut self, observation_order: u64, plan: crate::task_plan::TaskPlan) {
+        self.observation_order = Some(observation_order);
+        self.last_plan = Some(plan);
+        self.pending_observation_order = None;
+        self.pending_plan = None;
+        self.published_pages = 0;
+    }
 }
 
 /// Execution correlation outlives the interactive card and serverRequest/resolved.
@@ -482,6 +524,8 @@ pub(crate) struct BridgeState {
     pub approval_results: Mutex<ApprovalResults>,
     task_plan_displays: Mutex<HashMap<(u64, String, String), TaskPlanDisplay>>,
     pub settings_menus: Mutex<HashMap<String, commands::SettingsMenuState>>,
+    pub plugin_menus: Mutex<HashMap<String, commands::PluginMenuState>>,
+    pub async_questions: Mutex<crate::async_questions::AsyncQuestionStore>,
     pub settings_change_lock: Mutex<()>,
 }
 
@@ -988,6 +1032,10 @@ pub async fn run(
         approval_results: Mutex::new(ApprovalResults::default()),
         task_plan_displays: Mutex::new(HashMap::new()),
         settings_menus: Mutex::new(HashMap::new()),
+        plugin_menus: Mutex::new(HashMap::new()),
+        async_questions: Mutex::new(crate::async_questions::AsyncQuestionStore::load(
+            config.state_dir.join("async-questions.json"),
+        )?),
         settings_change_lock: Mutex::new(()),
     });
 
@@ -1049,14 +1097,17 @@ pub async fn run(
     let event_http = Arc::new(serenity::http::Http::new(&token));
     let cleanup_http = event_http.clone();
     let (event_stop_tx, event_stop_rx) = tokio::sync::oneshot::channel();
-    let mut events = native.subscribe();
+    let mut events = native.subscribe_bridge_events()?;
     let event_state = state.clone();
-    let event_task = tokio::spawn(async move {
+    let mut event_task = tokio::spawn(async move {
         let mut event_stop_rx = event_stop_rx;
         // The startup resume happened before this subscriber existed. Obtain an
         // authoritative idle/active observation before recovering a saved queue.
         if let Err(error) = event_state.native.refresh_thread_state().await {
             warn!(%error, "could not observe startup turn state for queued input");
+        }
+        if let Err(error) = crate::async_questions::recover(&event_http, &event_state).await {
+            warn!(%error, "could not recover saved async question cards");
         }
         loop {
             tokio::select! {
@@ -1067,28 +1118,8 @@ pub async fn run(
                     }
                 }
                 result = events.recv() => match result {
-                    Ok(envelope) => handle_native_event(&event_http, &event_state, envelope).await,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
-                        warn!(count, "native event receiver lagged");
-                        record_typing_observation_floor(&event_state).await;
-                        // Re-read authoritative thread status after losing events. If
-                        // the thread is idle, apply_thread_snapshot also reconciles any
-                        // persisted inbox MCP results before attempting the FIFO drain.
-                        match event_state.native.refresh_thread_state().await {
-                            Ok(thread) => {
-                                let params = serde_json::json!({
-                                    "threadId": event_state.native.thread_id(),
-                                    "thread": thread,
-                                });
-                                apply_thread_snapshot(&event_state, &params).await;
-                            }
-                            Err(error) => warn!(%error, "failed to refresh native thread state after event lag"),
-                        }
-                        if let Err(error) = commands::reconcile_pending_requests(&event_http, &event_state).await {
-                            warn!(%error, "failed to reconcile pending Discord requests after event lag")
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Some(envelope) => handle_native_event(&event_http, &event_state, envelope).await,
+                    None => break,
                 }
             }
         }
@@ -1108,8 +1139,13 @@ pub async fn run(
         crate::discord_updates::run(update_state, update_http, update_stop_rx).await;
     });
 
+    let mut event_task_finished = false;
     let result = tokio::select! {
         result = client.start() => result.map_err(anyhow::Error::from),
+        result = &mut event_task => {
+            event_task_finished = true;
+            Err(event_consumer_failure(result))
+        },
         signal = shutdown => {
             match signal {
                 Ok(Ok(())) => {
@@ -1127,7 +1163,11 @@ pub async fn run(
     let _ = update_task.await;
     let _ = event_stop_tx.send(());
     let _ = typing_stop_tx.send(());
-    let _ = event_task.await;
+    if !event_task_finished {
+        if let Err(error) = event_task.await {
+            error!(%error, "native event consumer failed during shutdown");
+        }
+    }
     let _ = typing_task.await;
     state.updates.wait_for_handlers().await;
     commands::close_pending_requests(cleanup_http.as_ref(), &state).await;
@@ -1135,6 +1175,46 @@ pub async fn run(
     result?;
     voice_cleanup?;
     Ok(())
+}
+
+fn event_consumer_failure(result: Result<(), tokio::task::JoinError>) -> anyhow::Error {
+    match result {
+        Ok(()) => anyhow::anyhow!("native event consumer ended unexpectedly"),
+        Err(error) => anyhow::Error::from(error).context("native event consumer failed"),
+    }
+}
+
+/// Async question replies use the same persisted admission and steering path as text.
+pub(crate) async fn submit_async_answer(
+    state: &BridgeState,
+    input: &str,
+    target: ReplyTarget,
+    expected_thread_id: &str,
+) -> anyhow::Result<()> {
+    if state.native.thread_id() != expected_thread_id {
+        bail!("The question belongs to a different conversation");
+    }
+    {
+        let mut queue = state.queued_inputs.lock().await;
+        if let Some(index) = queue.iter().position(|entry| {
+            entry.message_id == target.message_id.get()
+                && entry.native_thread_id == expected_thread_id
+        }) {
+            match queue[index].delivery {
+                QueueDelivery::Accepted | QueueDelivery::Queued => return Ok(()),
+                QueueDelivery::Rejected => {
+                    let mut next = queue.clone();
+                    next.remove(index);
+                    save_queue(&state.queue_path, &next)?;
+                    *queue = next;
+                }
+                QueueDelivery::Submitting | QueueDelivery::Unknown => {
+                    bail!("Native has not confirmed whether this answer was received");
+                }
+            }
+        }
+    }
+    submit_input_for_thread(state, input, &[], target, None, Some(expected_thread_id)).await
 }
 
 const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(7);
@@ -2193,6 +2273,20 @@ async fn submit_input(
     target: ReplyTarget,
     voice_attachment: Option<VoiceAttachmentAdmission>,
 ) -> anyhow::Result<()> {
+    submit_input_for_thread(state, input, attachments, target, voice_attachment, None).await
+}
+
+async fn submit_input_for_thread(
+    state: &BridgeState,
+    input: &str,
+    attachments: &[crate::attachments::DownloadedAttachment],
+    target: ReplyTarget,
+    voice_attachment: Option<VoiceAttachmentAdmission>,
+    expected_thread_id: Option<&str>,
+) -> anyhow::Result<()> {
+    if expected_thread_id.is_some_and(|id| id != state.native.thread_id()) {
+        bail!("The question belongs to a different conversation");
+    }
     if state.updates.applying() {
         return record_input(
             state,
@@ -2258,6 +2352,9 @@ async fn submit_input(
     // Serialize observation and admission with terminal events and thread replacement.
     // The reader resolves recovery RPCs independently of Discord event handling.
     let mut active = state.current_turn.lock().await;
+    if expected_thread_id.is_some_and(|id| id != state.native.thread_id()) {
+        bail!("The question belongs to a different conversation");
+    }
     let recovery = state.native.prepare_turn_input().await?;
     if let Some(admission) = voice_attachment.as_ref()
         && !voice_attachment_admission_matches(
@@ -3039,7 +3136,7 @@ async fn publish_task_plan_update(
     params: &serde_json::Value,
 ) -> anyhow::Result<()> {
     use anyhow::Context as _;
-    use serenity::builder::{CreateMessage, EditMessage};
+    use serenity::builder::{CreateEmbed, CreateMessage};
 
     let plan =
         crate::task_plan::TaskPlan::from_params(params).context("parse native turn plan update")?;
@@ -3061,46 +3158,29 @@ async fn publish_task_plan_update(
     let key = (generation, plan.thread_id.clone(), plan.turn_id.clone());
     let mut displays = state.task_plan_displays.lock().await;
     let display = displays.entry(key).or_default();
-    if !crate::task_plan::accepts_observation(display.observation_order, observation_order) {
+    if !display.begin(observation_order, &plan) {
         return Ok(());
     }
 
-    let content = plan.render(state.config.language);
-    let chunks = crate::task_plan::split_for_discord(&content);
+    let cards = plan.render_cards(state.config.language);
     let channel = ChannelId::new(state.config.home_channel_id);
-    for (index, chunk) in chunks.iter().enumerate() {
-        if let Some(message_id) = display.messages.get(index).copied() {
-            channel
-                .edit_message(
-                    http,
-                    message_id,
-                    EditMessage::new()
-                        .content(chunk)
-                        .allowed_mentions(empty_mentions()),
-                )
-                .await
-                .with_context(|| format!("edit task plan message {}", index + 1))?;
-        } else {
-            let message = channel
-                .send_message(
-                    http,
-                    CreateMessage::new()
-                        .content(chunk)
-                        .allowed_mentions(empty_mentions()),
-                )
-                .await
-                .with_context(|| format!("send task plan message {}", index + 1))?;
-            display.messages.push(message.id);
-        }
-    }
-    while display.messages.len() > chunks.len() {
-        let message_id = display.messages.pop().expect("length checked");
+    for card in cards.iter().skip(display.published_pages) {
+        let embed = CreateEmbed::new()
+            .title(&card.title)
+            .description(&card.description)
+            .color(card.color);
         channel
-            .delete_message(http, message_id)
+            .send_message(
+                http,
+                CreateMessage::new()
+                    .embed(embed)
+                    .allowed_mentions(empty_mentions()),
+            )
             .await
-            .context("remove obsolete task plan continuation")?;
+            .context("send task plan card")?;
+        display.published_pages += 1;
     }
-    display.observation_order = Some(observation_order);
+    display.complete(observation_order, plan);
     Ok(())
 }
 
@@ -3160,6 +3240,9 @@ async fn handle_native_event(
     match method.as_str() {
         "discodex/thread-state" => {
             apply_thread_snapshot(state, &params).await;
+            if let Err(error) = crate::async_questions::recover(http, state).await {
+                warn!(%error, "could not reconcile saved async question answers");
+            }
         }
         "discodex/connection-closed" => {
             if let Err(error) = commands::mark_connection_closed(http, state, &params).await {
@@ -3421,6 +3504,16 @@ async fn handle_native_event(
                 }
             }
             if item.get("type").and_then(serde_json::Value::as_str) == Some("agentMessage") {
+                if item.get("delivery").and_then(serde_json::Value::as_str) == Some("async") {
+                    if let Some(id) = item.get("id").and_then(serde_json::Value::as_str) {
+                        state.item_targets.lock().await.remove(id);
+                    }
+                    let result = publish_async_item(http, state, &params, &item).await;
+                    if let Err(error) = result {
+                        error!(%error, native_item_id = ?item.get("id"), "failed to publish async Codex item");
+                    }
+                    return;
+                }
                 let remembered_voice_destination = take_voice_item_destination(
                     &mut *state.voice_item_destinations.lock().await,
                     &params,
@@ -3448,6 +3541,17 @@ async fn handle_native_event(
                 } else {
                     None
                 };
+                let target = match target {
+                    Some(target) => Some(target),
+                    None => consumed_reply_target(
+                        &state.approval_results.lock().await.consumed_targets,
+                        &params,
+                    ),
+                };
+                if target.is_none() && !text.is_empty() {
+                    warn!(native_item_id = ?item_id, native_turn_id = ?params.get("turnId"),
+                        "completed assistant item has no known Discord input target");
+                }
                 if let Some(target) = target {
                     if !text.is_empty() {
                         let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
@@ -3530,6 +3634,14 @@ async fn handle_native_event(
                 }
             }
         }
+        "mcpServer/oauthLogin/completed" | "mcpServer/oauth/login/completed" => {
+            if let Some(completion) = crate::discord_plugins::oauth_completion(&envelope) {
+                let notice = commands::oauth_completion_text(&completion, state.config.language);
+                if let Err(error) = publish_home_notice(http, state, &notice).await {
+                    warn!(%error, "could not publish native OAuth completion");
+                }
+            }
+        }
         "thread/settings/updated" => {
             let notice = state.config.language.text(
                 "Codex settings changed. Check the current values with /discodex status.",
@@ -3548,6 +3660,82 @@ async fn handle_native_event(
         }
         _ => {}
     }
+}
+
+async fn publish_async_item(
+    http: &serenity::http::Http,
+    state: &BridgeState,
+    params: &serde_json::Value,
+    item: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let questions = item
+        .get("questions")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            serde_json::from_value::<Vec<crate::async_questions::AsyncQuestionInput>>(value.clone())
+        })
+        .transpose()?;
+    if let Some(questions) = questions.filter(|questions| !questions.is_empty()) {
+        crate::async_questions::publish(
+            http,
+            state,
+            params
+                .get("threadId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            params
+                .get("turnId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            item.get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+            questions,
+        )
+        .await
+    } else {
+        publish_home_notice(
+            http,
+            state,
+            item.get("text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        )
+        .await
+    }
+}
+
+async fn publish_home_notice(
+    http: &serenity::http::Http,
+    state: &BridgeState,
+    text: &str,
+) -> anyhow::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
+    let mut chunks = split_content(&prepared.content, 1650);
+    let batches = crate::reply_files::attachment_batches(&prepared.files);
+    chunks.resize(chunks.len().max(batches.len()), "");
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        let files = batches
+            .get(index)
+            .map(|range| &prepared.files[range.clone()])
+            .unwrap_or(&[]);
+        ChannelId::new(state.config.home_channel_id)
+            .send_message(
+                http,
+                assistant_continuation_message(chunk).add_files(files.iter().map(|file| {
+                    serenity::builder::CreateAttachment::bytes(
+                        file.data.clone(),
+                        file.filename.clone(),
+                    )
+                })),
+            )
+            .await
+            .context("publish native notification in home channel")?;
+    }
+    Ok(())
 }
 
 async fn apply_thread_snapshot(state: &BridgeState, params: &serde_json::Value) {
@@ -4151,6 +4339,38 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn plan_display_keeps_changed_cards_and_suppresses_duplicate_observations() {
+        let plan = crate::task_plan::TaskPlan::from_params(&serde_json::json!({
+            "threadId": "thread-test", "turnId": "turn-test", "explanation": null,
+            "plan": [{"step": "Prepare the change", "status": "inProgress"}]
+        }))
+        .unwrap();
+        let changed = crate::task_plan::TaskPlan::from_params(&serde_json::json!({
+            "threadId": "thread-test", "turnId": "turn-test", "explanation": null,
+            "plan": [{"step": "Prepare the change", "status": "completed"}]
+        }))
+        .unwrap();
+
+        let mut display = TaskPlanDisplay::default();
+        assert!(display.begin(10, &plan));
+        display.published_pages = 1;
+        assert!(display.begin(10, &plan));
+        assert_eq!(display.published_pages, 1);
+        assert!(display.begin(11, &plan));
+        assert_eq!(display.published_pages, 1);
+        display.complete(11, plan.clone());
+        assert!(!display.begin(11, &plan));
+        assert!(!display.begin(10, &changed));
+        assert!(!display.begin(12, &plan));
+        assert_eq!(display.observation_order, Some(12));
+        assert!(display.begin(13, &changed));
+        assert!(display.begin(13, &changed));
+        assert_eq!(display.published_pages, 0);
+        display.complete(13, changed.clone());
+        assert!(!display.begin(13, &changed));
+    }
 
     #[test]
     fn typing_targets_require_connected_active_current_turn_source_and_post_lag_observation() {
@@ -6157,5 +6377,26 @@ mod tests {
         assert!(input.attachments.is_empty());
         assert_eq!(input.text, "old input");
         assert_eq!(input.delivery, QueueDelivery::Queued);
+    }
+    #[tokio::test]
+    async fn event_consumer_exit_is_reported_as_worker_failure() {
+        let outcome = tokio::spawn(async {}).await;
+        let error = event_consumer_failure(outcome);
+        assert_eq!(
+            error.to_string(),
+            "native event consumer ended unexpectedly"
+        );
+    }
+
+    #[tokio::test]
+    async fn event_consumer_panic_is_preserved_as_worker_failure() {
+        let outcome = tokio::spawn(async { panic!("simulated consumer failure") }).await;
+        let error = event_consumer_failure(outcome);
+        assert!(
+            error
+                .downcast_ref::<tokio::task::JoinError>()
+                .unwrap()
+                .is_panic()
+        );
     }
 }

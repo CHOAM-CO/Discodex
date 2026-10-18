@@ -30,27 +30,15 @@ async fn main() -> Result<()> {
         return discodex::voice_tools::run(&endpoint, voice_tools_language(&rest)?).await;
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    if command == "run" {
+        return run_command(&rest).await;
+    }
+
+    // MCP children returned above so their stdout remains a clean JSON-RPC stream.
+    discodex::logging::init_stderr_logging()?;
 
     match command.as_str() {
-        "run" => {
-            let selected_config_path = config_path(&rest)?;
-            let config = Config::load(&selected_config_path)?;
-            let _token = config.token()?;
-            let shutdown = start_shutdown_listener();
-            let native = Native::start(&config).await?;
-            let result =
-                discodex::discord::run(config, native.clone(), shutdown, selected_config_path)
-                    .await;
-            let shutdown = native.shutdown().await;
-            result?;
-            shutdown?;
-        }
+        "run" => unreachable!("run command was handled before CLI logger setup"),
         "config" => {
             let config = Config::load(config_path(&rest)?)?;
             println!(
@@ -146,6 +134,30 @@ async fn main() -> Result<()> {
         other => bail!("unknown command `{other}`; run `discodex help`"),
     }
     Ok(())
+}
+
+async fn run_command(args: &[String]) -> Result<()> {
+    let selected_config_path = config_path(args)?;
+    let config = Config::load(&selected_config_path)?;
+    discodex::logging::init_file_logging(&config.state_dir)?;
+
+    let result = async {
+        let _token = config.token()?;
+        let shutdown = start_shutdown_listener();
+        let native = Native::start_for_bridge(&config).await?;
+        let result =
+            discodex::discord::run(config, native.clone(), shutdown, selected_config_path).await;
+        let shutdown = native.shutdown().await;
+        result?;
+        shutdown?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(error) = &result {
+        tracing::error!(error = %format!("{error:#}"), "bridge process failed");
+    }
+    result
 }
 
 fn start_shutdown_listener() -> tokio::sync::oneshot::Receiver<std::io::Result<()>> {

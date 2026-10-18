@@ -141,4 +141,14 @@ Discodex 会从获准的 GitHub Release 下载适合当前操作系统和架构�
 
 ## 任务工具更新
 
-更新后重启 worker，即可在保留现有 Codex thread 的情况下启用 native `update_plan`、CLI 任务和管理工作树工具。不需单独安装 MCP，也不修改用户全局 Codex 设置。任务查询、创建、分支和工作树创建都使用同一官方 app-server 连接；新任务继承发起任务的 native 设置，不会重置既有对话和配置。
+更新后重启 worker，即可在保留现有 Codex thread 的情况下使用 native `update_plan`、CLI 任务和管理工作树工具。每次计划变化都会显示为新的主页 Embed 卡片，绝不编辑旧卡片；相同事件回放会被抑制，完整计划文本仅在超出 Discord 限制时分页。不需单独安装 MCP，也不修改用户全局 Codex 设置。任务查询、创建、分支和工作树创建都使用同一官方 app-server 连接；新任务继承发起任务的 native 设置，不会重置既有对话和配置。
+
+## Native 功能、插件与运行日志
+
+Native app-server 功能按配置文件保存在各自的 `native-features.json` 中。功能包括 CodeMode、host、multiagent v2 与 `wait_agent`、普通模式问题、clock、token budget/history notes 和异步通知。设置界面会分别显示实际生效的 native 状态与保存值，并标出需要重启 worker 的更改。
+
+使用 `/discodex plugins` 浏览 native 插件目录并通过 Discord 按钮调用支持的读取、安装和卸载操作。推荐由 native elicitation 提供。插件认证、批准、账户可用性和 entitlement 仍由官方 native 流程处理，具体取决于账户和目录。
+
+可在 Discord 中通过按钮或自由文本回答异步 native 问题，并保留原问题 ID 与 native thread 关联。异步通知会发送到主页频道，不会结束当前活动 turn。
+
+主控制事件队列由受监督的 worker 消费，并按配置文件持久保存日志。即使 Windows GUI worker 没有附加控制台，也能检查运行记录。更新使用预编译 Release 资产，客户端无需从源码构建。

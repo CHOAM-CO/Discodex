@@ -1,0 +1,44 @@
+name: Unit tests
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      LIBOPUS_BUNDLED: '1'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      RUSTUP_TOOLCHAIN: '1.95.0'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable Git long paths on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: git config --global core.longpaths true
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Run unit tests
+        shell: bash
+        run: cargo test --locked --all-targets --target '${{ matrix.target }}'

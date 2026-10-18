@@ -4,6 +4,9 @@ use serde_json::Value;
 use crate::i18n::Language;
 
 pub const DISCORD_MESSAGE_LIMIT: usize = 2_000;
+pub const DISCORD_EMBED_DESCRIPTION_LIMIT: usize = 4_096;
+pub const PLAN_ACTIVE_COLOR: u32 = 0x3498DB;
+pub const PLAN_COMPLETED_COLOR: u32 = 0x2ECC71;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskPlan {
@@ -72,26 +75,104 @@ impl TaskPlan {
             let (mark, label) = match (language, item.status) {
                 (Language::English, PlanStatus::Pending) => ("○", "Pending"),
                 (Language::English, PlanStatus::InProgress) => ("▶", "In progress"),
-                (Language::English, PlanStatus::Completed) => ("✓", "Completed"),
+                (Language::English, PlanStatus::Completed) => ("✅", "Completed"),
                 (Language::Korean, PlanStatus::Pending) => ("○", "대기"),
                 (Language::Korean, PlanStatus::InProgress) => ("▶", "진행 중"),
-                (Language::Korean, PlanStatus::Completed) => ("✓", "완료"),
+                (Language::Korean, PlanStatus::Completed) => ("✅", "완료"),
                 (Language::Chinese, PlanStatus::Pending) => ("○", "待处理"),
                 (Language::Chinese, PlanStatus::InProgress) => ("▶", "进行中"),
-                (Language::Chinese, PlanStatus::Completed) => ("✓", "已完成"),
+                (Language::Chinese, PlanStatus::Completed) => ("✅", "已完成"),
                 (Language::Japanese, PlanStatus::Pending) => ("○", "未着手"),
                 (Language::Japanese, PlanStatus::InProgress) => ("▶", "進行中"),
-                (Language::Japanese, PlanStatus::Completed) => ("✓", "完了"),
+                (Language::Japanese, PlanStatus::Completed) => ("✅", "完了"),
             };
             output.push('\n');
             output.push_str(mark);
             output.push(' ');
             output.push_str(label);
             output.push_str(": ");
-            output.push_str(&item.step);
+            if item.status == PlanStatus::Completed {
+                output.push_str("~~");
+                output.push_str(&item.step);
+                output.push_str("~~");
+            } else {
+                output.push_str(&item.step);
+            }
         }
         output
     }
+
+    pub fn render_cards(&self, language: Language) -> Vec<PlanCard> {
+        let completed = self
+            .steps
+            .iter()
+            .filter(|step| step.status == PlanStatus::Completed)
+            .count();
+        let total = self.steps.len();
+        let (title, completed_label) = match language {
+            Language::English => ("Task plan", "completed"),
+            Language::Korean => ("작업 계획", "완료"),
+            Language::Chinese => ("任务计划", "已完成"),
+            Language::Japanese => ("作業計画", "完了"),
+        };
+        let title = format!("{title} · {completed}/{total} {completed_label}");
+        let color = if completed == total {
+            PLAN_COMPLETED_COLOR
+        } else {
+            PLAN_ACTIVE_COLOR
+        };
+        let description = self.render(language);
+        let body = description
+            .split_once('\n')
+            .map(|(_, body)| body)
+            .unwrap_or_default();
+        let body = if body.is_empty() { "\u{200b}" } else { body };
+        split_embed_description(body)
+            .into_iter()
+            .map(|description| PlanCard {
+                title: title.clone(),
+                description,
+                color,
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanCard {
+    pub title: String,
+    pub description: String,
+    pub color: u32,
+}
+
+pub fn split_embed_description(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        return vec!["\u{200b}".to_owned()];
+    }
+    let mut chunks = Vec::new();
+    let mut rest = text;
+    while rest.encode_utf16().count() > DISCORD_EMBED_DESCRIPTION_LIMIT {
+        let mut end_byte = 0;
+        let mut code_units = 0;
+        for (index, character) in rest.char_indices() {
+            if code_units + character.len_utf16() > DISCORD_EMBED_DESCRIPTION_LIMIT {
+                break;
+            }
+            code_units += character.len_utf16();
+            end_byte = index + character.len_utf8();
+        }
+        let boundary = rest[..end_byte]
+            .rfind('\n')
+            .filter(|index| *index > 0)
+            .map(|index| index + 1)
+            .unwrap_or(end_byte);
+        chunks.push(rest[..boundary].to_owned());
+        rest = &rest[boundary..];
+    }
+    if !rest.is_empty() {
+        chunks.push(rest.to_owned());
+    }
+    chunks
 }
 
 pub fn event_thread_is_foreign(params: &Value, native_thread_id: &str) -> bool {
@@ -181,19 +262,19 @@ mod tests {
         for (language, expected) in [
             (
                 Language::English,
-                "Task plan\nReview\n○ Pending: One\n▶ In progress: Two\n✓ Completed: Three",
+                "Task plan\nReview\n○ Pending: One\n▶ In progress: Two\n✅ Completed: ~~Three~~",
             ),
             (
                 Language::Korean,
-                "작업 계획\nReview\n○ 대기: One\n▶ 진행 중: Two\n✓ 완료: Three",
+                "작업 계획\nReview\n○ 대기: One\n▶ 진행 중: Two\n✅ 완료: ~~Three~~",
             ),
             (
                 Language::Chinese,
-                "任务计划\nReview\n○ 待处理: One\n▶ 进行中: Two\n✓ 已完成: Three",
+                "任务计划\nReview\n○ 待处理: One\n▶ 进行中: Two\n✅ 已完成: ~~Three~~",
             ),
             (
                 Language::Japanese,
-                "作業計画\nReview\n○ 未着手: One\n▶ 進行中: Two\n✓ 完了: Three",
+                "作業計画\nReview\n○ 未着手: One\n▶ 進行中: Two\n✅ 完了: ~~Three~~",
             ),
         ] {
             assert_eq!(plan.render(language), expected);
@@ -222,6 +303,50 @@ mod tests {
         assert!(accepts_observation(Some(8), 9));
         assert!(!accepts_observation(Some(8), 8));
         assert!(!accepts_observation(Some(8), 7));
+    }
+
+    #[test]
+    fn builds_colored_cards_with_completion_count_and_full_status_text() {
+        let plan = TaskPlan::from_params(&serde_json::json!({
+            "threadId": "thread-test", "turnId": "turn-test", "explanation": "Review",
+            "plan": [
+                {"step": "One", "status": "completed"},
+                {"step": "Two", "status": "inProgress"},
+                {"step": "Three", "status": "pending"}
+            ]
+        }))
+        .unwrap();
+        let cards = plan.render_cards(Language::English);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].title, "Task plan · 1/3 completed");
+        assert_eq!(
+            cards[0].description,
+            "Review\n✅ Completed: ~~One~~\n▶ In progress: Two\n○ Pending: Three"
+        );
+        assert_eq!(cards[0].color, PLAN_ACTIVE_COLOR);
+
+        let complete = TaskPlan::from_params(&serde_json::json!({
+            "threadId": "thread-test", "turnId": "turn-test", "explanation": null,
+            "plan": [{"step": "One", "status": "completed"}]
+        }))
+        .unwrap();
+        assert_eq!(
+            complete.render_cards(Language::English)[0].color,
+            PLAN_COMPLETED_COLOR
+        );
+    }
+
+    #[test]
+    fn splits_long_card_descriptions_at_embed_limits_without_losing_text() {
+        let description = format!("{}\n{}", "한字🙂".repeat(1_500), "x".repeat(4_500));
+        let chunks = split_embed_description(&description);
+        assert!(chunks.len() > 1);
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.encode_utf16().count() <= DISCORD_EMBED_DESCRIPTION_LIMIT)
+        );
+        assert_eq!(chunks.concat(), description);
     }
 
     #[test]

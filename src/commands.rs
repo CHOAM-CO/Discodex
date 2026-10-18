@@ -20,6 +20,13 @@ use serenity::{
 use uuid::Uuid;
 
 use crate::discord::{BridgeState, PendingApproval, ReplyTarget, StateKey};
+use crate::discord_plugins::{
+    OAuthCompletion, PluginApp, PluginDetail, PluginInstallTarget, SuggestionDecision,
+    begin_oauth_login, install_confirmed, is_plugin_suggestion, list_catalog, list_installed,
+    plugin_suggestion, plugin_suggestion_response, read_plugin, suggested_plugin_install_verified,
+    suggested_plugin_is_installed, suggested_plugin_target, suggestion_labels, uninstall_confirmed,
+    verified_suggestion_accept,
+};
 use crate::message_access::{MessageAccess, MessagePolicy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,6 +44,131 @@ pub(crate) enum SettingsKind {
     Whitelist,
     Blacklist,
     RegisteredChannels,
+    NativeFeatures,
+    NativeFeature(NativeFeatureKey),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeFeatureKey {
+    CodeMode,
+    CodeModeHost,
+    MultiAgentV2,
+    WaitAgent,
+    AsyncNotifications,
+    RequestUserInput,
+    Clock,
+    TokenBudget,
+    HistoryNotes,
+    SubagentModel,
+}
+
+impl NativeFeatureKey {
+    const ALL: [Self; 10] = [
+        Self::CodeMode,
+        Self::CodeModeHost,
+        Self::MultiAgentV2,
+        Self::WaitAgent,
+        Self::AsyncNotifications,
+        Self::RequestUserInput,
+        Self::Clock,
+        Self::TokenBudget,
+        Self::HistoryNotes,
+        Self::SubagentModel,
+    ];
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::CodeMode => "codeMode",
+            Self::CodeModeHost => "codeModeHost",
+            Self::MultiAgentV2 => "multiAgentV2",
+            Self::WaitAgent => "waitAgent",
+            Self::AsyncNotifications => "asyncNotifications",
+            Self::RequestUserInput => "requestUserInput",
+            Self::Clock => "clock",
+            Self::TokenBudget => "tokenBudget",
+            Self::HistoryNotes => "historyNotes",
+            Self::SubagentModel => "subagentModel",
+        }
+    }
+
+    fn from_key(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|key| key.key() == value)
+    }
+
+    fn label(self, language: crate::i18n::Language) -> &'static str {
+        match self {
+            Self::CodeMode => language.text("Code Mode", "Code Mode", "Code Mode", "Code Mode"),
+            Self::CodeModeHost => language.text(
+                "Code Mode host",
+                "Code Mode 호스트",
+                "Code Mode 主机",
+                "Code Mode ホスト",
+            ),
+            Self::MultiAgentV2 => language.text(
+                "Multi-agent v2",
+                "멀티 에이전트 v2",
+                "多代理 v2",
+                "マルチエージェント v2",
+            ),
+            Self::WaitAgent => language.text(
+                "Wait for agents",
+                "에이전트 대기",
+                "等待代理",
+                "エージェントを待つ",
+            ),
+            Self::AsyncNotifications => language.text(
+                "Async notifications",
+                "비동기 알림",
+                "异步通知",
+                "非同期通知",
+            ),
+            Self::RequestUserInput => language.text(
+                "Native questions",
+                "네이티브 질문",
+                "原生提问",
+                "ネイティブ質問",
+            ),
+            Self::Clock => language.text(
+                "Clock and time reminders",
+                "시계 및 시간 알림",
+                "时钟和时间提醒",
+                "時計と時刻リマインダー",
+            ),
+            Self::TokenBudget => {
+                language.text("Token budget", "토큰 예산", "令牌预算", "トークン予算")
+            }
+            Self::HistoryNotes => language.text(
+                "History notes",
+                "대화 기록 메모",
+                "历史记录注释",
+                "履歴メモ",
+            ),
+            Self::SubagentModel => language.text(
+                "Default subagent model",
+                "기본 하위 에이전트 모델",
+                "默认子代理模型",
+                "既定のサブエージェントモデル",
+            ),
+        }
+    }
+
+    fn config_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::CodeMode => &["features.code_mode.enabled"],
+            Self::CodeModeHost => &["features.code_mode_host.enabled"],
+            Self::MultiAgentV2 => &["features.multi_agent_v2.enabled"],
+            Self::WaitAgent => &["features.multi_agent_v2.wait_agent_enabled"],
+            Self::AsyncNotifications => &["features.send_message_to_user_async"],
+            Self::RequestUserInput => &[
+                "tools.experimental_request_user_input.enabled",
+                "features.default_mode_request_user_input",
+            ],
+            Self::Clock => &["features.current_time_reminder.enabled"],
+            Self::TokenBudget => &["features.token_budget.enabled"],
+            Self::HistoryNotes => &["features.token_budget.use_history_notes_extension"],
+            Self::SubagentModel => &["agents.default_subagent_model"],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +189,38 @@ pub(crate) struct SettingsMenuState {
     pub current: String,
     pub current_value: Option<String>,
     pub model_scope: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PluginMenuMode {
+    Catalog,
+    Installed,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum PluginMenuEntry {
+    Install(PluginInstallTarget),
+    Uninstall {
+        plugin_id: String,
+        display_name: String,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PluginMenuState {
+    pub claimed: bool,
+    pub requester_id: u64,
+    pub connection_generation: u64,
+    pub thread_id: String,
+    pub mode: PluginMenuMode,
+    pub page: usize,
+    pub entries: Vec<PluginMenuEntry>,
+    pub selected: Option<PluginMenuEntry>,
+    pub selected_detail: Option<PluginDetail>,
+    pub apps_needing_auth: Vec<PluginApp>,
+    pub oauth_servers: Vec<String>,
+    pub auth_view: bool,
+    pub install_notice: Option<String>,
 }
 
 pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
@@ -180,6 +344,39 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
                 .required(true),
             ),
         );
+    command = command.add_option(
+        CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "plugins",
+            language.text(
+                "Browse, install, or remove native Codex plugins",
+                "Codex 플러그인을 찾아 설치하거나 제거합니다",
+                "浏览、安装或移除 Codex 插件",
+                "Codex プラグインを閲覧、インストール、削除します",
+            ),
+        )
+        .add_sub_option(
+            CreateCommandOption::new(
+                CommandOptionType::String,
+                "view",
+                language.text(
+                    "Catalog or installed plugins",
+                    "카탈로그 또는 설치된 플러그인",
+                    "目录或已安装插件",
+                    "カタログまたはインストール済みプラグイン",
+                ),
+            )
+            .required(false)
+            .add_string_choice(
+                language.text("Catalog", "카탈로그", "目录", "カタログ"),
+                "catalog",
+            )
+            .add_string_choice(
+                language.text("Installed", "설치됨", "已安装", "インストール済み"),
+                "installed",
+            ),
+        ),
+    );
     vec![command]
 }
 
@@ -240,6 +437,37 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
             let error = response.as_ref().err().map(|error| format!("{error:#}"));
             checks.settings_response(interaction.id.get(), error.as_deref());
         }
+        response?;
+        return Ok(());
+    }
+    if plugins_ui_requested(interaction) {
+        let response = match plugin_menu_from_command(interaction, &state).await {
+            Ok((id, menu)) => {
+                let rendered = render_plugin_menu(&id, &menu, state.config.language);
+                let current_generation = state.native.current_generation();
+                let current_thread_id = state.native.thread_id();
+                let mut menus = state.plugin_menus.lock().await;
+                menus.retain(|_, previous| {
+                    previous.connection_generation == current_generation
+                        && previous.thread_id == current_thread_id
+                        && previous.requester_id != interaction.user.id.get()
+                });
+                menus.insert(id, menu);
+                drop(menus);
+                send_command_settings_panel(ctx, interaction, &rendered.0, rendered.1).await
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, "failed to build Discord plugin menu");
+                interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(
+                    state.config.language.text(
+                        "Could not load the native plugin list. Check Codex account access and try again.",
+                        "네이티브 플러그인 목록을 불러오지 못했습니다. Codex 계정 접근을 확인한 뒤 다시 시도하세요.",
+                        "无法加载原生插件列表。请检查 Codex 账户访问权限后重试。",
+                        "ネイティブプラグイン一覧を読み込めませんでした。Codex アカウントへのアクセスを確認して再試行してください。",
+                    ),
+                )).await.map(|_| ())
+            }
+        };
         response?;
         return Ok(());
     }
@@ -789,6 +1017,13 @@ async fn build_settings_menu(
                     "语音配置",
                     "音声プロファイル",
                 ),
+                (
+                    "native-features",
+                    "Native Codex features",
+                    "네이티브 Codex 기능",
+                    "原生 Codex 功能",
+                    "ネイティブ Codex 機能",
+                ),
             ]
             .into_iter()
             .map(|(value, en, ko, zh, ja)| SettingsChoice {
@@ -797,6 +1032,134 @@ async fn build_settings_menu(
             })
             .collect();
             (None, current, choices)
+        }
+        SettingsKind::NativeFeatures => {
+            let descriptors = state.native.list_native_feature_settings()?;
+            let mut current = language
+                .text(
+                    "Saved choices apply after the Codex app-server restarts.",
+                    "저장한 선택은 Codex 앱 서버를 다시 시작한 뒤 적용됩니다.",
+                    "保存的选择会在 Codex 应用服务器重启后生效。",
+                    "保存した選択は Codex アプリサーバーの再起動後に適用されます。",
+                )
+                .to_owned();
+            let preferences = state.native.read_native_feature_preferences()?;
+            for key in NativeFeatureKey::ALL {
+                let value = native_feature_saved_value(&preferences, key);
+                current.push_str(&format!(
+                    "\n• {}: {}",
+                    key.label(language),
+                    native_preference_label(value.as_ref(), language)
+                ));
+            }
+            let choices = descriptors
+                .into_iter()
+                .filter_map(|(descriptor, _)| {
+                    NativeFeatureKey::from_key(descriptor.key).map(|key| SettingsChoice {
+                        value: format!("native-feature:{}", key.key()),
+                        label: key.label(language).to_owned(),
+                    })
+                })
+                .collect();
+            (None, current, choices)
+        }
+        SettingsKind::NativeFeature(key) => {
+            let snapshot = state.native.read_native_feature_snapshot().await?;
+            let saved = native_feature_saved_value(&snapshot.preferences, key);
+            let effective = effective_native_feature_text(&snapshot.native_config, key, language);
+            let choices = if key == NativeFeatureKey::SubagentModel {
+                let catalog =
+                    full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+                let mut choices = vec![SettingsChoice {
+                    value: "native-default".to_owned(),
+                    label: language
+                        .text(
+                            "Native default",
+                            "네이티브 기본값",
+                            "原生默认值",
+                            "ネイティブ既定値",
+                        )
+                        .to_owned(),
+                }];
+                choices.extend(
+                    catalog
+                        .get("data")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|model| {
+                            let slug = model.get("slug")?.as_str()?;
+                            let display = model
+                                .get("displayName")
+                                .and_then(Value::as_str)
+                                .unwrap_or(slug);
+                            Some(SettingsChoice {
+                                value: slug.to_owned(),
+                                label: format!("{display} ({slug})"),
+                            })
+                        }),
+                );
+                choices
+            } else {
+                vec![
+                    SettingsChoice {
+                        value: "on".to_owned(),
+                        label: language.text("On", "켜기", "开启", "オン").to_owned(),
+                    },
+                    SettingsChoice {
+                        value: "off".to_owned(),
+                        label: language.text("Off", "끄기", "关闭", "オフ").to_owned(),
+                    },
+                    SettingsChoice {
+                        value: "native-default".to_owned(),
+                        label: language
+                            .text(
+                                "Native default",
+                                "네이티브 기본값",
+                                "原生默认值",
+                                "ネイティブ既定値",
+                            )
+                            .to_owned(),
+                    },
+                ]
+            };
+            let current_value = if key == NativeFeatureKey::SubagentModel {
+                saved.clone().unwrap_or_else(|| "native-default".to_owned())
+            } else {
+                match saved.as_deref() {
+                    Some("true") => "on".to_owned(),
+                    Some("false") => "off".to_owned(),
+                    _ => "native-default".to_owned(),
+                }
+            };
+            let selected = choices.iter().find(|choice| choice.value == current_value);
+            let desired = selected
+                .map(|choice| choice.label.as_str())
+                .unwrap_or(current_value.as_str());
+            let current = format!(
+                "{}: {}\n{}: {}\n{}",
+                language.text(
+                    "Saved preference",
+                    "저장된 설정",
+                    "已保存的偏好",
+                    "保存済みの設定"
+                ),
+                desired,
+                language.text(
+                    "Effective Codex config",
+                    "실효 Codex 설정",
+                    "Codex 当前生效配置",
+                    "有効な Codex 設定"
+                ),
+                effective,
+                language.text(
+                    "Restart required to apply this preference.",
+                    "이 설정을 적용하려면 재시작이 필요합니다.",
+                    "此偏好需要重启后生效。",
+                    "この設定の適用には再起動が必要です。"
+                )
+            );
+            (Some(current_value), current, choices)
         }
         SettingsKind::MessageAccess => {
             let access = state.message_access.read().await.clone();
@@ -1230,6 +1593,13 @@ fn choice_current_label(
 fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &'static str {
     match kind {
         SettingsKind::Hub => language.text("Settings", "설정", "设置", "設定"),
+        SettingsKind::NativeFeatures => language.text(
+            "Native Codex features",
+            "네이티브 Codex 기능",
+            "原生 Codex 功能",
+            "ネイティブ Codex 機能",
+        ),
+        SettingsKind::NativeFeature(key) => key.label(language),
         SettingsKind::Updates => language.text(
             "Update notifications",
             "업데이트 알림",
@@ -1686,6 +2056,126 @@ async fn update_message_access_list(
     Ok(())
 }
 
+fn native_feature_saved_value(
+    preferences: &crate::native::NativeFeaturePreferences,
+    key: NativeFeatureKey,
+) -> Option<String> {
+    match key {
+        NativeFeatureKey::CodeMode => preferences.code_mode.map(|value| value.to_string()),
+        NativeFeatureKey::CodeModeHost => preferences.code_mode_host.map(|value| value.to_string()),
+        NativeFeatureKey::MultiAgentV2 => preferences.multi_agent_v2.map(|value| value.to_string()),
+        NativeFeatureKey::WaitAgent => preferences.wait_agent.map(|value| value.to_string()),
+        NativeFeatureKey::AsyncNotifications => preferences
+            .async_notifications
+            .map(|value| value.to_string()),
+        NativeFeatureKey::RequestUserInput => preferences
+            .request_user_input
+            .map(|value| value.to_string()),
+        NativeFeatureKey::Clock => preferences.clock.map(|value| value.to_string()),
+        NativeFeatureKey::TokenBudget => preferences.token_budget.map(|value| value.to_string()),
+        NativeFeatureKey::HistoryNotes => preferences.history_notes.map(|value| value.to_string()),
+        NativeFeatureKey::SubagentModel => preferences.subagent_model.clone(),
+    }
+}
+
+fn native_preference_label(value: Option<&String>, language: crate::i18n::Language) -> String {
+    match value.map(String::as_str) {
+        Some("true") => language.text("On", "켜기", "开启", "オン").to_owned(),
+        Some("false") => language.text("Off", "끄기", "关闭", "オフ").to_owned(),
+        Some(value) => value.to_owned(),
+        None => language
+            .text(
+                "Native default",
+                "네이티브 기본값",
+                "原生默认值",
+                "ネイティブ既定値",
+            )
+            .to_owned(),
+    }
+}
+
+fn effective_native_feature_text(
+    native_config: &Value,
+    key: NativeFeatureKey,
+    language: crate::i18n::Language,
+) -> String {
+    key.config_paths()
+        .iter()
+        .map(|path| {
+            let value = effective_config_value(native_config, path)
+                .map(Value::to_string)
+                .unwrap_or_else(|| {
+                    language
+                        .text("not reported", "보고되지 않음", "未报告", "未報告")
+                        .to_owned()
+                });
+            let origin = native_config
+                .pointer("/origins")
+                .and_then(|origins| origins.get(*path));
+            match origin {
+                Some(origin) => format!("{path} = {value} ({})", origin),
+                None => format!("{path} = {value}"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\\n")
+}
+
+fn effective_config_value<'a>(native_config: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut value = native_config.get("config")?;
+    for segment in path.split('.') {
+        let camel = snake_to_camel(segment);
+        value = value.get(segment).or_else(|| value.get(camel))?;
+    }
+    Some(value)
+}
+
+fn snake_to_camel(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut uppercase = false;
+    for character in value.chars() {
+        if character == '_' {
+            uppercase = true;
+        } else if uppercase {
+            output.extend(character.to_uppercase());
+            uppercase = false;
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn set_native_feature_preference(
+    preferences: &mut crate::native::NativeFeaturePreferences,
+    key: NativeFeatureKey,
+    selected: Option<&str>,
+) -> anyhow::Result<()> {
+    if key == NativeFeatureKey::SubagentModel {
+        preferences.subagent_model = selected.map(str::to_owned);
+        return Ok(());
+    }
+    let value = match selected {
+        Some("true") | Some("on") => Some(true),
+        Some("false") | Some("off") => Some(false),
+        None => None,
+        _ => bail!("unknown native feature preference"),
+    };
+    match key {
+        NativeFeatureKey::CodeMode => preferences.code_mode = value,
+        NativeFeatureKey::CodeModeHost => preferences.code_mode_host = value,
+        NativeFeatureKey::MultiAgentV2 => preferences.multi_agent_v2 = value,
+        NativeFeatureKey::WaitAgent => preferences.wait_agent = value,
+        NativeFeatureKey::AsyncNotifications => preferences.async_notifications = value,
+        NativeFeatureKey::RequestUserInput => preferences.request_user_input = value,
+        NativeFeatureKey::Clock => preferences.clock = value,
+        NativeFeatureKey::TokenBudget => preferences.token_budget = value,
+        NativeFeatureKey::HistoryNotes => preferences.history_notes = value,
+        NativeFeatureKey::SubagentModel => unreachable!(),
+    }
+    Ok(())
+}
+
 fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
     match value {
         "model" => Some(SettingsKind::Model),
@@ -1696,6 +2186,7 @@ fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
         "voice" => Some(SettingsKind::Voice),
         "updates" => Some(SettingsKind::Updates),
         "message-access" => Some(SettingsKind::MessageAccess),
+        "native-features" => Some(SettingsKind::NativeFeatures),
         _ => None,
     }
 }
@@ -1965,11 +2456,21 @@ async fn handle_claimed_settings_action(
             .choices
             .get(index)
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
-        menu.kind = settings_kind_from_key(&selected.value)
-            .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        menu.kind = if let Some(key) = selected.value.strip_prefix("native-feature:") {
+            NativeFeatureKey::from_key(key)
+                .map(SettingsKind::NativeFeature)
+                .ok_or_else(|| anyhow!("unknown native feature choice"))?
+        } else {
+            settings_kind_from_key(&selected.value)
+                .ok_or_else(|| anyhow!("unknown settings choice"))?
+        };
         menu.page = 0;
     } else if prefix == 'h' && suffix.is_empty() {
-        menu.kind = SettingsKind::Hub;
+        menu.kind = if matches!(menu.kind, SettingsKind::NativeFeature(_)) {
+            SettingsKind::NativeFeatures
+        } else {
+            SettingsKind::Hub
+        };
         menu.page = 0;
     } else if prefix == 'b' && suffix.is_empty() && is_access_list(menu.kind) {
         menu.kind = SettingsKind::MessageAccess;
@@ -1983,6 +2484,24 @@ async fn handle_claimed_settings_action(
             .get(index)
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        if menu.kind == SettingsKind::NativeFeatures {
+            let feature = selected
+                .value
+                .strip_prefix("native-feature:")
+                .and_then(NativeFeatureKey::from_key)
+                .ok_or_else(|| anyhow!("unknown native feature choice"))?;
+            menu.kind = SettingsKind::NativeFeature(feature);
+            let refreshed = build_settings_menu(
+                ctx,
+                state,
+                menu.kind,
+                0,
+                menu.requester_id,
+                menu.connection_generation,
+            )
+            .await?;
+            return update_settings_panel(ctx, interaction, state, menu_id, refreshed).await;
+        }
         if menu.kind == SettingsKind::MessageAccess {
             let notice = match selected.value.as_str() {
                 "policy:everyone"
@@ -2398,6 +2917,26 @@ async fn apply_setting_choice(
                 language,
             ))
         }
+        SettingsKind::NativeFeatures => bail!("Choose a native feature first."),
+        SettingsKind::NativeFeature(key) => {
+            let mut preferences = state.native.read_native_feature_preferences()?;
+            let selected = if requested == "native-default" {
+                None
+            } else {
+                Some(requested)
+            };
+            set_native_feature_preference(&mut preferences, key, selected)?;
+            state
+                .native
+                .apply_native_feature_preferences(&preferences)
+                .await?;
+            Ok(language.text(
+                "Saved for the next Codex app-server start. Restart required; the effective native config shown above is unchanged for this running process.",
+                "다음 Codex 앱 서버 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
+                "已保存，供下次 Codex 应用服务器启动时使用。需要重启；当前运行进程的有效原生配置未变。",
+                "次回の Codex アプリサーバー起動用に保存しました。再起動が必要です。現在のプロセスの有効なネイティブ設定は上記のままです。",
+            ).to_owned())
+        }
         SettingsKind::Hub => bail!("Choose a setting first."),
         SettingsKind::MessageAccess
         | SettingsKind::PairedAccounts
@@ -2434,8 +2973,14 @@ pub(crate) async fn handle_component(
         interaction.user.id,
         state.config.language,
     )?;
+    if interaction.data.custom_id.starts_with("asyncq:") {
+        return crate::async_questions::handle_component(ctx, interaction, &state).await;
+    }
     if interaction.data.custom_id.starts_with("discodex:update:") {
         return crate::discord_updates::handle_component(ctx, interaction, &state).await;
+    }
+    if interaction.data.custom_id.starts_with("codex:plugins:") {
+        return handle_plugin_component(ctx, interaction, &state).await;
     }
     if interaction.data.custom_id.starts_with("codex:settings:") {
         return handle_settings_component(ctx, interaction, &state).await;
@@ -2454,6 +2999,22 @@ pub(crate) async fn handle_component(
             .cloned()
             .ok_or_else(|| anyhow!("native 요청이 이미 처리되었거나 만료되었습니다"))?
     };
+    if matches!(decision, "plugin-install" | "plugin-check")
+        && plugin_suggestion(
+            &json!({"method": pending.method.clone(), "params": pending.params.clone()}),
+        )
+        .is_some()
+    {
+        return handle_plugin_suggestion_component(
+            ctx,
+            interaction,
+            &state,
+            key,
+            decision,
+            pending,
+        )
+        .await;
+    }
     if decision == "answer" {
         if pending.method == "mcpServer/elicitation/request"
             && mcp_tool_approval_persist_options(&pending.params).is_some()
@@ -2775,6 +3336,9 @@ pub(crate) async fn handle_modal(
         interaction.user.id,
         state.config.language,
     )?;
+    if interaction.data.custom_id.starts_with("asyncq:") {
+        return crate::async_questions::handle_modal(ctx, interaction, &state).await;
+    }
     if interaction.data.custom_id.starts_with("codex:access:") {
         return handle_message_access_modal(ctx, interaction, &state).await;
     }
@@ -3250,6 +3814,40 @@ fn approval_actions_with_language(
     language: crate::i18n::Language,
 ) -> Vec<CreateActionRow> {
     if method == "mcpServer/elicitation/request"
+        && let Some(suggestion) = plugin_suggestion(&json!({"method": method, "params": params}))
+    {
+        let labels = suggestion_labels(language);
+        let install_label = if is_plugin_suggestion(&suggestion) {
+            language.text("Install", "설치", "安装", "インストール")
+        } else {
+            language.text("Open setup", "설정 열기", "打开设置", "セットアップを開く")
+        };
+        let install = CreateButton::new(format!("codex:approval:{key}:plugin-install"))
+            .label(install_label)
+            .style(ButtonStyle::Success);
+        let install = if !is_plugin_suggestion(&suggestion) {
+            suggestion
+                .install_url
+                .as_deref()
+                .map(|url| CreateButton::new_link(url).label(install_label))
+                .unwrap_or(install)
+        } else {
+            install
+        };
+        return vec![CreateActionRow::Buttons(vec![
+            install,
+            CreateButton::new(format!("codex:approval:{key}:plugin-decline"))
+                .label(labels.decline)
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(format!("codex:approval:{key}:plugin-disable"))
+                .label(labels.decline_and_remember)
+                .style(ButtonStyle::Danger),
+            CreateButton::new(format!("codex:approval:{key}:cancel"))
+                .label(labels.cancel)
+                .style(ButtonStyle::Secondary),
+        ])];
+    }
+    if method == "mcpServer/elicitation/request"
         && let Some(persist_options) = mcp_tool_approval_persist_options(params)
     {
         let mut buttons = vec![
@@ -3563,7 +4161,20 @@ fn approval_result(
             _ => bail!("지원되지 않는 권한 선택값: {decision}"),
         },
         "mcpServer/elicitation/request" => {
-            if mcp_tool_approval_persist_options(&pending.params).is_some() {
+            if plugin_suggestion(&json!({"method": method, "params": pending.params.clone()}))
+                .is_some()
+            {
+                let decision = match decision {
+                    "plugin-install" => bail!(
+                        "plugin install choices must use the native install and verification flow"
+                    ),
+                    "plugin-decline" => SuggestionDecision::Decline,
+                    "plugin-disable" => SuggestionDecision::DeclineAndRemember,
+                    "cancel" => SuggestionDecision::Cancel,
+                    _ => bail!("unsupported plugin suggestion choice: {decision}"),
+                };
+                Ok(plugin_suggestion_response(decision))
+            } else if mcp_tool_approval_persist_options(&pending.params).is_some() {
                 mcp_tool_approval_result(&pending.params, decision)
             } else {
                 match decision {
@@ -5063,6 +5674,41 @@ fn describe_server_request_with_language(
             )
         }
         "mcpServer/elicitation/request" => {
+            if let Some(suggestion) =
+                plugin_suggestion(&json!({"method": method, "params": params}))
+            {
+                let plugin_name = suggestion.tool_name.as_deref().unwrap_or("Codex plugin");
+                return format!(
+                    "{}
+{}
+{}",
+                    if is_plugin_suggestion(&suggestion) {
+                        language.text(
+                            "Codex suggests installing a plugin.",
+                            "Codex가 플러그인 설치를 제안합니다.",
+                            "Codex 建议安装一个插件。",
+                            "Codex がプラグインのインストールを提案しています。",
+                        )
+                    } else {
+                        language.text(
+                            "Codex suggests connecting this app.",
+                            "Codex가 앱 연결을 제안합니다.",
+                            "Codex 建议连接此应用。",
+                            "Codex がアプリの接続を提案しています。",
+                        )
+                    },
+                    plugin_name,
+                    format!(
+                        "{}{}",
+                        suggestion.message,
+                        suggestion
+                            .install_url
+                            .as_deref()
+                            .map(|url| format!("\n<{url}>"))
+                            .unwrap_or_default()
+                    ),
+                );
+            }
             let message = params
                 .get("message")
                 .and_then(Value::as_str)
@@ -6105,6 +6751,984 @@ mod discord_permission_tests {
                 .to_string()
                 .contains("different guild")
         );
+    }
+}
+
+fn plugin_suggestion_waiting_actions(
+    key: &str,
+    language: crate::i18n::Language,
+) -> Vec<CreateActionRow> {
+    let labels = suggestion_labels(language);
+    vec![CreateActionRow::Buttons(vec![
+        CreateButton::new(format!("codex:approval:{key}:plugin-check"))
+            .label(language.text(
+                "Finished sign-in / Check again",
+                "로그인 완료 / 다시 확인",
+                "完成登录 / 重新检查",
+                "サインイン完了 / 再確認",
+            ))
+            .style(ButtonStyle::Success),
+        CreateButton::new(format!("codex:approval:{key}:plugin-decline"))
+            .label(labels.decline)
+            .style(ButtonStyle::Secondary),
+        CreateButton::new(format!("codex:approval:{key}:plugin-disable"))
+            .label(labels.decline_and_remember)
+            .style(ButtonStyle::Danger),
+        CreateButton::new(format!("codex:approval:{key}:cancel"))
+            .label(labels.cancel)
+            .style(ButtonStyle::Secondary),
+    ])]
+}
+
+async fn handle_plugin_suggestion_component(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    key: &str,
+    action: &str,
+    _pending: PendingApproval,
+) -> anyhow::Result<()> {
+    let pending = {
+        let mut approvals = state.pending_approvals.lock().await;
+        claim_pending(&mut approvals, key, state.native.current_generation())?
+    };
+    let suggestion = plugin_suggestion(&json!({
+        "method": pending.method.clone(),
+        "params": pending.params.clone()
+    }))
+    .ok_or_else(|| anyhow!("native request is not a plugin-install suggestion"))?;
+    if let Err(error) = interaction
+        .create_response(
+            ctx,
+            CreateInteractionResponse::Defer(
+                CreateInteractionResponseMessage::new().ephemeral(true),
+            ),
+        )
+        .await
+    {
+        release_pending(state, key).await;
+        return Err(error.into());
+    }
+
+    let mut setup_links = Vec::new();
+    let operation = async {
+        if action == "plugin-install" {
+            if is_plugin_suggestion(&suggestion) {
+                let catalog = list_catalog(&state.native, true).await?;
+                let installed = list_installed(&state.native).await?;
+                if !suggested_plugin_is_installed(&installed, &suggestion) {
+                    let target = suggested_plugin_target(&catalog, &suggestion)?;
+                    let _detail = read_plugin(&state.native, &target).await?;
+                    let outcome = install_confirmed(&state.native, &target, true).await?;
+                    for app in outcome.apps_needing_auth {
+                        if let Some(url) = app.install_url {
+                            setup_links.push(format!("{} — <{}>", app.name, url));
+                        }
+                    }
+                }
+            } else if let Some(url) = suggestion.install_url.as_deref() {
+                setup_links.push(format!("{} — <{url}>", suggestion.tool_name.as_deref().unwrap_or("App setup")));
+            }
+            // Preserve the live native request while the user finishes OAuth/app setup.
+            let mut card = interaction.message.clone();
+            let mut content = card.content.clone();
+            if !setup_links.is_empty() {
+                content.push_str("\n\n");
+                content.push_str(&state.config.language.text(
+                    "Codex returned setup links:", "Codex가 설정 링크를 반환했습니다:",
+                    "Codex 返回了设置链接：", "Codex からセットアップリンクが返されました：",
+                ));
+                content.push_str("\n");
+                content.push_str(&setup_links.join("\n"));
+            }
+            card.edit(ctx, serenity::builder::EditMessage::new()
+                .content(content)
+                .components(plugin_suggestion_waiting_actions(key, state.config.language))
+                .allowed_mentions(no_mentions())).await?;
+        }
+
+        let verified = verify_plugin_suggestion_native_state(state, &suggestion).await?;
+        if !verified {
+            let text = state.config.language.text(
+                "Codex has not reported the requested plugin/apps ready yet. Finish sign-in, then use “Finished sign-in / Check again”. No acceptance was sent.",
+                "Codex가 요청된 플러그인/앱의 준비를 아직 확인하지 못했습니다. 로그인 후 ‘로그인 완료 / 다시 확인’을 누르세요. 수락 응답은 보내지 않았습니다.",
+                "Codex 尚未确认所请求的插件/应用已就绪。完成登录后点击“完成登录 / 重新检查”。尚未发送接受响应。",
+                "Codex は要求されたプラグインやアプリの準備をまだ確認できていません。サインイン後に「サインイン完了 / 再確認」を押してください。承諾応答はまだ送信していません。",
+            );
+            interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(text)).await?;
+            return Ok::<bool, anyhow::Error>(false);
+        }
+        let result = verified_suggestion_accept(verified)
+            .ok_or_else(|| anyhow!("native suggestion is not verified"))?;
+        state.native.respond_for_generation(
+            pending.connection_generation,
+            pending.native_id.clone(),
+            result,
+        ).await?;
+        interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(
+            state.config.language.text(
+                "Acceptance sent to Codex. Codex will report whether its install verification completed.",
+                "Codex에 수락을 전달했습니다. 설치 검증이 완료되었는지는 Codex가 보고합니다.",
+                "已向 Codex 发送接受响应。Codex 会报告其安装验证是否完成。",
+                "Codex に承諾を送信しました。インストール検証の結果は Codex から報告されます。",
+            )
+        )).await?;
+        let mut card = interaction.message.clone();
+        if let Err(error) = card.edit(ctx, serenity::builder::EditMessage::new().components(Vec::new())).await {
+            tracing::warn!(?error, "failed to close verified plugin suggestion card");
+        }
+        remove_pending_if_same(state, key, &pending).await;
+        if let Some(checks) = &state.installation_checks {
+            checks.request_answered(pending.connection_generation, &pending.native_id);
+        }
+        Ok::<bool, anyhow::Error>(true)
+    }.await;
+
+    match operation {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            release_pending(state, key).await;
+            Ok(())
+        }
+        Err(error) => {
+            tracing::warn!(error = ?error, "native plugin suggestion install/check failed");
+            release_pending(state, key).await;
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new().content(format!(
+                        "{}: {error:#}",
+                        state.config.language.text(
+                            "Codex could not complete the plugin setup check",
+                            "Codex가 플러그인 설정 확인을 완료하지 못했습니다",
+                            "Codex 无法完成插件设置检查",
+                            "Codex がプラグイン設定の確認を完了できませんでした",
+                        )
+                    )),
+                )
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+async fn verify_plugin_suggestion_native_state(
+    state: &BridgeState,
+    suggestion: &crate::discord_plugins::PluginSuggestion,
+) -> anyhow::Result<bool> {
+    let accessible_ids = if is_plugin_suggestion(suggestion) {
+        suggestion.app_connector_ids.clone()
+    } else {
+        suggestion
+            .app_connector_ids
+            .clone()
+            .into_iter()
+            .chain(suggestion.tool_id.clone())
+            .collect()
+    };
+    let mut accessible = std::collections::HashSet::new();
+    if !accessible_ids.is_empty() {
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = std::collections::HashSet::new();
+        loop {
+            let mut params = json!({
+                "threadId": state.native.thread_id(),
+                "forceRefetch": true,
+            });
+            if let Some(value) = cursor.as_ref() {
+                params["cursor"] = Value::String(value.clone());
+                params["forceRefetch"] = Value::Bool(false);
+            }
+            let page = state.native.request("app/list", params).await?;
+            for app in page
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if app.get("isAccessible").and_then(Value::as_bool) == Some(true)
+                    && let Some(id) = app.get("id").and_then(Value::as_str)
+                {
+                    accessible.insert(id.to_owned());
+                }
+            }
+            cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if cursor
+                .as_ref()
+                .is_none_or(|value| !seen_cursors.insert(value.clone()))
+            {
+                break;
+            }
+        }
+    }
+    if is_plugin_suggestion(suggestion) {
+        let installed = list_installed(&state.native).await?;
+        Ok(suggested_plugin_install_verified(
+            suggestion,
+            &installed,
+            &accessible,
+        ))
+    } else {
+        Ok(!accessible_ids.is_empty() && accessible_ids.iter().all(|id| accessible.contains(id)))
+    }
+}
+
+fn plugins_ui_requested(interaction: &CommandInteraction) -> bool {
+    interaction
+        .data
+        .options
+        .first()
+        .is_some_and(|subcommand| subcommand.name == "plugins")
+}
+
+async fn plugin_menu_from_command(
+    interaction: &CommandInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<(String, PluginMenuState)> {
+    let subcommand = interaction
+        .data
+        .options
+        .first()
+        .ok_or_else(|| anyhow!("plugin command is missing"))?;
+    let installed = match &subcommand.value {
+        CommandDataOptionValue::SubCommand(options) => options
+            .iter()
+            .find(|option| option.name == "view")
+            .and_then(option_string)
+            .is_some_and(|view| view == "installed"),
+        _ => false,
+    };
+    let mode = if installed {
+        PluginMenuMode::Installed
+    } else {
+        PluginMenuMode::Catalog
+    };
+    let entries = load_plugin_menu_entries(state, mode).await?;
+    let id = Uuid::new_v4().simple().to_string();
+    Ok((
+        id,
+        PluginMenuState {
+            claimed: false,
+            requester_id: interaction.user.id.get(),
+            connection_generation: state.native.current_generation(),
+            thread_id: state.native.thread_id(),
+            mode,
+            page: 0,
+            entries,
+            selected: None,
+            selected_detail: None,
+            apps_needing_auth: Vec::new(),
+            oauth_servers: Vec::new(),
+            auth_view: false,
+            install_notice: None,
+        },
+    ))
+}
+
+async fn load_plugin_menu_entries(
+    state: &BridgeState,
+    mode: PluginMenuMode,
+) -> anyhow::Result<Vec<PluginMenuEntry>> {
+    let catalog = match mode {
+        PluginMenuMode::Catalog => list_catalog(&state.native, false).await?,
+        PluginMenuMode::Installed => list_installed(&state.native).await?,
+    };
+    let mut entries = Vec::new();
+    for marketplace in &catalog.marketplaces {
+        for plugin in &marketplace.plugins {
+            match mode {
+                PluginMenuMode::Catalog => {
+                    if let Ok(target) = PluginInstallTarget::from_catalog(marketplace, plugin) {
+                        entries.push(PluginMenuEntry::Install(target));
+                    }
+                }
+                PluginMenuMode::Installed if plugin.installed => {
+                    entries.push(PluginMenuEntry::Uninstall {
+                        plugin_id: plugin.id.clone(),
+                        display_name: plugin.name.clone(),
+                    })
+                }
+                PluginMenuMode::Installed => {}
+            }
+        }
+    }
+    Ok(entries)
+}
+
+const PLUGIN_MENU_PAGE_SIZE: usize = 20;
+
+fn render_plugin_menu(
+    menu_id: &str,
+    menu: &PluginMenuState,
+    language: crate::i18n::Language,
+) -> (String, Vec<CreateActionRow>) {
+    if let Some(selected) = menu.selected.as_ref() {
+        let (title, description) = match selected {
+            PluginMenuEntry::Install(target) => (
+                target.display_name.as_str(),
+                menu.selected_detail
+                    .as_ref()
+                    .and_then(|plugin| plugin.description.as_deref())
+                    .unwrap_or(""),
+            ),
+            PluginMenuEntry::Uninstall { display_name, .. } => (display_name.as_str(), ""),
+        };
+        let content = match selected {
+            PluginMenuEntry::Install(_) => format!(
+                "{}\n{}\n{}",
+                language.text(
+                    "Review this native Codex plugin before installing:",
+                    "설치 전에 네이티브 Codex 플러그인을 확인하세요:",
+                    "安装前请查看此原生 Codex 插件：",
+                    "インストール前にネイティブ Codex プラグインを確認してください："
+                ),
+                title,
+                description
+            ),
+            PluginMenuEntry::Uninstall { .. } => format!(
+                "{}\n{}",
+                language.text(
+                    "Confirm removal of this installed Codex plugin:",
+                    "설치된 Codex 플러그인을 제거할지 확인하세요:",
+                    "请确认是否移除此 Codex 插件：",
+                    "インストール済み Codex プラグインの削除を確認してください："
+                ),
+                title
+            ),
+        };
+        let confirm = match selected {
+            PluginMenuEntry::Install(_) => language.text(
+                "Confirm install",
+                "설치 확인",
+                "确认安装",
+                "インストールを確認",
+            ),
+            PluginMenuEntry::Uninstall { .. } => {
+                language.text("Confirm removal", "제거 확인", "确认移除", "削除を確認")
+            }
+        };
+        return (
+            content,
+            vec![CreateActionRow::Buttons(vec![
+                CreateButton::new(format!("codex:plugins:{menu_id}:confirm"))
+                    .label(confirm)
+                    .style(ButtonStyle::Danger),
+                CreateButton::new(format!("codex:plugins:{menu_id}:back"))
+                    .label(language.text("Back", "뒤로", "返回", "戻る"))
+                    .style(ButtonStyle::Secondary),
+            ])],
+        );
+    }
+
+    let (heading, empty, instruction) = match menu.mode {
+        PluginMenuMode::Catalog => (
+            language.text(
+                "Native Codex plugin catalog",
+                "네이티브 Codex 플러그인 카탈로그",
+                "原生 Codex 插件目录",
+                "ネイティブ Codex プラグインカタログ",
+            ),
+            language.text(
+                "No installable plugins were returned by Codex.",
+                "Codex가 설치 가능한 플러그인을 반환하지 않았습니다.",
+                "Codex 未返回可安装的插件。",
+                "Codex からインストール可能なプラグインが返されませんでした。",
+            ),
+            language.text(
+                "Choose a plugin to review, then confirm installation.",
+                "검토할 플러그인을 고른 뒤 설치를 확인하세요.",
+                "选择插件查看详情，然后确认安装。",
+                "プラグインを選んで詳細を確認し、インストールを確定してください。",
+            ),
+        ),
+        PluginMenuMode::Installed => (
+            language.text(
+                "Installed Codex plugins",
+                "설치된 Codex 플러그인",
+                "已安装的 Codex 插件",
+                "インストール済み Codex プラグイン",
+            ),
+            language.text(
+                "Codex returned no installed plugins.",
+                "Codex가 설치된 플러그인을 반환하지 않았습니다.",
+                "Codex 未返回已安装的插件。",
+                "Codex からインストール済みプラグインが返されませんでした。",
+            ),
+            language.text(
+                "Choose a plugin to review, then confirm removal.",
+                "검토할 플러그인을 고른 뒤 제거를 확인하세요.",
+                "选择插件查看详情，然后确认移除。",
+                "プラグインを選んで詳細を確認し、削除を確定してください。",
+            ),
+        ),
+    };
+    let mut content = heading.to_owned();
+    if menu.entries.is_empty() {
+        content.push_str("\n");
+        content.push_str(empty);
+    } else {
+        content.push_str("\n");
+        content.push_str(instruction);
+    }
+    if let Some(notice) = &menu.install_notice {
+        content.push_str("\n\n");
+        content.push_str(notice);
+    }
+    if !menu.apps_needing_auth.is_empty() {
+        content.push_str("\n\n");
+        content.push_str(language.text(
+            "Codex reports these apps need authentication:",
+            "Codex 결과 다음 앱에 인증이 필요합니다:",
+            "Codex 报告以下应用需要身份验证：",
+            "Codex の結果、次のアプリで認証が必要です：",
+        ));
+        for app in &menu.apps_needing_auth {
+            content.push_str(&format!("\n• {}", app.name));
+            if let Some(url) = app.install_url.as_deref() {
+                content.push_str(&format!(" — <{url}>"));
+            }
+        }
+    }
+    if !menu.oauth_servers.is_empty() {
+        content.push_str("\n\n");
+        content.push_str(language.text(
+            "Start native OAuth for a plugin MCP server:",
+            "플러그인 MCP 서버의 네이티브 OAuth를 시작하세요:",
+            "为插件 MCP 服务器启动原生 OAuth：",
+            "プラグイン MCP サーバーのネイティブ OAuth を開始できます：",
+        ));
+    }
+    if menu.auth_view {
+        let mut rows = Vec::new();
+        let start = menu
+            .page
+            .saturating_mul(PLUGIN_MENU_PAGE_SIZE)
+            .min(menu.oauth_servers.len());
+        let end = (start + PLUGIN_MENU_PAGE_SIZE).min(menu.oauth_servers.len());
+        if menu.oauth_servers.is_empty() {
+            content.push_str("\n");
+            content.push_str(language.text(
+                "No plugin MCP servers were returned by Codex.",
+                "Codex가 플러그인 MCP 서버를 반환하지 않았습니다.",
+                "Codex 未返回插件 MCP 服务器。",
+                "Codex からプラグイン MCP サーバーが返されませんでした。",
+            ));
+        }
+        for (row_index, group) in menu.oauth_servers[start..end].chunks(5).enumerate() {
+            let buttons = group
+                .iter()
+                .enumerate()
+                .map(|(offset, server)| {
+                    let index = start + row_index * 5 + offset;
+                    CreateButton::new(format!("codex:plugins:{menu_id}:o{index}"))
+                        .label(discord_button_label(server))
+                        .style(ButtonStyle::Success)
+                })
+                .collect();
+            rows.push(CreateActionRow::Buttons(buttons));
+        }
+        let pages = menu
+            .oauth_servers
+            .len()
+            .div_ceil(PLUGIN_MENU_PAGE_SIZE)
+            .max(1);
+        let mut controls = Vec::new();
+        if pages > 1 {
+            controls.push(
+                CreateButton::new(format!(
+                    "codex:plugins:{menu_id}:p{}",
+                    menu.page.saturating_sub(1)
+                ))
+                .label(language.text("Previous", "이전", "上一页", "前へ"))
+                .disabled(menu.page == 0),
+            );
+        }
+        controls.push(
+            CreateButton::new(format!("codex:plugins:{menu_id}:plugins"))
+                .label(language.text("Plugins", "플러그인", "插件", "プラグイン"))
+                .style(ButtonStyle::Primary),
+        );
+        if pages > 1 {
+            controls.push(
+                CreateButton::new(format!(
+                    "codex:plugins:{menu_id}:p{}",
+                    (menu.page + 1).min(pages - 1)
+                ))
+                .label(language.text("Next", "다음", "下一页", "次へ"))
+                .disabled(menu.page + 1 >= pages),
+            );
+        }
+        controls.push(
+            CreateButton::new(format!("codex:plugins:{menu_id}:close"))
+                .label(language.text("Close", "닫기", "关闭", "閉じる"))
+                .style(ButtonStyle::Secondary),
+        );
+        rows.push(CreateActionRow::Buttons(controls));
+        return (content, rows);
+    }
+    let start = menu
+        .page
+        .saturating_mul(PLUGIN_MENU_PAGE_SIZE)
+        .min(menu.entries.len());
+    let end = (start + PLUGIN_MENU_PAGE_SIZE).min(menu.entries.len());
+    let mut rows = Vec::new();
+    for (row_index, group) in menu.entries[start..end].chunks(5).enumerate() {
+        let buttons = group
+            .iter()
+            .enumerate()
+            .map(|(offset, entry)| {
+                let index = start + row_index * 5 + offset;
+                let (action, label) = match entry {
+                    PluginMenuEntry::Install(target) => {
+                        (format!("s{index}"), target.display_name.as_str())
+                    }
+                    PluginMenuEntry::Uninstall { display_name, .. } => {
+                        (format!("u{index}"), display_name.as_str())
+                    }
+                };
+                CreateButton::new(format!("codex:plugins:{menu_id}:{action}"))
+                    .label(discord_button_label(label))
+                    .style(ButtonStyle::Secondary)
+            })
+            .collect();
+        rows.push(CreateActionRow::Buttons(buttons));
+    }
+    let pages = menu.entries.len().div_ceil(PLUGIN_MENU_PAGE_SIZE).max(1);
+    let mut controls = Vec::new();
+    if pages > 1 {
+        controls.push(
+            CreateButton::new(format!(
+                "codex:plugins:{menu_id}:p{}",
+                menu.page.saturating_sub(1)
+            ))
+            .label(language.text("Previous", "이전", "上一页", "前へ"))
+            .disabled(menu.page == 0),
+        );
+    }
+    let mode_action = if menu.mode == PluginMenuMode::Catalog {
+        "installed"
+    } else {
+        "catalog"
+    };
+    let mode_label = if menu.mode == PluginMenuMode::Catalog {
+        language.text("Installed", "설치됨", "已安装", "インストール済み")
+    } else {
+        language.text("Catalog", "카탈로그", "目录", "カタログ")
+    };
+    controls.push(
+        CreateButton::new(format!("codex:plugins:{menu_id}:{mode_action}"))
+            .label(mode_label)
+            .style(ButtonStyle::Primary),
+    );
+    if !menu.oauth_servers.is_empty() {
+        controls.push(
+            CreateButton::new(format!("codex:plugins:{menu_id}:auth"))
+                .label(language.text(
+                    "Plugin OAuth",
+                    "플러그인 OAuth",
+                    "插件 OAuth",
+                    "プラグイン OAuth",
+                ))
+                .style(ButtonStyle::Success),
+        );
+    }
+    if pages > 1 {
+        controls.push(
+            CreateButton::new(format!(
+                "codex:plugins:{menu_id}:p{}",
+                (menu.page + 1).min(pages - 1)
+            ))
+            .label(language.text("Next", "다음", "下一页", "次へ"))
+            .disabled(menu.page + 1 >= pages),
+        );
+    }
+    controls.push(
+        CreateButton::new(format!("codex:plugins:{menu_id}:close"))
+            .label(language.text("Close", "닫기", "关闭", "閉じる"))
+            .style(ButtonStyle::Secondary),
+    );
+    rows.push(CreateActionRow::Buttons(controls));
+    (content, rows)
+}
+
+async fn handle_plugin_component(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<()> {
+    let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "codex" || parts[1] != "plugins" {
+        bail!("unknown plugin menu component id");
+    }
+    let menu_id = parts[2];
+    let action = parts[3];
+    let current_generation = state.native.current_generation();
+    let claimed = {
+        let mut menus = state.plugin_menus.lock().await;
+        claim_plugin_menu(
+            &mut menus,
+            menu_id,
+            interaction.user.id.get(),
+            current_generation,
+            &state.native.thread_id(),
+        )
+    };
+    let mut menu = match claimed {
+        Ok(menu) => menu,
+        Err(reason) => {
+            let language = state.config.language;
+            let text = match reason {
+                PluginMenuClaimError::Missing => language.text("This plugin panel expired. Run `/discodex plugins` again.", "플러그인 화면이 만료되었습니다. `/discodex plugins`를 다시 실행하세요.", "此插件面板已过期。请重新运行 `/discodex plugins`。", "このプラグインパネルは期限切れです。`/discodex plugins` をもう一度実行してください。"),
+                PluginMenuClaimError::OtherUser => language.text("Only the person who opened this panel can use it.", "이 화면을 연 사용자만 사용할 수 있습니다.", "只有打开此面板的用户可以操作。", "このパネルを開いたユーザーだけが操作できます。"),
+                PluginMenuClaimError::Busy => language.text("This plugin action is still processing.", "플러그인 작업을 처리 중입니다.", "正在处理此插件操作。", "このプラグイン操作を処理中です。"),
+                PluginMenuClaimError::Stale => language.text("The Codex connection changed. Run `/discodex plugins` again.", "Codex 연결이 변경되었습니다. `/discodex plugins`를 다시 실행하세요.", "Codex 连接已更改。请重新运行 `/discodex plugins`。", "Codex 接続が変わりました。`/discodex plugins` をもう一度実行してください。"),
+            };
+            interaction
+                .create_response(
+                    ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(text)
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if let Some(index) = action
+        .strip_prefix('o')
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        let Some(server) = menu.oauth_servers.get(index).cloned() else {
+            if let Some(current) = state.plugin_menus.lock().await.get_mut(menu_id) {
+                current.claimed = false;
+            }
+            interaction
+                .create_response(
+                    ctx,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(state.config.language.text(
+                                "That OAuth server is no longer listed.",
+                                "해당 OAuth 서버는 더 이상 목록에 없습니다.",
+                                "此 OAuth 服务器已不在列表中。",
+                                "その OAuth サーバーは一覧にありません。",
+                            ))
+                            .ephemeral(true),
+                    ),
+                )
+                .await?;
+            return Ok(());
+        };
+        interaction
+            .create_response(
+                ctx,
+                CreateInteractionResponse::Defer(
+                    CreateInteractionResponseMessage::new().ephemeral(true),
+                ),
+            )
+            .await?;
+        let login_result = begin_oauth_login(&state.native, &server, Some(&menu.thread_id)).await;
+        let response = match login_result {
+            Ok(login) => {
+                let mut content = format!("{}\n<{}>", state.config.language.text("Native OAuth sign-in started. Open the authorization link and complete sign-in.", "네이티브 OAuth 로그인을 시작했습니다. 인증 링크를 열고 로그인을 완료하세요.", "已启动原生 OAuth 登录。请打开授权链接并完成登录。", "ネイティブ OAuth ログインを開始しました。認証リンクを開いてログインを完了してください。"), login.authorization_url);
+                if let Some(id) = login.login_id {
+                    content.push_str(&format!(
+                        "\n{}: `{id}`",
+                        state.config.language.text(
+                            "Login ID",
+                            "로그인 ID",
+                            "登录 ID",
+                            "ログイン ID"
+                        )
+                    ));
+                }
+                content
+            }
+            Err(error) => format!(
+                "{}: {error:#}",
+                state.config.language.text(
+                    "Codex could not start OAuth sign-in",
+                    "Codex가 OAuth 로그인을 시작하지 못했습니다",
+                    "Codex 无法启动 OAuth 登录",
+                    "Codex が OAuth ログインを開始できませんでした"
+                )
+            ),
+        };
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new().content(response),
+            )
+            .await?;
+        if let Some(current) = state.plugin_menus.lock().await.get_mut(menu_id) {
+            current.claimed = false;
+        }
+        return Ok(());
+    }
+
+    interaction
+        .create_response(ctx, CreateInteractionResponse::Acknowledge)
+        .await?;
+    let mut message = interaction.message.clone();
+
+    let response_result = async {
+        if action == "close" {
+            message
+                .edit(
+                    ctx,
+                    serenity::builder::EditMessage::new().components(Vec::new()),
+                )
+                .await?;
+            state.plugin_menus.lock().await.remove(menu_id);
+            return Ok::<(), anyhow::Error>(());
+        }
+        if action == "auth" {
+            menu.auth_view = true;
+            menu.page = 0;
+        } else if action == "plugins" {
+            menu.auth_view = false;
+            menu.page = 0;
+        } else if action == "catalog" || action == "installed" {
+            menu.auth_view = false;
+            menu.mode = if action == "catalog" {
+                PluginMenuMode::Catalog
+            } else {
+                PluginMenuMode::Installed
+            };
+            menu.page = 0;
+            menu.entries = load_plugin_menu_entries(state, menu.mode).await?;
+            menu.selected = None;
+            menu.selected_detail = None;
+        } else if action == "back" {
+            menu.selected = None;
+            menu.selected_detail = None;
+        } else if let Some(page) = action
+            .strip_prefix('p')
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            let count = if menu.auth_view {
+                menu.oauth_servers.len()
+            } else {
+                menu.entries.len()
+            };
+            menu.page = page.min(count.div_ceil(PLUGIN_MENU_PAGE_SIZE).saturating_sub(1));
+        } else if action == "confirm" {
+            let entry = menu
+                .selected
+                .clone()
+                .ok_or_else(|| anyhow!("plugin confirmation has no selection"))?;
+            match entry {
+                PluginMenuEntry::Install(target) => {
+                    let outcome = install_confirmed(&state.native, &target, true).await?;
+                    menu.apps_needing_auth = outcome.apps_needing_auth.clone();
+                    menu.oauth_servers = menu
+                        .selected_detail
+                        .as_ref()
+                        .map(|detail| detail.mcp_servers.clone())
+                        .unwrap_or_default();
+                    menu.selected = None;
+                    menu.selected_detail = None;
+                    menu.mode = PluginMenuMode::Installed;
+                    let refresh_error = match load_plugin_menu_entries(state, menu.mode).await {
+                        Ok(entries) => {
+                            menu.entries = entries;
+                            None
+                        }
+                        Err(error) => Some(format!("{error:#}")),
+                    };
+                    menu.page = 0;
+                    let auth_policy = outcome.auth_policy;
+                    menu.install_notice = Some(format!(
+                        "{} {} ({}){}",
+                        state.config.language.text(
+                            "Codex confirmed installation of",
+                            "Codex가 설치를 확인했습니다:",
+                            "Codex 已确认安装：",
+                            "Codex がインストールを確認しました："
+                        ),
+                        target.display_name,
+                        auth_policy,
+                        refresh_error
+                            .map(|error| format!(
+                                "\n{}: {error}",
+                                state.config.language.text(
+                                    "Could not refresh the installed list",
+                                    "설치 목록을 새로고침하지 못했습니다",
+                                    "无法刷新已安装列表",
+                                    "インストール済み一覧を更新できませんでした"
+                                )
+                            ))
+                            .unwrap_or_default()
+                    ));
+                }
+                PluginMenuEntry::Uninstall {
+                    plugin_id,
+                    display_name,
+                } => {
+                    uninstall_confirmed(&state.native, &plugin_id, true).await?;
+                    menu.selected = None;
+                    menu.selected_detail = None;
+                    menu.apps_needing_auth.clear();
+                    menu.oauth_servers.clear();
+                    menu.mode = PluginMenuMode::Installed;
+                    menu.auth_view = false;
+                    menu.entries = load_plugin_menu_entries(state, menu.mode).await?;
+                    menu.page = 0;
+                    menu.install_notice = Some(format!(
+                        "{} {display_name}.",
+                        state.config.language.text(
+                            "Codex confirmed removal of",
+                            "Codex가 제거를 확인했습니다:",
+                            "Codex 已确认移除：",
+                            "Codex が削除を確認しました："
+                        )
+                    ));
+                }
+            }
+        } else if let Some(index) = action
+            .strip_prefix('s')
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            let Some(PluginMenuEntry::Install(target)) = menu.entries.get(index).cloned() else {
+                bail!("plugin selection is unavailable")
+            };
+            menu.selected_detail = Some(read_plugin(&state.native, &target).await?);
+            menu.selected = Some(PluginMenuEntry::Install(target));
+        } else if let Some(index) = action
+            .strip_prefix('u')
+            .and_then(|value| value.parse::<usize>().ok())
+        {
+            let Some(PluginMenuEntry::Uninstall {
+                plugin_id,
+                display_name,
+            }) = menu.entries.get(index).cloned()
+            else {
+                bail!("installed plugin selection is unavailable")
+            };
+            menu.selected = Some(PluginMenuEntry::Uninstall {
+                plugin_id,
+                display_name,
+            });
+            menu.selected_detail = None;
+        } else {
+            bail!("unknown plugin menu action");
+        }
+        let rendered = render_plugin_menu(menu_id, &menu, state.config.language);
+        message
+            .edit(
+                ctx,
+                serenity::builder::EditMessage::new()
+                    .content(rendered.0)
+                    .components(rendered.1)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+        state
+            .plugin_menus
+            .lock()
+            .await
+            .insert(menu_id.to_owned(), menu.clone());
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = response_result {
+        if let Some(current) = state.plugin_menus.lock().await.get_mut(menu_id) {
+            current.claimed = false;
+        }
+        interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(format!(
+                        "{}: {error:#}",
+                        state.config.language.text(
+                            "Codex could not complete this plugin action",
+                            "Codex가 플러그인 작업을 완료하지 못했습니다",
+                            "Codex 无法完成此插件操作",
+                            "Codex がプラグイン操作を完了できませんでした"
+                        )
+                    ))
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+        return Ok(());
+    }
+    if let Some(current) = state.plugin_menus.lock().await.get_mut(menu_id) {
+        current.claimed = false;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PluginMenuClaimError {
+    Missing,
+    OtherUser,
+    Busy,
+    Stale,
+}
+
+fn claim_plugin_menu(
+    menus: &mut HashMap<String, PluginMenuState>,
+    menu_id: &str,
+    requester_id: u64,
+    generation: u64,
+    thread_id: &str,
+) -> Result<PluginMenuState, PluginMenuClaimError> {
+    let menu = menus
+        .get_mut(menu_id)
+        .ok_or(PluginMenuClaimError::Missing)?;
+    if menu.requester_id != requester_id {
+        return Err(PluginMenuClaimError::OtherUser);
+    }
+    if menu.claimed {
+        return Err(PluginMenuClaimError::Busy);
+    }
+    if menu.connection_generation != generation || menu.thread_id != thread_id {
+        menus.remove(menu_id);
+        return Err(PluginMenuClaimError::Stale);
+    }
+    menu.claimed = true;
+    Ok(menu.clone())
+}
+
+pub(crate) fn oauth_completion_text(
+    completion: &OAuthCompletion,
+    language: crate::i18n::Language,
+) -> String {
+    if completion.success {
+        format!(
+            "{} {}.",
+            language.text(
+                "OAuth sign-in completed for",
+                "OAuth 로그인이 완료되었습니다:",
+                "OAuth 登录已完成：",
+                "OAuth ログインが完了しました："
+            ),
+            completion.name
+        )
+    } else {
+        format!(
+            "{} {}{}",
+            language.text(
+                "OAuth sign-in did not complete for",
+                "OAuth 로그인이 완료되지 않았습니다:",
+                "OAuth 登录未完成：",
+                "OAuth ログインが未完了です："
+            ),
+            completion.name,
+            completion
+                .error
+                .as_deref()
+                .map(|error| format!(" — {error}"))
+                .unwrap_or_default()
+        )
     }
 }
 
@@ -7966,5 +9590,171 @@ mod display_tests {
             SettingsClaimError::OtherUser
         );
         assert!(claim_settings_menu(&mut menus, "new", 31).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod plugin_menu_tests {
+    use super::*;
+
+    fn menu_fixture() -> PluginMenuState {
+        PluginMenuState {
+            claimed: false,
+            requester_id: 31,
+            connection_generation: 7,
+            thread_id: "thread-test".to_owned(),
+            mode: PluginMenuMode::Catalog,
+            page: 0,
+            entries: Vec::new(),
+            selected: None,
+            selected_detail: None,
+            apps_needing_auth: Vec::new(),
+            oauth_servers: Vec::new(),
+            auth_view: false,
+            install_notice: None,
+        }
+    }
+
+    #[test]
+    fn plugin_panel_claim_tracks_user_generation_and_in_flight_state() {
+        let mut menus = HashMap::from([("panel".to_owned(), menu_fixture())]);
+        assert!(claim_plugin_menu(&mut menus, "panel", 31, 7, "thread-test").is_ok());
+        assert_eq!(
+            claim_plugin_menu(&mut menus, "panel", 31, 7, "thread-test").unwrap_err(),
+            PluginMenuClaimError::Busy
+        );
+        assert_eq!(
+            claim_plugin_menu(&mut menus, "panel", 99, 7, "thread-test").unwrap_err(),
+            PluginMenuClaimError::OtherUser
+        );
+        menus.get_mut("panel").unwrap().claimed = false;
+        assert_eq!(
+            claim_plugin_menu(&mut menus, "panel", 31, 8, "thread-test").unwrap_err(),
+            PluginMenuClaimError::Stale
+        );
+        assert!(!menus.contains_key("panel"));
+    }
+
+    #[test]
+    fn plugin_panel_renders_native_app_auth_links_and_pages_server_auth_choices() {
+        let mut menu = menu_fixture();
+        menu.mode = PluginMenuMode::Installed;
+        menu.install_notice = Some("Codex confirmed installation of Example (ON_USE)".to_owned());
+        menu.apps_needing_auth.push(PluginApp {
+            id: "calendar".to_owned(),
+            name: "Calendar".to_owned(),
+            description: None,
+            install_url: Some("https://example.invalid/connect".to_owned()),
+            category: None,
+        });
+        menu.oauth_servers = (0..26).map(|index| format!("server-{index}")).collect();
+        let rendered = render_plugin_menu("menu", &menu, crate::i18n::Language::English);
+        assert!(rendered.0.contains("Codex confirmed installation"));
+        assert!(rendered.0.contains("<https://example.invalid/connect>"));
+        assert!(rendered.1.len() <= 5);
+
+        menu.auth_view = true;
+        menu.page = 1;
+        let auth_view = render_plugin_menu("menu", &menu, crate::i18n::Language::English);
+        assert!(auth_view.1.len() <= 5);
+        assert!(auth_view.0.contains("Calendar"));
+    }
+
+    #[test]
+    fn oauth_completion_message_reflects_only_native_outcome() {
+        let completed = OAuthCompletion {
+            name: "calendar".to_owned(),
+            thread_id: Some("thread-test".to_owned()),
+            login_id: Some("login-test".to_owned()),
+            success: true,
+            error: None,
+        };
+        assert!(
+            oauth_completion_text(&completed, crate::i18n::Language::English).contains("completed")
+        );
+        let failed = OAuthCompletion {
+            success: false,
+            error: Some("denied".to_owned()),
+            ..completed
+        };
+        let message = oauth_completion_text(&failed, crate::i18n::Language::English);
+        assert!(message.contains("did not complete"));
+        assert!(message.contains("denied"));
+    }
+}
+
+#[cfg(test)]
+mod native_feature_settings_tests {
+    use super::*;
+
+    #[test]
+    fn feature_preference_choices_round_trip_on_off_and_native_default() {
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        set_native_feature_preference(&mut preferences, NativeFeatureKey::CodeMode, Some("off"))
+            .unwrap();
+        assert_eq!(
+            native_feature_saved_value(&preferences, NativeFeatureKey::CodeMode).as_deref(),
+            Some("false")
+        );
+        set_native_feature_preference(&mut preferences, NativeFeatureKey::CodeMode, Some("on"))
+            .unwrap();
+        assert_eq!(
+            native_feature_saved_value(&preferences, NativeFeatureKey::CodeMode).as_deref(),
+            Some("true")
+        );
+        set_native_feature_preference(&mut preferences, NativeFeatureKey::CodeMode, None).unwrap();
+        assert_eq!(
+            native_feature_saved_value(&preferences, NativeFeatureKey::CodeMode),
+            None
+        );
+        assert!(
+            set_native_feature_preference(
+                &mut preferences,
+                NativeFeatureKey::CodeMode,
+                Some("surprise")
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn subagent_model_can_inherit_or_select_native_catalog_slug() {
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        set_native_feature_preference(
+            &mut preferences,
+            NativeFeatureKey::SubagentModel,
+            Some("gpt-test"),
+        )
+        .unwrap();
+        assert_eq!(
+            native_feature_saved_value(&preferences, NativeFeatureKey::SubagentModel).as_deref(),
+            Some("gpt-test")
+        );
+        set_native_feature_preference(&mut preferences, NativeFeatureKey::SubagentModel, None)
+            .unwrap();
+        assert_eq!(
+            native_feature_saved_value(&preferences, NativeFeatureKey::SubagentModel),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_config_display_reads_nested_snake_or_camel_case_and_origin() {
+        let native_config = json!({
+            "config": {"features": {"code_mode": {"enabled": true}}},
+            "origins": {"features.code_mode.enabled": {"name": {"type": "user"}, "version": "1"}}
+        });
+        let text = effective_native_feature_text(
+            &native_config,
+            NativeFeatureKey::CodeMode,
+            crate::i18n::Language::English,
+        );
+        assert!(text.contains("features.code_mode.enabled = true"));
+        assert!(text.contains("\"version\":\"1\""));
+        let camel = json!({"config": {"features": {"codeMode": {"enabled": false}}}});
+        assert_eq!(
+            effective_config_value(&camel, "features.code_mode.enabled"),
+            Some(&Value::Bool(false))
+        );
     }
 }

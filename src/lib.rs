@@ -26,3 +26,8 @@ pub mod harness;
 pub(crate) mod task_plan;
 pub(crate) mod task_tools;
 pub(crate) mod worktree_tools;
+
+pub(crate) mod async_questions;
+pub(crate) mod discord_plugins;
+pub mod logging;
+pub(crate) mod native_features;

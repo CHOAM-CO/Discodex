@@ -149,4 +149,14 @@ Release automation builds six targets (Windows, macOS, and Linux on x64 and ARM6
 
 ## Work tools after updating
 
-After the worker restarts, the existing Codex thread can use native `update_plan` and the `discodex_tasks` MCP thread and managed-worktree tools. No separate MCP installation or user-global Codex configuration edit is needed. New tasks inherit native settings from their caller and do not reset the existing conversation or profile settings.
+After the worker restarts, the existing Codex thread can use native `update_plan` and the `discodex_tasks` MCP thread and managed-worktree tools. Each changed plan appears as a new home-channel Embed card; earlier cards are never edited. Identical event replays are suppressed, and full plan text is split across pages only when needed to fit Discord limits. No separate MCP installation or user-global Codex configuration edit is needed. New tasks inherit native settings from their caller and do not reset the existing conversation or profile settings.
+
+## Native features, plugins, and operational logs
+
+Native app-server feature choices are owned per profile in `native-features.json`. The feature set includes CodeMode, host, multiagent v2 and `wait_agent`, normal-mode questions, clock, token budget/history notes, and asynchronous notifications. The settings view reports the effective native state separately from the saved values and identifies changes that need a worker restart.
+
+Use `/discodex plugins` to browse the native plugin catalog and invoke supported read, install, and uninstall actions with Discord buttons. Recommendations use native elicitation. Plugin authentication, approval, account availability, and entitlements remain under the official native flow; availability is account- and catalog-dependent.
+
+Asynchronous native questions can be answered from Discord with buttons or free-form text. The original question ID and native thread association are preserved. Asynchronous notifications go to the home channel without ending the active turn.
+
+The main-control event queue is consumed by a supervised worker, and persistent logs are stored per profile. This supports diagnosis of GUI-launched Windows workers without an attached console. Updates install prebuilt release assets; users do not need to build source code on client machines.
