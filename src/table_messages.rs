@@ -7,11 +7,12 @@ use serenity::all::{
     CreateMessage, EditInteractionResponse, MessageId,
 };
 
-use crate::{i18n::Language, reply_files::ReplyFile, table_render};
+use crate::{i18n::Language, reply_files::ReplyFile, table_render, table_source};
 
 const PREFIX: &str = "discodex:table:";
 const SOURCE_PREFIX: &str = "discodex-table-";
 const MESSAGE_BYTES: usize = 1650; // Leave room for routing/source labels.
+const MAX_TABLE_PNG_BYTES: usize = 20 * 1024 * 1024;
 
 pub(crate) struct PreparedMessage {
     pub(crate) content: String,
@@ -86,29 +87,31 @@ pub(crate) async fn prepare(
             }
             table_render::Part::Table(table) => {
                 let source = table.source.clone();
-                let rendered =
-                    tokio::task::spawn_blocking(move || table_render::render(&table)).await;
-                match rendered {
-                    Ok(Ok(images))
-                        if !images.is_empty()
-                            && images.iter().all(|image| {
-                                image.len().saturating_add(source.len())
-                                    < 25 * 1024 * 1024 - 16 * 1024
-                            }) =>
-                    {
-                        pages.extend(table_pages(source, images, language))
+                let source_for_render = source.clone();
+                let rendered = tokio::task::spawn_blocking(move || {
+                    let images = table_render::render(&table)?;
+                    if images.is_empty() {
+                        Ok(None)
+                    } else {
+                        table_pages(&source_for_render, images, language)
                     }
-                    outcome => {
+                })
+                .await;
+                match rendered {
+                    Ok(Ok(Some(table_pages))) => pages.extend(table_pages),
+                    Ok(Ok(None)) => {
+                        tracing::warn!(
+                            "embedded table PNG exceeds Discord's per-file limit; sending original Markdown"
+                        );
+                        pages.extend(chunks(&source, MESSAGE_BYTES).into_iter().map(text_page));
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "table rendering or source embedding failed; sending original Markdown");
+                        pages.extend(chunks(&source, MESSAGE_BYTES).into_iter().map(text_page));
+                    }
+                    Err(error) => {
                         // Preserve all original text if rendering fails; never drop a table.
-                        let reason = match outcome {
-                            Err(error) => error.to_string(),
-                            Ok(Err(error)) => error.to_string(),
-                            Ok(Ok(_)) => {
-                                "rendered table exceeds the Discord request limit or has no images"
-                                    .to_owned()
-                            }
-                        };
-                        tracing::warn!(%reason, "table rendering unavailable; sending original Markdown");
+                        tracing::warn!(%error, "table rendering task failed; sending original Markdown");
                         pages.extend(chunks(&source, MESSAGE_BYTES).into_iter().map(text_page));
                     }
                 }
@@ -121,30 +124,32 @@ pub(crate) async fn prepare(
     pages
 }
 
-fn table_pages(source: String, images: Vec<Vec<u8>>, language: Language) -> Vec<PreparedMessage> {
+fn table_pages(
+    source: &str,
+    images: Vec<Vec<u8>>,
+    language: Language,
+) -> Result<Option<Vec<PreparedMessage>>> {
     let key = uuid::Uuid::new_v4().simple().to_string();
-    images
-        .into_iter()
-        .enumerate()
-        .map(|(index, data)| PreparedMessage {
+    let mut pages = Vec::with_capacity(images.len());
+    for (index, image) in images.into_iter().enumerate() {
+        let data = table_source::embed(&image, source)?;
+        if data.len() > MAX_TABLE_PNG_BYTES {
+            return Ok(None);
+        }
+        pages.push(PreparedMessage {
             content: String::new(),
-            files: vec![
-                ReplyFile {
-                    filename: format!("table-{key}-{}.png", index + 1),
-                    data,
-                },
-                ReplyFile {
-                    filename: source_filename(&key),
-                    data: source.as_bytes().to_vec(),
-                },
-            ],
+            files: vec![ReplyFile {
+                filename: format!("table-{key}-{}.png", index + 1),
+                data,
+            }],
             components: vec![CreateActionRow::Buttons(vec![
                 CreateButton::new(format!("{PREFIX}{key}"))
                     .style(ButtonStyle::Secondary)
                     .label(language.text("View source", "원문 보기", "查看原文", "原文を表示")),
             ])],
-        })
-        .collect()
+        });
+    }
+    Ok(Some(pages))
 }
 
 fn source_filename(key: &str) -> String {
@@ -233,12 +238,14 @@ pub(crate) async fn handle_component(
         Ok(response) => response,
         Err(error) => {
             tracing::warn!(%error, "could not retrieve table Markdown from Discord");
-            EditInteractionResponse::new().content(language.text(
-                "Could not load the original table. You can download the Markdown attachment from the table message and retry.",
-                "표 원문을 불러오지 못했습니다. 표 메시지의 Markdown 첨부를 다운로드하거나 다시 시도해 주세요.",
-                "无法加载表格原文。请下载表格消息中的 Markdown 附件，或重试。",
-                "表の原文を読み込めませんでした。表のメッセージにあるMarkdown添付をダウンロードするか、再試行してください。",
-            )).components(Vec::new())
+            EditInteractionResponse::new()
+                .content(language.text(
+                    "Could not load the original table. Please try again.",
+                    "표 원문을 불러오지 못했습니다. 다시 시도해 주세요.",
+                    "无法加载表格原文，请重试。",
+                    "表の原文を読み込めませんでした。もう一度お試しください。",
+                ))
+                .components(Vec::new())
         }
     };
     interaction
@@ -260,21 +267,49 @@ async fn source_response(
     if message.author.id != ctx.http.get_current_user().await?.id {
         bail!("table source belongs to another application");
     }
-    let filename = source_filename(&request.key);
-    let attachment = message
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let image_prefix = format!("table-{}-", request.key);
+    let image = message
         .attachments
         .iter()
-        .find(|file| file.filename == filename)
-        .context("table Markdown attachment is no longer available")?;
-    let source = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?
-        .get(&attachment.url)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+        .find(|file| file.filename.starts_with(&image_prefix) && file.filename.ends_with(".png"));
+    let embedded_source = async {
+        let image = image.context("table PNG attachment is no longer available")?;
+        let png = client
+            .get(&image.url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        table_source::extract(&png)
+    }
+    .await;
+    let source = match embedded_source {
+        Ok(source) => source,
+        Err(image_error) => {
+            // v0.1.6 and earlier stored the source as a separate Markdown
+            // attachment. Keep that lookup for existing messages.
+            let filename = source_filename(&request.key);
+            if let Some(legacy) = message
+                .attachments
+                .iter()
+                .find(|file| file.filename == filename)
+            {
+                client
+                    .get(&legacy.url)
+                    .send()
+                    .await?
+                    .error_for_status()?
+                    .text()
+                    .await?
+            } else {
+                return Err(image_error.context("could not retrieve embedded table source"));
+            }
+        }
+    };
     let pages = source_pages(&source);
     let content = pages
         .get(request.page)
@@ -352,6 +387,17 @@ fn source_pages(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn test_png() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[30, 60, 90, 255]).unwrap();
+        writer.finish().unwrap();
+        bytes
+    }
+
     #[test]
     fn text_and_existing_files_are_preserved_in_request_batches() {
         let input = "Hello 한글 中文 日本語\n".repeat(200);
@@ -376,22 +422,30 @@ mod tests {
     }
 
     #[test]
-    fn table_uploads_own_image_and_original_source_and_localize_button() {
+    fn table_pages_attach_only_pngs_with_embedded_source_and_localized_button() {
         let source = "| A | B |\n| - | - |\n| α | 한글 |\n";
-        let pages = table_pages(
-            source.to_owned(),
-            vec![vec![1, 2], vec![3, 4]],
-            Language::Korean,
-        );
+        let pages = table_pages(source, vec![test_png(), test_png()], Language::Korean)
+            .unwrap()
+            .unwrap();
         assert_eq!(pages.len(), 2);
         assert!(pages.iter().all(PreparedMessage::has_files));
-        assert_eq!(pages[0].files[0].data, vec![1, 2]);
-        assert_eq!(pages[1].files[1].data, source.as_bytes());
-        let key = pages[0].files[1]
-            .filename
-            .strip_prefix(SOURCE_PREFIX)
+        assert!(pages.iter().all(|page| page.files.len() == 1));
+        assert!(
+            pages
+                .iter()
+                .all(|page| page.files[0].filename.ends_with(".png"))
+        );
+        assert!(
+            pages
+                .iter()
+                .all(|page| table_source::extract(&page.files[0].data).unwrap() == source)
+        );
+        let image_name = &pages[0].files[0].filename;
+        let key = image_name
+            .strip_prefix("table-")
             .unwrap()
-            .strip_suffix(".md")
+            .split('-')
+            .next()
             .unwrap();
         let request = SourceRequest::parse(&format!("{PREFIX}{key}"), 12, 34).unwrap();
         assert_eq!(request.channel, 12);
@@ -408,21 +462,23 @@ mod tests {
         let pages = prepare(&input, Vec::new(), Language::English).await;
         assert_eq!(pages.len(), 5);
         assert_eq!(pages[0].content, "Before\n\n");
+        assert_eq!(pages[1].files.len(), 1);
         assert_eq!(
-            pages[1].files[1].data,
-            first.trim_end_matches('\n').as_bytes()
+            table_source::extract(&pages[1].files[0].data).unwrap(),
+            first.trim_end_matches('\n')
         );
         assert_eq!(pages[2].content.trim(), "Between");
+        assert_eq!(pages[3].files.len(), 1);
         assert_eq!(
-            pages[3].files[1].data,
-            second.trim_end_matches('\n').as_bytes()
+            table_source::extract(&pages[3].files[0].data).unwrap(),
+            second.trim_end_matches('\n')
         );
         assert_eq!(pages[4].content.trim(), "After");
         let restored = pages
             .iter()
             .map(|page| {
-                if page.files.len() == 2 {
-                    String::from_utf8(page.files[1].data.clone()).unwrap()
+                if let Some(image) = page.files.first() {
+                    table_source::extract(&image.data).unwrap()
                 } else {
                     page.content.clone()
                 }
@@ -439,7 +495,9 @@ mod tests {
             (Language::Chinese, "查看原文"),
             (Language::Japanese, "原文を表示"),
         ] {
-            let pages = table_pages("|A|\n|-|".to_owned(), vec![vec![1]], language);
+            let pages = table_pages("|A|\n|-|", vec![test_png()], language)
+                .unwrap()
+                .unwrap();
             let payload = serde_json::to_value(&pages[0].components).unwrap();
             assert_eq!(payload[0]["components"][0]["label"], expected);
         }

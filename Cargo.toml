@@ -1,6 +1,6 @@
 [package]
 name = "discodex"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 rust-version = "1.94"
 publish = false
@@ -20,6 +20,7 @@ anyhow = "1"
 opus2 = "0.4.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 resvg = "0.48.1"
+png = "0.18"
 fontdb = "0.24"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
@@ -46,9 +47,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 rtc = "=0.20.5"
 webrtc = "=0.20.5"
-
-[dev-dependencies]
-png = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["process", "signal"] }
