@@ -653,7 +653,7 @@ mod tests {
                 }
                 let response = match method.as_str() {
                     "thread/read" => {
-                        json!({"thread":{"ephemeral":false,"environments":[{"environmentId":"local","cwd":"/tmp"}]}})
+                        json!({"thread":{"ephemeral":false,"environments":[{"environmentId":"local","cwd":std::env::temp_dir()}]}})
                     }
                     "thread/attachment/list" => json!({"data":[]}),
                     "config/read" => json!({"config":{}}),
@@ -704,26 +704,29 @@ mod tests {
     }
     fn fake_tools(outcome: FakeOutcome, calls: Arc<AtomicUsize>) -> WorktreeTools {
         WorktreeTools {
-            codex_home: PathBuf::from("/unused"),
+            codex_home: std::env::temp_dir().join("discodex-codex-test"),
             backend: Arc::new(FakeBackend { outcome, calls }),
             operations: Arc::default(),
         }
     }
     async fn settled_status(tools: &WorktreeTools, ctx: ToolContext, id: &str) -> Result<Value> {
-        for _ in 0..1000 {
-            match tools
-                .execute(
-                    ctx.clone(),
-                    "get_worktree_creation_status",
-                    json!({"operationId":id}),
-                )
-                .await
-            {
-                Ok(value) if value["type"] == "pending" => tokio::task::yield_now().await,
-                result => return result,
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match tools
+                    .execute(
+                        ctx.clone(),
+                        "get_worktree_creation_status",
+                        json!({"operationId":id}),
+                    )
+                    .await
+                {
+                    Ok(value) if value["type"] == "pending" => tokio::task::yield_now().await,
+                    result => return result,
+                }
             }
-        }
-        bail!("injected worktree operation did not settle")
+        })
+        .await
+        .context("injected worktree operation did not settle")?
     }
 
     #[test]
@@ -762,13 +765,6 @@ mod tests {
         assert!(serde_json::from_value::<ListArgs>(json!({"cursor":"next","extra":1})).is_err());
     }
 
-    #[test]
-    fn owner_record_shape_matches_desktop() {
-        let record = json!({"version":1,"ownerThreadId":"thread-a"});
-        assert_eq!(record["version"], 1);
-        assert_eq!(record["ownerThreadId"], "thread-a");
-    }
-
     #[tokio::test]
     async fn list_worktrees_filters_attachments_and_preserves_cursor() {
         let response = json!({"data":[
@@ -777,7 +773,7 @@ mod tests {
             {"id":"c","attachmentType":"pull_request","payload":{"root":"ignored"}}
         ],"nextCursor":"next"});
         let (ctx, calls) = context("thread-a", response);
-        let tools = WorktreeTools::new(PathBuf::from("/tmp/codex")).unwrap();
+        let tools = WorktreeTools::new(std::env::temp_dir().join("discodex-codex-test")).unwrap();
         let result = tools
             .execute(ctx, "list_worktrees", json!({"cursor":"prior"}))
             .await
@@ -793,7 +789,7 @@ mod tests {
     #[tokio::test]
     async fn creation_rejects_sync_mode_before_rpc_or_operation_allocation() {
         let (ctx, calls) = context("thread-a", json!({}));
-        let tools = WorktreeTools::new(PathBuf::from("/tmp/codex")).unwrap();
+        let tools = WorktreeTools::new(std::env::temp_dir().join("discodex-codex-test")).unwrap();
         assert!(
             tools
                 .execute(ctx, "create_worktree", json!({"allowAsync":false}))
@@ -808,7 +804,7 @@ mod tests {
     async fn creation_deduplicates_pending_operation_before_spawning_checkout() {
         let calls = Arc::new(StdMutex::new(Vec::new()));
         let ctx = creation_context("thread-a", Arc::clone(&calls), false);
-        let tools = WorktreeTools::new(PathBuf::from("/tmp/codex")).unwrap();
+        let tools = WorktreeTools::new(std::env::temp_dir().join("discodex-codex-test")).unwrap();
         tools.operations.lock().await.insert(
             "existing-op".into(),
             Operation {
@@ -833,7 +829,7 @@ mod tests {
     #[tokio::test]
     async fn status_is_pending_only_for_its_own_thread() {
         let (ctx, _) = context("thread-a", json!({}));
-        let tools = WorktreeTools::new(PathBuf::from("/tmp/codex")).unwrap();
+        let tools = WorktreeTools::new(std::env::temp_dir().join("discodex-codex-test")).unwrap();
         tools.operations.lock().await.insert(
             "op-1".into(),
             Operation {
