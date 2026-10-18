@@ -1,0 +1,17 @@
+Discodex includes adaptations from OpenAI Codex.
+Copyright 2025 OpenAI
+Licensed under the Apache License, Version 2.0 (licenses/codex-Apache-2.0.txt).
+
+Upstream: https://github.com/openai/codex
+Revision: 8c076942cb70fba8e5c4732c23f1faabc4aed484
+
+Adapted sources:
+- codex-rs/tui/src/dynamic_tools.rs and dynamic_tools_mcp.rs
+- codex-rs/tui/src/managed_worktree_tools.rs and managed_worktree_tool_specs.rs
+- codex-rs/tui/src/app_server_session.rs (history compatibility classifier)
+- codex-rs/worktree/src/{lib,git,metadata,paths,settings}.rs
+
+Discodex modifications: stdio MCP and existing worker IPC transport; native JSON
+RPC adapter; Discord plan display; managed worktree integration without the TUI
+dependency graph. UI-only output truncation is omitted so results are preserved.
+Discodex's original code remains under the repository MIT license.

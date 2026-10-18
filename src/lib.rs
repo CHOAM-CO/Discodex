@@ -21,3 +21,8 @@ pub mod voice_tools;
 pub mod mac_signing;
 
 pub(crate) mod realtime_prompt;
+
+pub mod harness;
+pub(crate) mod task_plan;
+pub(crate) mod task_tools;
+pub(crate) mod worktree_tools;

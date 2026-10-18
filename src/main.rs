@@ -22,6 +22,9 @@ async fn main() -> Result<()> {
 
     // The MCP child uses stdout as its JSON-RPC transport. Dispatch before
     // initializing the normal application logger so no startup text can leak there.
+    if command == "harness-tools" {
+        return discodex::harness::run(&voice_tools_endpoint(&rest)?).await;
+    }
     if command == "voice-tools" {
         let endpoint = voice_tools_endpoint(&rest)?;
         return discodex::voice_tools::run(&endpoint, voice_tools_language(&rest)?).await;
@@ -171,7 +174,7 @@ async fn shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn attach_parent_console_for_cli(command: Option<&str>) {
-    if matches!(command, Some("run" | "voice-tools")) {
+    if matches!(command, Some("run" | "voice-tools" | "harness-tools")) {
         return;
     }
 

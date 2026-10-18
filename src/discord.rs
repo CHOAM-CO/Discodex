@@ -90,6 +90,12 @@ struct ApprovalExecution {
     target: Option<ReplyTarget>,
 }
 
+#[derive(Default)]
+struct TaskPlanDisplay {
+    observation_order: Option<u64>,
+    messages: Vec<serenity::all::MessageId>,
+}
+
 /// Execution correlation outlives the interactive card and serverRequest/resolved.
 #[derive(Default)]
 pub(crate) struct ApprovalResults {
@@ -474,6 +480,7 @@ pub(crate) struct BridgeState {
     voice_item_destinations: Mutex<HashMap<(String, String), ChannelId>>,
     pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
     pub approval_results: Mutex<ApprovalResults>,
+    task_plan_displays: Mutex<HashMap<(u64, String, String), TaskPlanDisplay>>,
     pub settings_menus: Mutex<HashMap<String, commands::SettingsMenuState>>,
     pub settings_change_lock: Mutex<()>,
 }
@@ -979,6 +986,7 @@ pub async fn run(
         voice_item_destinations: Mutex::new(HashMap::new()),
         pending_approvals: Mutex::new(HashMap::new()),
         approval_results: Mutex::new(ApprovalResults::default()),
+        task_plan_displays: Mutex::new(HashMap::new()),
         settings_menus: Mutex::new(HashMap::new()),
         settings_change_lock: Mutex::new(()),
     });
@@ -3014,6 +3022,77 @@ fn take_voice_item_destination(
     destinations.remove(&key)
 }
 
+async fn publish_task_plan_update(
+    http: &serenity::http::Http,
+    state: &BridgeState,
+    params: &serde_json::Value,
+) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use serenity::builder::{CreateMessage, EditMessage};
+
+    let plan =
+        crate::task_plan::TaskPlan::from_params(params).context("parse native turn plan update")?;
+    if plan.thread_id != state.native.thread_id() {
+        return Ok(());
+    }
+    let generation = params
+        .get("_discodex_connection_generation")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|generation| *generation > 0)
+        .context("native plan update is missing its connection generation")?;
+    if generation != state.native.current_generation() {
+        return Ok(());
+    }
+    let observation_order = params
+        .get("_discodex_observation_order")
+        .and_then(serde_json::Value::as_u64)
+        .context("native plan update is missing its observation order")?;
+    let key = (generation, plan.thread_id.clone(), plan.turn_id.clone());
+    let mut displays = state.task_plan_displays.lock().await;
+    let display = displays.entry(key).or_default();
+    if !crate::task_plan::accepts_observation(display.observation_order, observation_order) {
+        return Ok(());
+    }
+
+    let content = plan.render(state.config.language);
+    let chunks = crate::task_plan::split_for_discord(&content);
+    let channel = ChannelId::new(state.config.home_channel_id);
+    for (index, chunk) in chunks.iter().enumerate() {
+        if let Some(message_id) = display.messages.get(index).copied() {
+            channel
+                .edit_message(
+                    http,
+                    message_id,
+                    EditMessage::new()
+                        .content(chunk)
+                        .allowed_mentions(empty_mentions()),
+                )
+                .await
+                .with_context(|| format!("edit task plan message {}", index + 1))?;
+        } else {
+            let message = channel
+                .send_message(
+                    http,
+                    CreateMessage::new()
+                        .content(chunk)
+                        .allowed_mentions(empty_mentions()),
+                )
+                .await
+                .with_context(|| format!("send task plan message {}", index + 1))?;
+            display.messages.push(message.id);
+        }
+    }
+    while display.messages.len() > chunks.len() {
+        let message_id = display.messages.pop().expect("length checked");
+        channel
+            .delete_message(http, message_id)
+            .await
+            .context("remove obsolete task plan continuation")?;
+    }
+    display.observation_order = Some(observation_order);
+    Ok(())
+}
+
 async fn handle_native_event(
     http: &serenity::http::Http,
     state: &BridgeState,
@@ -3062,6 +3141,11 @@ async fn handle_native_event(
             checks.approval_result_posted(&params, approval_post_error.as_deref());
         }
     }
+    if method != "serverRequest/resolved"
+        && crate::task_plan::event_thread_is_foreign(&params, &state.native.thread_id())
+    {
+        return;
+    }
     match method.as_str() {
         "discodex/thread-state" => {
             apply_thread_snapshot(state, &params).await;
@@ -3103,6 +3187,11 @@ async fn handle_native_event(
                     &Some(turn_id.to_owned()),
                     &params,
                 );
+            }
+        }
+        "turn/plan/updated" => {
+            if let Err(error) = publish_task_plan_update(http, state, &params).await {
+                warn!(%error, "failed to publish native task plan update");
             }
         }
         "turn/completed" => {

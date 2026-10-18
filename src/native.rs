@@ -64,7 +64,7 @@ pub(crate) struct NativeRequestError {
 }
 
 impl NativeRequestError {
-    fn from_response(method: String, error: &Value) -> Self {
+    pub(crate) fn from_response(method: String, error: &Value) -> Self {
         Self {
             method,
             code: error.get("code").and_then(Value::as_i64),
@@ -82,6 +82,34 @@ impl NativeRequestError {
             && (self.message == "no active turn to steer"
                 || self.message.starts_with("expected active turn id"))
     }
+}
+
+// Matches Codex TUI app_server_session.rs history compatibility fallback.
+pub(crate) fn is_history_pagination_unsupported(error: &anyhow::Error) -> bool {
+    let Some(source) = error.downcast_ref::<NativeRequestError>() else {
+        return false;
+    };
+    if source.code == Some(-32601) {
+        return true;
+    }
+    if !matches!(source.code, Some(-32600 | -32602)) {
+        return false;
+    }
+    let message = source.message.to_ascii_lowercase();
+    [
+        "historymode",
+        "history mode",
+        "excludeturns",
+        "exclude turns",
+        "thread/turns/list",
+        "thread/items/list",
+    ]
+    .into_iter()
+    .any(|field| message.contains(field))
+        || (message.contains("paginated")
+            && ["unknown variant", "unsupported variant", "invalid enum"]
+                .into_iter()
+                .any(|error| message.contains(error)))
 }
 
 impl std::fmt::Display for NativeRequestError {
@@ -116,6 +144,7 @@ struct Inner {
     pending: Mutex<HashMap<String, PendingRequest>>,
     server_requests: AsyncMutex<HashMap<ServerRequestKey, ServerRequestState>>,
     events: broadcast::Sender<Value>,
+    harness_worktrees: tokio::sync::OnceCell<crate::worktree_tools::WorktreeTools>,
     startup_events: Mutex<Vec<Value>>,
     live_events: AtomicBool,
     connection_state: AtomicU8,
@@ -356,6 +385,8 @@ impl Native {
             config.language.code(),
         ])?;
         let worker_path_value = serde_json::to_string(worker_path)?;
+        let harness_args =
+            serde_json::to_string(&["harness-tools", "--endpoint", voice_endpoint_arg])?;
 
         let mut command = Command::new(&codex_path);
         #[cfg(windows)]
@@ -369,6 +400,18 @@ impl Native {
             .arg(format!("mcp_servers.discodex_voice.args={worker_args}"))
             .arg("--config")
             .arg("mcp_servers.discodex_voice.enabled=true")
+            .arg("--config")
+            .arg("tools.update_plan.enabled=true")
+            .arg("--config")
+            .arg(format!(
+                "mcp_servers.discodex_tasks.command={worker_path_value}"
+            ))
+            .arg("--config")
+            .arg(format!("mcp_servers.discodex_tasks.args={harness_args}"))
+            .arg("--config")
+            .arg("mcp_servers.discodex_tasks.enabled=true")
+            .arg("--config")
+            .arg("mcp_servers.discodex_tasks.tool_timeout_sec=180")
             .arg("--config")
             .arg("mcp_servers.discodex_voice.tools.voice_leave.approval_mode=\"approve\"")
             .arg("--config")
@@ -492,6 +535,7 @@ impl Native {
             pending: Mutex::new(HashMap::new()),
             server_requests: AsyncMutex::new(HashMap::new()),
             events,
+            harness_worktrees: tokio::sync::OnceCell::new(),
             startup_events: Mutex::new(Vec::new()),
             live_events: AtomicBool::new(false),
             connection_state: AtomicU8::new(2),
@@ -1443,6 +1487,13 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
         voice_rpc_error(id, -32600, "JSON-RPC version must be 2.0")
     } else {
         match request.get("method").and_then(Value::as_str) {
+            Some("harness/call") => {
+                let args = request.get("params").cloned().unwrap_or_else(|| json!({}));
+                match handle_harness_call(inner, args).await {
+                    Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+                    Err(error) => voice_rpc_error(id, -32000, &format!("{error:#}")),
+                }
+            }
             Some("voice_leave") => {
                 let args = request.get("params").cloned().unwrap_or_else(|| json!({}));
                 match crate::voice_tools::parse_leave_summary(&args) {
@@ -1499,6 +1550,88 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
         .await
         .context("flush voice tool IPC response")?;
     Ok(())
+}
+
+fn snapshot_belongs_to_primary(response: &Value, primary: &str) -> bool {
+    !primary.is_empty() && response.pointer("/thread/id").and_then(Value::as_str) == Some(primary)
+}
+
+async fn handle_harness_call(inner: &Arc<Inner>, params: Value) -> Result<Value> {
+    let caller = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .context("Task tool call is missing its caller thread")?;
+    let tool = params
+        .get("tool")
+        .and_then(Value::as_str)
+        .context("Task tool name is missing")?;
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !arguments.is_object() {
+        bail!("Task tool arguments must be an object");
+    }
+    let generation = inner.connection_generation.load(Ordering::Acquire);
+    let weak = Arc::downgrade(inner);
+    let rpc: crate::harness::Rpc = Arc::new(move |method, arguments| {
+        let weak = weak.clone();
+        Box::pin(async move {
+            let inner = weak.upgrade().context("Codex connection ended")?;
+            if inner.connection_generation.load(Ordering::Acquire) != generation {
+                bail!("Codex reconnected; tool was not sent");
+            }
+            let native = Native { inner };
+            let (value, ()) = native
+                .request_raw_with_commit(&method, arguments, |_| {
+                    if native.inner.connection_generation.load(Ordering::Acquire) != generation {
+                        bail!("Codex reconnected; tool was not sent");
+                    }
+                    Ok(())
+                })
+                .await?;
+            Ok(value)
+        })
+    });
+    let context = crate::harness::ToolContext {
+        rpc,
+        events: inner.events.clone(),
+        thread_id: caller.to_owned(),
+        turn_id: params
+            .get("turnId")
+            .and_then(Value::as_str)
+            .context("missing caller turnId")?
+            .to_owned(),
+        thread_start: json!({
+            "cwd":inner.config.project_dir,
+            "ephemeral":false,
+            "baseInstructions":crate::instructions::agent_base_instructions(&inner.config.name, inner.config.language)
+        }),
+    };
+    if crate::task_tools::handles(tool) {
+        crate::task_tools::execute(context, tool, arguments).await
+    } else if crate::worktree_tools::handles(tool) {
+        let service = inner
+            .harness_worktrees
+            .get_or_try_init(|| async {
+                let home = inner
+                    .config
+                    .codex_home
+                    .clone()
+                    .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
+                    .or_else(|| {
+                        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                            .map(|path| PathBuf::from(path).join(".codex"))
+                    })
+                    .context("Cannot resolve Codex home for managed worktrees")?;
+                crate::worktree_tools::WorktreeTools::new(home)
+            })
+            .await?;
+        service.execute(context, tool, arguments).await
+    } else {
+        bail!("Unknown task/worktree tool: {tool}")
+    }
 }
 
 fn is_discord_tool_method(method: &str) -> bool {
@@ -1672,6 +1805,7 @@ fn spawn_reader(
                     method.as_str(),
                     "turn/started"
                         | "turn/completed"
+                        | "turn/plan/updated"
                         | "item/started"
                         | "item/completed"
                         | "item/agentMessage/delta"
@@ -1778,8 +1912,14 @@ fn spawn_reader(
                     {
                         if let Ok(result) = response.as_ref() {
                             let update = thread_state_summary(result);
-                            if let Ok(mut state) = inner.thread_state.lock() {
-                                merge_thread_state(&mut state, &update);
+                            // Background task reads/creates share the connection, but must not
+                            // replace this Discord profile's primary session settings.
+                            let primary = inner.thread_id.lock().ok().map(|id| id.clone());
+                            if snapshot_belongs_to_primary(result, primary.as_deref().unwrap_or(""))
+                            {
+                                if let Ok(mut state) = inner.thread_state.lock() {
+                                    merge_thread_state(&mut state, &update);
+                                }
                             }
                             if let Ok(thread_id) = response_thread_id(result) {
                                 publish_event(
@@ -1988,6 +2128,26 @@ mod thread_state_tests {
     use super::*;
     use std::io::{self, Write};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn history_fallback_requires_a_structured_unsupported_history_error() {
+        for (code, message, expected) in [
+            (-32601, "unknown method", true),
+            (-32602, "unknown field historyMode", true),
+            (-32600, "unsupported variant paginated", true),
+            (-32600, "permission denied", false),
+            (-32000, "thread/turns/list failed", false),
+        ] {
+            let error = anyhow::Error::new(NativeRequestError::from_response(
+                "thread/turns/list".into(),
+                &json!({"code":code,"message":message}),
+            ));
+            assert_eq!(is_history_pagination_unsupported(&error), expected);
+        }
+        assert!(!is_history_pagination_unsupported(&anyhow!(
+            "unknown method"
+        )));
+    }
 
     #[test]
     fn configured_thread_settings_update_maps_off_to_null_and_omits_unset_values() {
@@ -2228,5 +2388,26 @@ mod server_request_registry_tests {
         let next_generation = server_request_key(2, &json!(1));
         assert_ne!(numeric, string);
         assert_ne!(numeric, next_generation);
+    }
+}
+
+#[cfg(test)]
+mod harness_native_tests {
+    use super::*;
+    #[test]
+    fn background_task_snapshots_do_not_replace_primary_settings() {
+        assert!(snapshot_belongs_to_primary(
+            &json!({"thread":{"id":"main"}}),
+            "main"
+        ));
+        assert!(!snapshot_belongs_to_primary(
+            &json!({"thread":{"id":"other"}}),
+            "main"
+        ));
+        assert!(!snapshot_belongs_to_primary(
+            &json!({"thread":{"id":"main"}}),
+            ""
+        ));
+        assert!(!snapshot_belongs_to_primary(&json!({}), "main"));
     }
 }
