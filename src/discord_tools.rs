@@ -6,8 +6,8 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use serde_json::{Value, json};
 use serenity::all::{
-    ChannelId, ChannelType, CreateAllowedMentions, CreateAttachment, CreateMessage, GetMessages,
-    GuildChannel, GuildId, Http, Member, Message, MessageId, Permissions, UserId,
+    ChannelId, ChannelType, CreateAllowedMentions, CreateMessage, GetMessages, GuildChannel,
+    GuildId, Http, Member, Message, MessageId, Permissions, UserId,
 };
 
 use crate::config::Config;
@@ -506,9 +506,6 @@ impl DiscordTools {
         if !perms.contains(needed) {
             bail!("bot lacks permission to send in selected channel")
         }
-        if !files.is_empty() && !perms.contains(Permissions::ATTACH_FILES) {
-            bail!("bot lacks ATTACH_FILES permission in selected channel")
-        }
         let mention_names = args.get("mentions").and_then(Value::as_array);
         let members = if mention_names.is_some_and(|names| !names.is_empty()) {
             self.list_all_members().await?
@@ -524,39 +521,39 @@ impl DiscordTools {
                 }
             }
         }
-        let text_chunks = split_message_content(raw_content, &users);
+        if !files.is_empty() && !perms.contains(Permissions::ATTACH_FILES) {
+            bail!("bot lacks ATTACH_FILES permission in selected channel")
+        }
+        let content = prepend_resolved_mentions(raw_content, &users);
+        let prepared = if perms.contains(Permissions::ATTACH_FILES) {
+            crate::table_messages::prepare(&content, files, self.config.language).await
+        } else {
+            crate::table_messages::prepare_plain(&content, files)
+        };
         let server = self.guild().await?.name;
-        let file_batch_lengths = crate::reply_files::attachment_batches(&files)
-            .iter()
-            .map(|range| range.len())
-            .collect::<Vec<_>>();
-        let mut pending_files = files.into_iter();
-        let message_count = text_chunks.len().max(file_batch_lengths.len()).max(1);
+        let message_count = prepared.len().max(1);
+        let mut pending_messages = prepared.into_iter();
         let mut sent_messages = Vec::with_capacity(message_count);
         let mut all_attachments = Vec::new();
         let mut send_error = None;
         for index in 0..message_count {
-            let body = text_chunks.get(index).cloned().unwrap_or_default();
-            let upload_count = file_batch_lengths.get(index).copied().unwrap_or_default();
-            let uploads = pending_files
-                .by_ref()
-                .take(upload_count)
-                .map(|file| CreateAttachment::bytes(file.data, file.filename))
-                .collect::<Vec<_>>();
+            let Some(prepared) = pending_messages.next() else {
+                break;
+            };
+            let body = prepared.content.clone();
             let mentions = CreateAllowedMentions::new()
                 .everyone(false)
                 .all_roles(false)
                 .all_users(false)
                 .empty_roles()
                 .users(users.clone());
+            let builder = prepared.into_builder(
+                CreateMessage::new()
+                    .content(body)
+                    .allowed_mentions(mentions),
+            );
             let sent = match channel
-                .send_message(
-                    &*self.http,
-                    CreateMessage::new()
-                        .content(body)
-                        .allowed_mentions(mentions)
-                        .add_files(uploads),
-                )
+                .send_message(&*self.http, builder)
                 .await
                 .with_context(|| {
                     format!(
@@ -1284,40 +1281,19 @@ fn name_matches(username: &str, global: Option<&str>, nickname: Option<&str>, qu
         || global.is_some_and(|s| s.eq_ignore_ascii_case(query))
         || nickname.is_some_and(|s| s.eq_ignore_ascii_case(query))
 }
-fn split_message_content(content: &str, users: &[UserId]) -> Vec<String> {
-    const MAX_MESSAGE_CHARS: usize = 2000;
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    let mut chars = 0;
-    for (index, _) in content.char_indices() {
-        if chars == MAX_MESSAGE_CHARS {
-            chunks.push(content[start..index].to_owned());
-            start = index;
-            chars = 0;
-        }
-        chars += 1;
+fn prepend_resolved_mentions(content: &str, users: &[UserId]) -> String {
+    let mentions = users
+        .iter()
+        .map(|user| format!("<@{}>", user.get()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if mentions.is_empty() {
+        content.to_owned()
+    } else if content.is_empty() {
+        mentions
+    } else {
+        format!("{mentions}\n\n{content}")
     }
-    if start < content.len() {
-        chunks.push(content[start..].to_owned());
-    }
-    for user in users {
-        let mention = format!("<@{}>", user.get());
-        if let Some(last) = chunks.last_mut() {
-            let separator = if last.is_empty() { "" } else { " " };
-            if last.chars().count() + separator.chars().count() + mention.chars().count()
-                <= MAX_MESSAGE_CHARS
-            {
-                last.push_str(separator);
-                last.push_str(&mention);
-                continue;
-            }
-        }
-        chunks.push(mention);
-    }
-    if chunks.is_empty() {
-        chunks.push(String::new());
-    }
-    chunks
 }
 
 fn is_choice(value: &str) -> bool {
@@ -1579,19 +1555,13 @@ mod tests {
         assert!(!is_choice("choice_nickname"));
     }
     #[test]
-    fn long_message_content_is_chunked_at_the_discord_limit_and_mentions_stay_whole() {
-        let body = format!("{} ", "x".repeat(4005));
-        let chunks = split_message_content(&body, &[UserId::new(7), UserId::new(9)]);
-        assert_eq!(chunks.len(), 3);
-        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 2000));
-        assert!(chunks.last().unwrap().ends_with("<@7> <@9>"));
-        let combined = chunks.join("");
-        let recovered_body = combined
-            .strip_suffix("<@7> <@9>")
-            .unwrap()
-            .strip_suffix(' ')
-            .unwrap();
-        assert_eq!(recovered_body, body);
+    fn resolved_mentions_precede_content_with_a_markdown_paragraph_break() {
+        assert_eq!(
+            prepend_resolved_mentions("| A | B |\n|---|---|", &[UserId::new(7), UserId::new(9)]),
+            "<@7> <@9>\n\n| A | B |\n|---|---|"
+        );
+        assert_eq!(prepend_resolved_mentions("table", &[]), "table");
+        assert_eq!(prepend_resolved_mentions("", &[UserId::new(7)]), "<@7>");
     }
 
     #[test]

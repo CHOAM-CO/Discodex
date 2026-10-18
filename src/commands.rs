@@ -2967,6 +2967,11 @@ pub(crate) async fn handle_component(
     interaction: &ComponentInteraction,
 ) -> anyhow::Result<()> {
     let state = state_async(ctx).await?;
+    // Viewing an already-visible table is not an operator-only settings action.
+    if crate::table_messages::is_source_button(&interaction.data.custom_id) {
+        return crate::table_messages::handle_component(ctx, interaction, state.config.language)
+            .await;
+    }
     authorize(
         &state,
         interaction.guild_id,

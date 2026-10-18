@@ -1,6 +1,6 @@
 [package]
 name = "discodex"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 rust-version = "1.94"
 publish = false
@@ -19,6 +19,10 @@ path = "src/main.rs"
 anyhow = "1"
 opus2 = "0.4.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+resvg = "0.48.1"
+fontdb = "0.24"
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
 percent-encoding = "2.3.2"
 url = "2.5.8"
 codex-uds = { git = "https://github.com/openai/codex", rev = "a956835d020762cb2b570053af06f643a11c0ecc" }
@@ -42,6 +46,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 rtc = "=0.20.5"
 webrtc = "=0.20.5"
+
+[dev-dependencies]
+png = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["process", "signal"] }

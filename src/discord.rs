@@ -3554,42 +3554,33 @@ async fn handle_native_event(
                 }
                 if let Some(target) = target {
                     if !text.is_empty() {
-                        let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
-                        let mut chunks = split_content(&prepared.content, 1650);
-                        let file_batches = crate::reply_files::attachment_batches(&prepared.files);
-                        let pages = file_batches.len().max(chunks.len());
-                        chunks.resize(pages, "");
+                        let reply = crate::reply_files::prepare_reply(&state.config, text).await;
+                        let messages = crate::table_messages::prepare(
+                            &reply.content,
+                            reply.files,
+                            state.config.language,
+                        )
+                        .await;
                         let mut publish_error = None;
-                        for (index, chunk) in chunks.iter().enumerate() {
-                            let content = (*chunk).to_owned();
+                        for (index, prepared) in messages.into_iter().enumerate() {
                             let home = ChannelId::new(state.config.home_channel_id);
                             let (channel, builder) = if index > 0 && target.channel_id != home {
-                                (home, assistant_continuation_message(&content))
+                                (home, assistant_continuation_message(&prepared.content))
                             } else {
                                 assistant_conversation_reply_message_localized(
                                     &target,
                                     home,
                                     state.config.guild_id,
-                                    &content,
+                                    &prepared.content,
                                     &state.config.language,
                                 )
                             };
-                            let builder = {
-                                let files = file_batches
-                                    .get(index)
-                                    .map(|range| &prepared.files[range.clone()])
-                                    .unwrap_or(&[]);
-                                builder.add_files(files.iter().map(|file| {
-                                    serenity::builder::CreateAttachment::bytes(
-                                        file.data.clone(),
-                                        file.filename.clone(),
-                                    )
-                                }))
-                            };
+                            let had_files = prepared.has_files();
+                            let builder = prepared.into_builder(builder);
                             if let Err(error) = channel.send_message(http, builder).await {
                                 warn!(%error, native_item_id = ?item_id, discord_message_id = %target.message_id, "failed to publish native assistant output");
                                 publish_error = Some(format!("{error:#}"));
-                                if index < file_batches.len() {
+                                if had_files {
                                     let notice = state.config.language.text(
                                         "Could not confirm delivery of the attached files. Please try again.",
                                         "파일 첨부 전송을 확인하지 못했습니다. 다시 요청해 주세요.",
@@ -3713,24 +3704,15 @@ async fn publish_home_notice(
     if text.is_empty() {
         return Ok(());
     }
-    let prepared = crate::reply_files::prepare_reply(&state.config, text).await;
-    let mut chunks = split_content(&prepared.content, 1650);
-    let batches = crate::reply_files::attachment_batches(&prepared.files);
-    chunks.resize(chunks.len().max(batches.len()), "");
-    for (index, chunk) in chunks.into_iter().enumerate() {
-        let files = batches
-            .get(index)
-            .map(|range| &prepared.files[range.clone()])
-            .unwrap_or(&[]);
+    let reply = crate::reply_files::prepare_reply(&state.config, text).await;
+    let messages =
+        crate::table_messages::prepare(&reply.content, reply.files, state.config.language).await;
+    for prepared in messages {
+        let content = prepared.content.clone();
         ChannelId::new(state.config.home_channel_id)
             .send_message(
                 http,
-                assistant_continuation_message(chunk).add_files(files.iter().map(|file| {
-                    serenity::builder::CreateAttachment::bytes(
-                        file.data.clone(),
-                        file.filename.clone(),
-                    )
-                })),
+                prepared.into_builder(assistant_continuation_message(&content)),
             )
             .await
             .context("publish native notification in home channel")?;

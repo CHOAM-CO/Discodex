@@ -31,3 +31,6 @@ pub(crate) mod async_questions;
 pub(crate) mod discord_plugins;
 pub mod logging;
 pub(crate) mod native_features;
+
+pub(crate) mod table_messages;
+pub(crate) mod table_render;
