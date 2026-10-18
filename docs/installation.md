@@ -131,6 +131,8 @@ Discodex는 승인한 GitHub Release에서 현재 OS와 아키텍처에 맞는 �
 
 알림의 기준은 main 브랜치의 모든 커밋이 아니라 정식 GitHub Release입니다. 배포할 때 Cargo 패키지 버전과 Release의 vX.Y.Z 태그를 일치시킵니다. 수동 업데이트 스크립트도 같은 플랫폼별 Release 실행 파일을 내려받아 SHA-256 체크섬을 확인합니다.
 
+배포자는 버전에 맞는 Git 태그와 draft Release를 만든 뒤 GitHub Actions의 `Build release binaries` 워크플로에 해당 `release_tag`를 지정해 실행합니다. 워크플로는 Windows·macOS·Linux의 x64/ARM64에서 단위 테스트와 release 빌드를 수행하고, 여섯 실행 파일·SHA-256 체크섬·`discodex-installers.zip`을 draft에 첨부합니다. 모든 작업과 첨부 파일을 확인한 후에만 Release를 공개합니다. 소스 아카이브만 있는 Release는 배포하지 않습니다.
+
 ## 작업 도구 업데이트
 
 업데이트 후 worker를 재시작하면 기존 Codex thread를 유지한 채 native `update_plan`과 CLI 작업·관리 워크트리 도구가 활성화된다. 별도 MCP 설치나 사용자 전역 Codex 설정 편집은 필요하지 않다. 작업 조회·생성·분기와 워크트리 생성은 동일한 공식 app-server 연결을 사용한다. 새 작업은 호출한 작업의 native 설정을 상속하며 기존 대화와 프로필 설정을 초기화하지 않는다.
