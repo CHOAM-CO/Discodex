@@ -60,7 +60,7 @@ native `update_plan`을 활성화한다. `turn/plan/updated`는 현재 프로필
 
 ## 메모리 설정
 
-worker의 선택적 `memoryEnabled`가 지정되면 해당 native 자식 프로세스의 `features.memories`, `memories.generate_memories`, `memories.use_memories`를 같은 값으로 설정한다. 기존 지속 thread를 처음 재개할 때는 공식 `thread/memoryMode/set`으로 해당 thread의 메모리 생성 상태도 맞춘다. 설정을 생략하면 기존 Codex 메모리 설정을 따른다. 계정 전역 설정과 다른 Codex 프로세스는 변경하지 않는다. 메모리 생성 시기와 보존·통합은 native의 정책을 따르며 모든 발언의 즉시 기억을 보장하지 않는다.
+worker의 선택적 `memoryEnabled`가 지정되면 해당 native 자식 프로세스의 `features.memories`, `memories.generate_memories`, `memories.use_memories`, `memories.dedicated_tools`를 같은 값으로 설정한다. 메모리를 켜면 공식 `memories.list`, `memories.read`, `memories.search`, `memories.add_ad_hoc_note` 도구도 함께 활성화한다. 기존 지속 thread를 처음 재개할 때는 공식 `thread/memoryMode/set`으로 해당 thread의 메모리 생성 상태도 맞춘다. 설정을 생략하면 기존 Codex 메모리 설정을 따른다. 계정 전역 설정과 다른 Codex 프로세스는 변경하지 않는다. 메모리 생성 시기와 보존·통합은 native의 정책을 따르며 모든 발언의 즉시 기억을 보장하지 않는다.
 
 
 ## Discord 조회·메시지 도구와 첨부

@@ -236,6 +236,73 @@ fn configured_thread_settings_update(config: &Config, thread_id: &str) -> Option
     (config.effort.is_some() || config.service_tier.is_some()).then_some(params)
 }
 
+fn apply_memory_config(command: &mut Command, enabled: Option<bool>) {
+    if let Some(enabled) = enabled {
+        for key in [
+            "features.memories",
+            "memories.generate_memories",
+            "memories.use_memories",
+            "memories.dedicated_tools",
+        ] {
+            command.arg("--config").arg(format!("{key}={enabled}"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod memory_config_tests {
+    use super::*;
+
+    fn arguments(enabled: Option<bool>) -> Vec<String> {
+        let mut command = Command::new("codex");
+        apply_memory_config(&mut command, enabled);
+        command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn enabled_memory_includes_native_retrieval_and_note_tools() {
+        assert_eq!(
+            arguments(Some(true)),
+            [
+                "--config",
+                "features.memories=true",
+                "--config",
+                "memories.generate_memories=true",
+                "--config",
+                "memories.use_memories=true",
+                "--config",
+                "memories.dedicated_tools=true",
+            ]
+        );
+    }
+
+    #[test]
+    fn disabled_memory_also_disables_dedicated_tools() {
+        assert_eq!(
+            arguments(Some(false)),
+            [
+                "--config",
+                "features.memories=false",
+                "--config",
+                "memories.generate_memories=false",
+                "--config",
+                "memories.use_memories=false",
+                "--config",
+                "memories.dedicated_tools=false",
+            ]
+        );
+    }
+
+    #[test]
+    fn unspecified_memory_preserves_native_configuration() {
+        assert!(arguments(None).is_empty());
+    }
+}
+
 #[derive(Clone)]
 pub struct Native {
     inner: Arc<Inner>,
@@ -426,15 +493,7 @@ impl Native {
                     config.language
                 ))?
             ));
-        if let Some(enabled) = config.memory_enabled {
-            for (key, value) in [
-                ("features.memories", enabled),
-                ("memories.generate_memories", enabled),
-                ("memories.use_memories", enabled),
-            ] {
-                command.arg("--config").arg(format!("{key}={value}"));
-            }
-        }
+        apply_memory_config(&mut command, config.memory_enabled);
         command
             .arg("app-server")
             .arg("--listen")
