@@ -13,21 +13,25 @@
 
 ---
 
-Discodex connects one Discord app profile to one persistent conversation with the official Codex app-server. Chat and voice share that conversation. Codex handles task decisions and tool execution.
+Discodex connects one Discord app profile to one persistent conversation with the official Codex app-server. Text and voice share the conversation. Codex handles task decisions and tool execution.
 
 ## Features
 
 | Feature | What it does |
 | --- | --- |
-| Persistent context | Chat and voice use the same Codex conversation, which resumes after a worker restart or voice call. |
+| Persistent context | Chat and voice share a Codex conversation that resumes after a worker restart or voice call. |
 | Voice and transcripts | Talk in an allowed voice channel. Confirmed transcripts are kept in a per-call Discord thread. |
-| Questions and approvals | Receive Codex questions and approval requests in Discord forms and buttons; return selections to the matching request. |
-| Agent settings | Set a profile name and memory behavior. Choose supported models, reasoning effort, and permissions in the `/discodex settings` panel. |
-| Discord context and attachments | Read messages, channels, and users; pass images and files into the conversation; send a separate message when explicitly requested. |
+| Questions and approvals | Answer Codex questions and approval requests in Discord forms and buttons; selections return to the matching request. |
+| Profile and memory | Set a profile name and, with `memoryEnabled: true`, use official native memory features and dedicated memory tools. |
+| Message routing and mentions | Choose which senders are authorized with Everyone, RegisteredServer, RegisteredChannels, or Paired, plus independent allow and block lists. Routing also applies the home-channel, mention, registered-channel/thread, and admitted-DM rules. Normal replies can mention the message author, including for home-channel messages. |
+| Voice inbox | Get a short preview of messages received during a call; unread messages are handled after the call, with attachments checked before an item is marked read. |
+| Discord context and files | Read messages, channels, and users; pass images and files into the conversation; send a separate message when explicitly requested. |
+| Plans and task tools | View Codex plans in the home channel and manage Codex threads and worktrees through `discodex_tasks`. |
+| Release updates | Receive an idle-time notice for published releases and update from a verified prebuilt executable. |
 
 ## Getting started
 
-Download `discodex-installers.zip` from the [latest release](https://github.com/CHOAM-CO/Discodex/releases/latest), extract it, and open the extracted folder in a terminal. The scripts download the prebuilt executable for your operating system and architecture; Rust, Cargo, and Git are not required.
+Download `discodex-installers.zip` from the [latest release](https://github.com/CHOAM-CO/Discodex/releases/latest), extract it, and open the extracted folder in a terminal. Installers download the prebuilt executable for your operating system and architecture. Client installation does not require Rust, Cargo, Git, or build tools.
 
 On macOS or Linux, run:
 
@@ -41,9 +45,9 @@ On Windows PowerShell, run:
 ./scripts/install.ps1
 ```
 
-The installer lets you choose English (default), Korean, Simplified Chinese, or Japanese. That language is used for installation prompts, Discodex's Discord interface, and the agent's base instructions. You can preselect it with `DISCODEX_LANGUAGE=en`, `ko`, `zh`, or `ja`; a valid existing value skips the language prompt.
+The installer offers English (default), Korean, Simplified Chinese, and Japanese. The selected language is used for installation guidance, Discodex's Discord interface, and the agent's base instructions. You can set `DISCODEX_LANGUAGE=en`, `ko`, `zh`, or `ja` before installation to select a language.
 
-The setup connects your Codex installation and Discord bot, then configures a profile and a user-level startup service. See the [installation guide](docs/installation.md) for migration, update, removal, and macOS permissions.
+Setup connects the Codex app-server and Discord bot, configures a profile, and registers a user-level startup service. See the [installation guide](docs/installation.md) for migration, updates, removal, and macOS permissions.
 
 ## Updating
 
@@ -59,7 +63,11 @@ On Windows PowerShell:
 ./scripts/update.ps1 -Config "<path-to-existing-config.json>"
 ```
 
-The updater downloads and verifies the matching release executable, then applies it to the profile named by `--config`. The Discord Update button uses the same prebuilt release artifacts. It does not prompt for a language or rewrite profile settings. The selected language, credentials, and persistent Codex conversation state stay with that profile. If an owned binary replacement fails, the updater restores the previous binary and service state. `./install --update --config ...` and `./scripts/install.ps1 -Update -Config ...` are aliases.
+The updater downloads the matching prebuilt release executable, verifies its SHA-256 digest, and applies it to the profile named by `--config`. The Discord Update button uses the same release assets. Client machines do not need Git, Cargo, or a compiler. `./install --update --config ...` and `./scripts/install.ps1 -Update -Config ...` are aliases.
+
+Release checks use the persisted last-check timestamp: every six hours after success and every 15 minutes after failure. The first check is due immediately; due checks run through a 15-second loop and wake notifications. A notice appears only while the native connection is available and after five continuous minutes with no active turn, voice call or teardown, pending approval or input, message handling, or output delivery. Discovery adds no wait when the worker has already met that idle condition. **Update** applies the selected release, **Skip this version** suppresses that release, and **Never notify again** disables notices for that profile. Re-enable notices in `/discodex settings`.
+
+Profiles on versions older than v0.1.3 need a one-time manual update from the installer bundle to install the self-updater. This update preserves the existing session and settings. Afterward, Discord release updates are available from the notice buttons.
 
 ## Discord commands
 
@@ -73,9 +81,9 @@ The updater downloads and verifies the matching release executable, then applies
 | Request that the current response stop | `/discodex interrupt` |
 | Start a new conversation | `/discodex new` |
 
-Settings panels show the current selection and buttons for models, reasoning effort, Fast mode, permission profiles, input delivery, and voice profiles. Voice changes apply to the next call.
+The settings panel offers supported models, reasoning effort, service tier, permission profile, input delivery, voice profile, and release notices. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel.
 
-Leaving a voice call disconnects voice only; the persistent conversation remains available. Use `/discodex new` to start a new conversation.
+Leaving voice disconnects the call while keeping the persistent conversation. Use `/discodex new` to start a different conversation.
 
 ## Documentation
 

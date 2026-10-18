@@ -17,7 +17,7 @@ The installation language defaults to English and can be selected as English, Ko
 - Record unverified behavior and failures as observed.
 - Preserve production settings, accounts, conversation history, and project data during product cleanup.
 
-Product documentation lives in `docs/design.md` and `docs/installation.md`.
+Product documentation defaults to English in `README.md`, `docs/design.md`, and `docs/installation.md`. Keep Korean (`.ko.md`), Simplified Chinese (`.zh-CN.md`), and Japanese (`.ja.md`) versions current, with language navigation and links to the matching language. Document behavior from the current implementation, including persisted update-check timing separately from notification idle conditions.
 
 Do not introduce product restrictions that the user did not request, such as inferred path deny lists, artificial size/count/range caps, or forced permission profiles. Accommodate actual service and protocol limits through pagination and split delivery, and preserve the requested content instead of silently truncating it.
 

@@ -1,58 +1,66 @@
 <p align="center"><img src="docs/assets/discodex-banner.png" alt="Discodex — テキストと音声での会話" width="960" /></p>
-<p align="center"><strong>Discordで話し、同じ文脈を引き継ぎます。</strong><br />公式Codex app-serverの継続スレッドにテキストと音声を接続するRustブリッジです。</p>
+<p align="center"><strong>Discordで話し、同じ文脈を引き継ぎます。</strong><br />公式Codex app-serverの永続スレッドにテキストと音声をつなぐRustブリッジです。</p>
 <p align="center"><a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · 日本語</p>
-<p align="center"><a href="#はじめに">はじめに</a> · <a href="docs/installation.md">インストール</a> · <a href="docs/design.md">設計</a></p>
+<p align="center"><a href="#はじめに">はじめに</a> · <a href="docs/installation.ja.md">インストール</a> · <a href="docs/design.ja.md">設計</a></p>
 
-Discodexは、1つのDiscordアプリプロファイルを公式Codex app-serverの1つの継続スレッドに接続します。テキストと音声は同じ会話を使い、タスクの判断とツール実行はCodexが担当します。
+Discodexは1つのDiscordアプリプロファイルを公式Codex app-serverの1つの永続スレッドに接続します。テキストと音声は同じ会話を使い、タスクの判断とツール実行はCodexが行います。
 
 ## 主な機能
 
 | 機能 | 説明 |
 | --- | --- |
-| 継続する文脈 | workerの再起動や音声通話の終了後も、同じCodex会話を続けられます。 |
-| 音声と文字起こし | 許可された音声チャンネルで会話し、確定した文字起こしを通話ごとのDiscordスレッドに保存します。 |
-| 質問と承認 | Codexからの質問や承認依頼をDiscordのフォームとボタンで受け取り、該当する依頼に回答します。 |
-| エージェント設定 | プロファイル名とメモリ動作を設定し、`/discodex settings`パネルから利用可能なモデル、推論の強さ、権限を選びます。 |
-| Discordの情報と添付 | メッセージ、チャンネル、ユーザーを参照し、画像やファイルを会話に渡します。別チャンネルへの投稿は明示的な依頼がある場合に行います。 |
+| 継続する文脈 | worker再起動後も同じCodex会話を続けられます。通話終了後も会話は残ります。 |
+| 音声と文字起こし | 許可された音声チャンネルで会話し、確定した文字起こしを通話ごとのDiscordスレッドに記録します。 |
+| 質問と承認 | Codexの質問や承認要求にDiscordフォームとボタンで答え、元の要求に応答します。 |
+| エージェント設定 | プロファイル名とメモリ動作を設定し、`/discodex settings`から利用可能なモデル、推論強度、権限、入力方式を選べます。 |
+| メッセージ受信範囲 | `Everyone`、`RegisteredServer`、`RegisteredChannels`、`Paired`から選び、許可リストと拒否リストを管理できます。拒否リストが優先されます。 |
+| 作業の進捗 | Codexの`update_plan`とCLI作業・管理ワークツリー機能をDiscordに接続します。 |
+| Discordの情報と添付 | メッセージ、チャンネル、ユーザーを参照し、画像やファイルを会話に渡します。別チャンネルへの投稿は明示的な依頼に従います。 |
+
+通話中、ホームチャンネルへの入力や他チャンネルでのボットメンションは受信箱に保管します。通知には投稿者、チャンネル、本文の冒頭、添付の有無を表示します。プレビューは全文取得を意味しません。音声モデルは必要な場合、または依頼された場合だけ受信箱を読みます。通話後も未処理項目は保持されます。
+
+受信ポリシーは入力を許可するユーザー範囲を決めます。許可された入力は、ホームチャンネル、ボットへのメンション、登録チャンネルやそのスレッド、許可されたDMから既存のルーティング経路に入ります。メンション自体はポリシーを上書きしません。
+
+通常の回答、質問、承認、進捗はホームチャンネルに届きます。ホームチャンネルの入力には元投稿への返信を付け、回答では入力投稿者への明示的なユーザーメンションを使用できます。別チャンネルに投稿するのは、宛先と送信をユーザーが明示した場合だけです。
 
 ## はじめに
 
-[最新リリース](https://github.com/CHOAM-CO/Discodex/releases/latest)から `discodex-installers.zip` をダウンロードして展開し、そのフォルダーで実行します。スクリプトがOSとアーキテクチャに対応するビルド済み実行ファイルを取得するため、Rust・Cargo・Gitは不要です。
+[最新Release](https://github.com/CHOAM-CO/Discodex/releases/latest)から`discodex-installers.zip`をダウンロードして展開し、そのフォルダーで実行します。ReleaseにはWindows、macOS、Linux向けx64/ARM64のビルド済み実行ファイルが含まれます。スクリプトがOSとアーキテクチャに合うファイルを取得するため、クライアントにRust、Cargo、Gitは不要です。
 
 ```sh
 ./install
 ```
 
-Windows PowerShellでは `./scripts/install.ps1` を実行します。インストーラーで English（既定）、한국어、简体中文、日本語を選べます。選んだ言語はインストールの案内、DiscodexのDiscord UI、エージェントの基本指示に適用されます。`DISCODEX_LANGUAGE=en`、`ko`、`zh`、`ja`をあらかじめ設定すると、言語を再度尋ねません。
+Windows PowerShellでは`./scripts/install.ps1`を実行します。インストーラーでEnglish（既定）、한국어、简体中文、日本語を選べます。選んだ言語はインストール案内、Discord UI、エージェントの基本指示に使われます。`DISCODEX_LANGUAGE=en`、`ko`、`zh`、`ja`を事前に設定すると、言語を再度尋ねません。
 
-インストーラーはCodexとDiscordを接続し、プロファイルとユーザー単位の自動起動を設定します。移行、更新、削除は[インストールガイド](docs/installation.md)を参照してください。
+インストーラーはCodexとDiscordを接続し、プロファイルとユーザー単位の自動起動を設定します。移行、更新、削除の詳細は[日本語インストールガイド](docs/installation.ja.md)を参照してください。
 
 ## 更新
 
-インストーラーバンドルの更新スクリプトに既存の設定ファイルを指定します。
+インストーラーバンドルの更新スクリプトに既存プロファイルの設定ファイルを指定します。
 
 ```sh
-./update --config "<既存-config.json-のパス>"
+./update --config "<既存config.jsonのパス>"
 ```
 
-Windows PowerShell：
+Windows PowerShell:
 
 ```powershell
-./scripts/update.ps1 -Config "<既存-config.json-のパス>"
+./scripts/update.ps1 -Config "<既存config.jsonのパス>"
 ```
 
-更新スクリプトは対応するリリースの実行ファイルをダウンロード・検証し、`--config` で指定したプロファイルに適用します。Discordの更新ボタンも同じビルド済み実行ファイルを使用します。言語の再選択や設定の書き換えは行いません。選択済みの言語、資格情報、永続 Codex 会話状態はそのプロファイルに保持されます。製品所有バイナリの置換に失敗した場合は、以前のバイナリとサービス状態に戻します。`./install --update --config ...` と `./scripts/install.ps1 -Update -Config ...` も同じ更新処理を実行します。
+更新スクリプトは対象プラットフォーム用の公式Releaseバイナリを取得・検証し、指定したプロファイルに適用します。DiscordのRelease確認は保存した`last_checked_unix`に基づきます。初回だけ即時に確認し、その後は確認期限が来たときに行います。通常の次回確認は6時間後、失敗後は15分後です。起動時にも期限を確認しますが、毎回強制的に確認することはありません。期限確認ループは15秒間隔で動きます。新しいReleaseの通知タイミングはRelease確認とは独立しており、Codex接続中にturn、音声接続・終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく5分間アイドルならホームチャンネルへ通知します。Releaseが見つかった時点ですでに条件を満たしていれば、さらに5分待ちません。Discordの更新通知も同じビルド済みバイナリを使います。保存済み言語、設定、認証情報、永続Codex会話状態を保ちます。置換に失敗した場合は以前のバイナリとサービス状態に戻します。`./install --update --config ...`と`./scripts/install.ps1 -Update -Config ...`も同じ更新経路を使います。
 
 ## Discordコマンド
 
-設定パネルには現在の値と、モデル、推論の強さ、Fastモード、権限プロファイル、入力の送信方法、音声の選択ボタンが表示されます。音声の変更は次の通話から適用されます。
+設定パネルは現在値を表示し、モデル、推論強度、サービス階層、権限プロファイル、入力の送信方法、音声を選べます。音声の変更は次の通話から反映されます。
 
-- `/discodex settings`：ボタンで設定を選択
-- `/discodex voice`：音声プロファイルを選択
-- `/discodex status`：会話と設定を表示
-- `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加
-- `/discodex voice-leave`：音声通話を終了
-- `/discodex interrupt`：現在の応答の停止を依頼
-- `/discodex new`：新しい会話を開始
+- `/discodex settings`：ボタンで設定を選ぶ
+- `/discodex voice`：音声プロファイルを選ぶ
+- `/discodex status`：会話と設定を表示する
+- `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加する
+- `/discodex voice-leave`：通話を終了する
+- `/discodex interrupt`：現在の応答の停止を依頼する
+- `/discodex new`：新しい会話を開始する
 
-音声通話を終了しても継続会話は残ります。ドキュメント：[インストールと削除](docs/installation.md) · [製品設計](docs/design.md)
+音声通話を終了しても永続会話は残ります。ドキュメント：[日本語インストールガイド](docs/installation.ja.md) · [日本語の製品設計](docs/design.ja.md)
