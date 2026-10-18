@@ -2729,6 +2729,7 @@ mod bridge_event_buffer_tests {
         use tokio::sync::broadcast;
 
         let (events, _) = broadcast::channel(8);
+        let mut legacy_broadcast = events.subscribe();
         let startup_events = Mutex::new(vec![
             serde_json::json!({"method":"thread/started","params":{"index":0}}),
             serde_json::json!({"method":"turn/started","params":{"index":1}}),
@@ -2740,7 +2741,7 @@ mod bridge_event_buffer_tests {
             .expect("bridge queue lock")
             .publish(serde_json::json!({"method":"turn/started","params":{"index":1}}));
 
-        let mut legacy =
+        let mut bridge_receiver =
             subscribe_bridge_events(&bridge_events, &events, &startup_events, &live_events)
                 .expect("claim bridge stream");
 
@@ -2752,11 +2753,16 @@ mod bridge_event_buffer_tests {
                 .is_empty()
         );
         assert_eq!(
-            legacy.recv().await.expect("first legacy event")["params"]["index"],
+            legacy_broadcast.recv().await.expect("first legacy event")["params"]["index"],
             0
         );
         assert_eq!(
-            legacy.recv().await.expect("second legacy event")["params"]["index"],
+            legacy_broadcast.recv().await.expect("second legacy event")["params"]["index"],
+            1
+        );
+
+        assert_eq!(
+            bridge_receiver.recv().await.expect("buffered bridge event")["params"]["index"],
             1
         );
 
@@ -2764,7 +2770,7 @@ mod bridge_event_buffer_tests {
             .send(serde_json::json!({"method":"turn/completed"}))
             .expect("publish live event");
         assert_eq!(
-            legacy.recv().await.expect("live legacy event")["method"],
+            legacy_broadcast.recv().await.expect("live legacy event")["method"],
             "turn/completed"
         );
     }

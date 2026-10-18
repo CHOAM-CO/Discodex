@@ -35,6 +35,7 @@ pub fn init_file_logging(state_dir: &Path) -> Result<()> {
 pub fn init_stderr_logging() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(env_filter())
+        .with_writer(std::io::stderr)
         .try_init()
         .map_err(|error| anyhow::anyhow!("initialize stderr diagnostics: {error}"))
 }

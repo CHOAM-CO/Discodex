@@ -3834,8 +3834,20 @@ fn approval_actions_with_language(
         } else {
             install
         };
-        return vec![CreateActionRow::Buttons(vec![
-            install,
+        let mut buttons = vec![install];
+        if !is_plugin_suggestion(&suggestion) && suggestion.install_url.is_some() {
+            buttons.push(
+                CreateButton::new(format!("codex:approval:{key}:plugin-check"))
+                    .label(language.text(
+                        "Setup completed / Check access",
+                        "설정 완료 / 접근 확인",
+                        "完成设置 / 检查访问",
+                        "セットアップ完了 / 接続確認",
+                    ))
+                    .style(ButtonStyle::Primary),
+            );
+        }
+        buttons.extend([
             CreateButton::new(format!("codex:approval:{key}:plugin-decline"))
                 .label(labels.decline)
                 .style(ButtonStyle::Secondary),
@@ -3845,7 +3857,8 @@ fn approval_actions_with_language(
             CreateButton::new(format!("codex:approval:{key}:cancel"))
                 .label(labels.cancel)
                 .style(ButtonStyle::Secondary),
-        ])];
+        ]);
+        return vec![CreateActionRow::Buttons(buttons)];
     }
     if method == "mcpServer/elicitation/request"
         && let Some(persist_options) = mcp_tool_approval_persist_options(params)
@@ -8188,6 +8201,39 @@ mod display_tests {
     }
 
     #[test]
+    fn connector_setup_link_keeps_native_access_check_action_available() {
+        let params = json!({
+            "mode": "form",
+            "message": "Connect the calendar app.",
+            "requestedSchema": {"type": "object", "properties": {}},
+            "_meta": {
+                "codex_approval_kind": "tool_suggestion",
+                "tool_id": "calendar",
+                "tool_type": "connector",
+                "tool_name": "Calendar",
+                "install_url": "https://example.invalid/setup",
+                "app_connector_ids": ["calendar"]
+            }
+        });
+        let rows = serde_json::to_value(approval_actions_with_language(
+            "mcpServer/elicitation/request",
+            "request",
+            &params,
+            crate::i18n::Language::Korean,
+        ))
+        .unwrap();
+        let buttons = rows[0]["components"].as_array().unwrap();
+        assert_eq!(buttons.len(), 5);
+        assert!(buttons[0]["url"].as_str().unwrap().ends_with("/setup"));
+        assert_eq!(
+            buttons[1]["custom_id"],
+            "codex:approval:request:plugin-check"
+        );
+        assert_eq!(buttons[1]["label"], "설정 완료 / 접근 확인");
+        assert_eq!(buttons[1]["style"], 1);
+    }
+
+    #[test]
     fn ordinary_forms_and_non_form_elicitations_are_not_reclassified_as_tool_approval() {
         let ordinary_form = json!({
             "mode":"form", "message":"문자열 답변을 입력하세요.",
@@ -9359,7 +9405,8 @@ mod display_tests {
                 "interrupt",
                 "new",
                 "voice-leave",
-                "voice-join"
+                "voice-join",
+                "plugins"
             ]
         );
     }
