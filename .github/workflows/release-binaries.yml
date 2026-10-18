@@ -17,6 +17,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       LIBOPUS_BUNDLED: '1'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      RUSTUP_TOOLCHAIN: '1.95.0'
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +47,10 @@ jobs:
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
+      - name: Enable Git long paths on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: git config --global core.longpaths true
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
