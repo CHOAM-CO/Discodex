@@ -1203,15 +1203,30 @@ mod tests {
         let controller = Arc::new(
             UpdateController::new(dir.path().to_owned(), dir.path().join("config.json")).unwrap(),
         );
-        controller.activity.lock().unwrap().last = Instant::now() - IDLE_DELAY;
+        let sentinel = Instant::now() + IDLE_DELAY;
+        controller.activity.lock().unwrap().last = sentinel;
+
         let ignored = controller.admission();
-        assert!(!controller.idle());
+        assert_eq!(controller.activity.lock().unwrap().active, 1);
         drop(ignored);
-        assert!(controller.idle());
+        let after_ignored = controller.activity.lock().unwrap();
+        assert_eq!(after_ignored.active, 0);
+        assert_eq!(after_ignored.last, sentinel);
+        drop(after_ignored);
+
+        let before_accept = Instant::now();
         let mut accepted = controller.admission();
+        assert_eq!(controller.activity.lock().unwrap().active, 1);
         accepted.mark_activity();
+        let marked_at = controller.activity.lock().unwrap().last;
+        let after_accept = Instant::now();
+        assert!(marked_at >= before_accept && marked_at <= after_accept);
         drop(accepted);
-        assert!(!controller.idle());
+        let after_drop_at = Instant::now();
+        let after_drop = controller.activity.lock().unwrap();
+        assert_eq!(after_drop.active, 0);
+        assert!(after_drop.last >= before_accept && after_drop.last <= after_drop_at);
+        assert_ne!(after_drop.last, sentinel);
     }
 
     #[tokio::test]
