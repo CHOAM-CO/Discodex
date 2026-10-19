@@ -15,7 +15,8 @@ use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{WebSocketStream, client_async};
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+use tokio_tungstenite::{WebSocketStream, client_async_with_config};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -1910,9 +1911,15 @@ fn voice_rpc_error(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
+fn bridge_websocket_config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_message_size(None)
+        .max_frame_size(None)
+}
+
 async fn websocket(stream: UnixStream) -> Result<Socket> {
     let request = "ws://localhost".into_client_request()?;
-    let (socket, _) = client_async(request, stream)
+    let (socket, _) = client_async_with_config(request, stream, Some(bridge_websocket_config()))
         .await
         .context("complete Codex app-server WebSocket handshake")?;
     Ok(socket)
@@ -2025,7 +2032,17 @@ fn spawn_reader(
 ) {
     tokio::spawn(async move {
         while let Some(frame) = reader.next().await {
-            let Ok(frame) = frame else { break };
+            let frame = match frame {
+                Ok(frame) => frame,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        connection_generation = generation,
+                        "Codex app-server WebSocket reader stopped after an error"
+                    );
+                    break;
+                }
+            };
             let text = match frame {
                 Message::Text(text) => text,
                 Message::Close(_) => break,
@@ -2434,6 +2451,55 @@ mod thread_state_tests {
         }))
         .expect("deserialize legacy config without native defaults");
         assert_eq!(configured_thread_settings_update(&unset, "thread-1"), None);
+    }
+
+    async fn receive_test_frame(
+        config: WebSocketConfig,
+        payload: Vec<u8>,
+    ) -> Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> {
+        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+        let sender = tokio::spawn(async move {
+            let mut server = tokio_tungstenite::accept_async(server_stream).await?;
+            server.send(Message::Binary(payload.into())).await?;
+            Ok::<(), tokio_tungstenite::tungstenite::Error>(())
+        });
+        let request = "ws://localhost".into_client_request().unwrap();
+        let (mut client, _) =
+            tokio_tungstenite::client_async_with_config(request, client_stream, Some(config))
+                .await
+                .unwrap();
+        let frame = client.next().await;
+        drop(client);
+        let _ = sender.await.expect("test server task should not panic");
+        frame
+    }
+
+    #[tokio::test]
+    async fn bridge_websocket_receives_a_single_frame_over_default_limits() {
+        let payload = vec![0x5a; 17 * 1024 * 1024];
+        let default_frame = receive_test_frame(WebSocketConfig::default(), payload.clone()).await;
+        assert!(matches!(default_frame, Some(Err(_))));
+
+        let config = bridge_websocket_config();
+        assert_eq!(config.max_frame_size, None);
+        assert_eq!(config.max_message_size, None);
+        let defaults = WebSocketConfig::default();
+        assert_eq!(config.read_buffer_size, defaults.read_buffer_size);
+        assert_eq!(config.write_buffer_size, defaults.write_buffer_size);
+        assert_eq!(config.max_write_buffer_size, defaults.max_write_buffer_size);
+        assert_eq!(
+            config.accept_unmasked_frames,
+            defaults.accept_unmasked_frames
+        );
+
+        let received = receive_test_frame(config, payload.clone())
+            .await
+            .expect("server should send a frame")
+            .expect("configured client should accept the large frame");
+        match received {
+            Message::Binary(bytes) => assert_eq!(bytes.as_ref(), payload.as_slice()),
+            other => panic!("expected the binary frame, received {other:?}"),
+        }
     }
 
     #[test]
