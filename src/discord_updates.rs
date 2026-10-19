@@ -280,6 +280,7 @@ enum ManualUpdateAction {
     Retry(updates::PinnedRelease),
     Queue(u64),
     NoUpdate,
+    NoPublishedRelease,
     MissingVerifiedAsset,
 }
 
@@ -302,7 +303,11 @@ fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
         UpdateStatus::Idle | UpdateStatus::Applied => {}
     }
     let Some(latest) = snapshot.latest_release.as_ref() else {
-        return ManualUpdateAction::NoUpdate;
+        return if snapshot.no_published_release {
+            ManualUpdateAction::NoPublishedRelease
+        } else {
+            ManualUpdateAction::NoUpdate
+        };
     };
     if snapshot.last_applied_release_id == Some(latest.release_id)
         || latest.commit == updates::current_build_commit()
@@ -376,14 +381,26 @@ fn manual_update_response(
                 target.version
             )
         }
-        ManualUpdateAction::NoUpdate => language
-            .text(
-                "No newer stable release is available.",
-                "사용 가능한 최신 안정 버전이 없습니다.",
-                "没有可用的更新稳定版本。",
-                "利用可能な新しい安定版はありません。",
-            )
-            .to_owned(),
+        ManualUpdateAction::NoUpdate => format!(
+            "{} (v{})",
+            language.text(
+                "Already up to date.",
+                "이미 최신 버전입니다.",
+                "已是最新版本。",
+                "すでに最新バージョンです。",
+            ),
+            updates::current_build_version()
+        ),
+        ManualUpdateAction::NoPublishedRelease => format!(
+            "{}{}).",
+            language.text(
+                "No stable release has been published yet. (current version: v",
+                "아직 공개된 안정 버전이 없습니다. (현재 버전: v",
+                "尚未发布稳定版本。（当前版本：v",
+                "安定版はまだ公開されていません。（現在のバージョン: v",
+            ),
+            updates::current_build_version()
+        ),
         ManualUpdateAction::MissingVerifiedAsset => language
             .text(
                 "The latest release does not have a verified prebuilt executable for this platform, so no update was queued.",
@@ -1060,6 +1077,24 @@ mod tests {
         assert_eq!(
             manual_update_action(&failed),
             ManualUpdateAction::Retry(pinned_release(7))
+        );
+    }
+
+    #[test]
+    fn no_published_release_state_selects_distinct_manual_response_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(updates::CheckResult::NoPublishedRelease {
+                checked_at_unix: 100,
+                etag: None,
+            })
+            .unwrap();
+        let reloaded = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert!(reloaded.no_published_release);
+        assert_eq!(
+            manual_update_action(&reloaded),
+            ManualUpdateAction::NoPublishedRelease
         );
     }
 

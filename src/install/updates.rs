@@ -73,6 +73,7 @@ pub struct UpdateSnapshot {
     pub last_check_error: Option<String>,
     pub etag: Option<String>,
     pub latest_release: Option<ReleaseNotice>,
+    pub no_published_release: bool,
     pub notified_release_id: Option<u64>,
     pub message_id: Option<u64>,
     pub notice_started_unix: Option<u64>,
@@ -215,17 +216,23 @@ impl UpdateStore {
                 self.snapshot.last_checked_unix = Some(checked_at_unix);
                 self.snapshot.etag = etag;
                 self.snapshot.latest_release = release;
+                self.snapshot.no_published_release = false;
             }
             CheckResult::NotModified {
-                checked_at_unix,
-                etag,
-            }
-            | CheckResult::NoPublishedRelease {
                 checked_at_unix,
                 etag,
             } => {
                 self.snapshot.last_checked_unix = Some(checked_at_unix);
                 self.snapshot.etag = etag;
+            }
+            CheckResult::NoPublishedRelease {
+                checked_at_unix,
+                etag,
+            } => {
+                self.snapshot.last_checked_unix = Some(checked_at_unix);
+                self.snapshot.etag = etag;
+                self.snapshot.latest_release = None;
+                self.snapshot.no_published_release = true;
             }
         }
         self.persist()
@@ -592,6 +599,7 @@ fn merge_snapshot(
         last_check_error: field!(last_check_error),
         etag: field!(etag),
         latest_release: field!(latest_release),
+        no_published_release: field!(no_published_release),
         notified_release_id: field!(notified_release_id),
         message_id: field!(message_id),
         notice_started_unix: field!(notice_started_unix),
@@ -1237,6 +1245,66 @@ mod tests {
         assert_eq!(loaded.notice_started_unix, Some(110));
         assert!(loaded.muted);
         assert_eq!(loaded.latest_release.unwrap().release_id, 5);
+    }
+
+    #[test]
+    fn no_published_release_persists_and_preserves_pending_update() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: Some("release-tag".into()),
+                release: Some(notice(5)),
+            })
+            .unwrap();
+        store.select_update(5).unwrap();
+        store
+            .apply_check(CheckResult::NoPublishedRelease {
+                checked_at_unix: 200,
+                etag: None,
+            })
+            .unwrap();
+
+        let reloaded = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert!(reloaded.no_published_release);
+        assert!(reloaded.latest_release.is_none());
+        assert_eq!(
+            reloaded.pending.as_ref().map(|target| target.release_id),
+            Some(5)
+        );
+        assert_eq!(reloaded.status, UpdateStatus::Selected);
+        assert_eq!(reloaded.last_checked_unix, Some(200));
+    }
+
+    #[test]
+    fn modified_release_clears_no_published_marker_while_not_modified_preserves_it() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(CheckResult::NoPublishedRelease {
+                checked_at_unix: 100,
+                etag: Some("empty-release-tag".into()),
+            })
+            .unwrap();
+        store
+            .apply_check(CheckResult::NotModified {
+                checked_at_unix: 150,
+                etag: Some("empty-release-tag".into()),
+            })
+            .unwrap();
+        assert!(store.snapshot().no_published_release);
+
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 200,
+                etag: Some("release-tag".into()),
+                release: Some(notice(6)),
+            })
+            .unwrap();
+        let reloaded = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert!(!reloaded.no_published_release);
+        assert_eq!(reloaded.latest_release.unwrap().release_id, 6);
     }
 
     #[test]
