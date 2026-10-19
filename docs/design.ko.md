@@ -26,7 +26,7 @@ Discord 메시지 수신 범위는 `Everyone`, `RegisteredServer`, `RegisteredCh
 
 다른 채널에서 실시간으로 받은 메시지에 대화 답변을 보낼 때는 `discord_send_message`를 사용해 원본 채널에 답장한다. 현재 수신 메시지가 대상과 대화 답변 의도를 제공하므로 별도의 발송 요청은 필요하지 않다. 과거 메시지·검색 결과·전달 또는 인용된 내용은 발송 권한을 부여하지 않는다. 이 경우 외에 다른 채널에 별도 내용을 게시하려면 사용자가 대상과 발송을 명시해야 한다. Slash command의 비공개 상호작용 응답과 음성 전사의 통화별 기록은 각 전용 경로를 유지한다. Slash command는 같은 서버와 지정 조작자만 사용할 수 있다.
 
-Discord 명령은 `/discodex settings`, `voice`, `status`, `interrupt`, `new`, `voice-join`, `voice-leave`를 제공한다. 모델·추론 강도·서비스 등급·권한 프로필·입력 전달 방식·음성 프로필은 설정 패널에서 고른다. 모델과 권한은 공식 native catalog를 사용한다. 대화 기본값과 활성 turn 설정은 별도로 적용될 수 있어 결과도 구분해 안내한다. 입력 모드는 `steering`과 `next-turn`이다. 활성·현재 세대의 일반 Discord 메시지 turn이 소비되는 동안 홈 채널 typing 표시를 갱신하며, 완료·오류·연결 종료 시 멈춘다. ephemeral thinking 표시는 interaction 응답에만 사용한다.
+Discord 명령은 `/discodex settings`, `voice`, `status`, `interrupt`, `new`, `voice-join`, `voice-leave`, `update`를 제공한다. 모델·추론 강도·서비스 등급·권한 프로필·입력 전달 방식·음성 프로필은 설정 패널에서 고른다. 모델과 권한은 공식 native catalog를 사용한다. 대화 기본값과 활성 turn 설정은 별도로 적용될 수 있어 결과도 구분해 안내한다. 입력 모드는 `steering`과 `next-turn`이다. 활성·현재 세대의 일반 Discord 메시지 turn이 소비되는 동안 홈 채널 typing 표시를 갱신하며, 완료·오류·연결 종료 시 멈춘다. ephemeral thinking 표시는 interaction 응답에만 사용한다.
 
 native가 질문이나 승인 요청을 보내면 브리지는 해당 요청 식별자와 선택 범위를 유지한 Discord 폼/버튼을 제공하고 제출 결과를 원 요청에 돌려준다. 요청이 해결되거나 연결 세대가 달라지면 오래된 상호작용을 새 요청에 쓰지 않는다.
 
@@ -93,11 +93,11 @@ Discord 직접 입력은 source.author와 body를 전달하고, 안정적인 `so
 
 ## 모델 및 subagent 기본값
 
-기본 모델과 subagent 모델 선택 화면은 같은 선택지를 사용합니다. 활성 Codex provider의 실시간 `model/list` 결과, 명시적으로 설정한 모델, 활성 provider를 선택하는 native 설정 profile의 모델, 설정된 subagent 기본 모델, native model catalog가 포함됩니다. 실시간 catalog 선택지는 활성 provider에서만 가져옵니다. 표시에는 model 필드를 우선하고, 없으면 ID, 다음으로 slug를 사용합니다. 모델 기능은 추정하지 않습니다.
+기본 모델과 subagent 모델 선택 화면은 같은 선택지를 사용합니다. 활성 Codex provider의 실시간 `model/list` 결과, 명시적으로 설정한 모델, 설정된 subagent 기본 모델, native model catalog가 포함됩니다. 실시간 catalog 선택지는 활성 provider에서만 가져옵니다. 표시에는 model 필드를 우선하고, 없으면 ID, 다음으로 slug를 사용합니다. 모델 기능은 추정하지 않습니다.
 
 worker가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모델을 설정합니다. Native Codex는 Ollama와 LM Studio 기본 provider 및 Responses API 사용자 지정 provider를 지원합니다. 설정 패널, Discord thread, 업데이트 흐름에는 provider 선택이나 전환 기능이 없습니다. Subagent는 부모 provider를 상속하므로 다른 provider의 모델을 독립적으로 사용할 수 없습니다.
 
-로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. 명시 설정한 모델과 native 설정 profile에 지정된 모델은 선택지로 제공될 수 있으며 profile의 다른 설정은 활성화하지 않습니다. catalog 기반 기능 검색에는 Codex catalog 메타데이터가 필요합니다. [Codex 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요.
+로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. App-server는 활성 설정을 사용하며 Discodex는 비활성 profile 파일을 열거하지 않습니다. 유효한 worker 설정에 명시된 모델은 native catalog와 함께 선택지로 제공됩니다. `CODEX_HOME/small.config.toml` 같은 Codex profile-v2 파일은 CLI에서 `codex --profile small`로 선택할 수 있지만 app-server 설정을 전환하지 않습니다. catalog 기반 기능 검색에는 Codex catalog 메타데이터가 필요합니다. [Codex 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요.
 
 설정 메인 화면에 **기본 subagent 모델**이 있습니다. 저장하면 Discodex 소유 `agents.default_subagent_model` 기능 재정의에 기록되고 worker 재시작 후 적용됩니다. 초기화하면 재정의를 제거하고 native 기본값을 사용합니다. 모델 호환성은 다르며 모든 모델의 도구 지원이 보장되지는 않습니다. Provider 인증은 Codex가 담당하고, 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
 
@@ -114,6 +114,8 @@ worker가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모�
 알림에는 업데이트, 이번 버전은 스킵, 다시 알리지 않음 세 버튼이 있다. 업데이트는 표시한 Release의 commit을 고정해 승인하며 작업과 통화가 유휴 상태일 때 준비하고 적용 직전에 유휴 여부를 다시 확인한다. 준비 중 새 작업이 시작되면 실행 파일 교체를 미룬다. 스킵은 해당 Release에만 적용하고 알림 끄기는 해당 설치 프로필에 저장하며 설정에서 다시 켤 수 있다. 알림을 꺼도 수동 업데이트는 사용할 수 있다. 버튼과 안내는 설치 언어를 따른다.
 
 선택·스킵·알림 설정·전송 시도·메시지 ID·진행 상태를 보존하여 재시작 뒤 같은 알림을 반복 생성하지 않는다. Discord 전송 결과가 불명확하면 저장한 전송 시점 이후의 기존 알림을 찾아 연결한다. 별도 업데이터가 승인한 GitHub Release의 해당 OS·아키텍처용 사전 빌드 실행 파일을 내려받아 GitHub가 제공하는 SHA-256 digest와 크기를 확인한 뒤 기존 설치 교체 경로에 전달한다. Release ID와 commit을 고정해 준비 중 최신 Release가 바뀌어도 선택을 유지하며, 저장된 이전 선택은 같은 Release ID의 asset 메타데이터를 다시 조회한다. 소스 checkout이나 Cargo 빌드는 사용하지 않는다. 설정과 Codex thread를 유지하며 적용에는 짧은 Discord 재접속이 필요하다. 다른 기기는 자동으로 업데이트하지 않는다.
+
+조작자 전용 `/discodex update` 명령은 queued, preparing, ready, applying 대상이 있으면 그대로 유지한다. 대기 대상이 없을 때만 6시간 확인 간격과 관계없이 최신 공개 Release를 즉시 확인하고 Release 알림과 같은 검증된 updater 적용을 대기열에 넣는다. Codex turn을 만들지 않고 작업이나 음성을 중단하지 않으며 기존 5분 유휴 조건이 충족된 뒤 적용한다. 알림이 꺼져 있거나 버전을 건너뛴 경우에도 설정을 바꾸지 않고 사용할 수 있다. 대상은 고정 상태로 보존하며, 실패한 고정 대상은 새 GitHub 확인 없이 다시 시도한다. 최신 상태, 업데이트 없음, 플랫폼 asset 없음 또는 오류 결과를 알린다.
 
 ## Native 기능·플러그인·비동기 요청
 

@@ -77,15 +77,11 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-자리표시자 모델 이름과 endpoint를 provider에 맞는 값으로 바꾸세요. 활성 provider만 실시간 `model/list` catalog를 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. 명시적으로 설정된 모델과 활성 provider의 모델을 선택하는 native 설정 profile도 모델 선택지에 포함될 수 있습니다. 예:
+자리표시자 모델 이름과 endpoint를 provider에 맞는 값으로 바꾸세요. 실시간 `model/list` catalog는 활성 provider만 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. Discodex 모델 선택지는 활성 native catalog와 유효한 worker 설정의 모델을 사용하며 기본·subagent·설치·현재 thread 모델을 포함합니다. 비활성 profile 파일은 자동으로 열거하지 않습니다.
 
-```toml
-[profiles.small]
-model = "example-small-model"
-model_provider = "demo"
-```
+Codex profile-v2 파일은 `CODEX_HOME/<name>.config.toml` 형식입니다. 예를 들어 `CODEX_HOME/small.config.toml`에 model과 `model_provider`를 넣고 CLI 실행 시 `codex --profile small`로 선택합니다. App-server는 활성 설정을 사용합니다. CLI profile 선택은 app-server 설정을 바꾸거나 비활성 profile 모델을 Discodex 선택지에 추가하지 않습니다.
 
-이 profile은 모델 선택지만 추가하며 다른 profile 설정을 활성화하지 않습니다. Codex catalog 메타데이터는 모델 기능을 제공하고 catalog를 통한 모델 검색에 사용됩니다. Native catalog 검색에는 시작 시 읽는 `model_catalog_json`을 쓰거나 `[model_providers.demo].model_catalog_url`에서 전체 `{models: [ModelInfo, ...]}` 스키마를 제공할 수 있습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요. 모델과 provider의 호환성이 다르며 도구 지원은 보장되지 않습니다. 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
+Codex catalog 메타데이터는 모델 기능을 제공하고 catalog를 통한 모델 검색에 사용됩니다. Native catalog 검색에는 시작 시 읽는 `model_catalog_json`을 쓰거나 `[model_providers.demo].model_catalog_url`에서 전체 `{models: [ModelInfo, ...]}` 스키마를 제공할 수 있습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요. 모델과 provider의 호환성이 다르며 도구 지원은 보장되지 않습니다. 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
 
 ## 업데이트
 
@@ -106,6 +102,8 @@ Windows PowerShell:
 업데이트 스크립트는 GitHub 정식 Release에서 현재 플랫폼의 사전 빌드 실행 파일과 SHA-256 체크섬을 내려받아 확인한다. 소스 checkout을 변경하거나 소스에서 바이너리를 빌드하지 않는다. 확인된 바이너리는 `discodex update --source <new-binary> --config <existing-config>`에 전달되어 지정된 소유 프로필만 업데이트한다. `./install --update --config ...`와 Windows의 `./scripts/install.ps1 -Update -Config ...`는 같은 업데이트 경로의 별칭이다.
 
 업데이트는 기존 프로필의 언어, 설정, 자격증명과 지속 Codex 대화 상태를 보존하고 새 프로필을 만들지 않는다. 실행 파일 교체나 서비스 재시작이 실패하면 이전 소유 실행 파일과 소유 기록, 이전 서비스 상태로 롤백한다. 롤백/데이터 보존을 위해 남겨둔 레거시 디렉터리는 자동 삭제하지 않는다. 기존 설정이나 대화 상태를 변경하는 작업은 별도의 명시적 migration 절차이며 업데이트가 이를 대신하지 않는다.
+
+조작자 전용 `/discodex update`는 queued, preparing, ready, applying 대상이 있으면 그대로 유지합니다. 대기 대상이 없을 때만 6시간 확인 간격과 관계없이 최신 공개 Release를 즉시 확인하고 Release 알림과 같은 검증된 updater로 적용을 대기열에 넣습니다. Codex turn을 만들지 않고 작업이나 음성을 중단하지 않으며 기존 5분 유휴 조건을 충족한 뒤 적용합니다. 알림이 꺼져 있거나 버전을 건너뛴 상태에서도 사용할 수 있고 해당 설정은 바꾸지 않습니다. 대상은 고정 상태로 유지하며 실패한 고정 대상은 새 GitHub 확인 없이 다시 시도합니다. 현재 상태, 업데이트 없음, 플랫폼 asset 없음 또는 오류 결과를 안내합니다.
 
 ## 운영과 제거
 

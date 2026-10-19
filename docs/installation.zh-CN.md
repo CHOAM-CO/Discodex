@@ -79,15 +79,11 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-请将占位符模型名称和 endpoint 替换为 provider 支持的值。只有当前 active provider 提供实时 `model/list` catalog。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。显式配置的模型，以及选择当前 active provider 模型的 native 配置 profile，也可以出现在模型选项中。例如：
+请将占位符模型名称和 endpoint 替换为 provider 支持的值。实时 `model/list` catalog 只由当前 active provider 提供。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。Discodex 模型选项使用 active native catalog 和 worker 有效配置中的模型，包括默认、subagent、安装及当前 thread 模型。未激活的 profile 文件不会自动枚举。
 
-```toml
-[profiles.small]
-model = "example-small-model"
-model_provider = "demo"
-```
+Codex profile-v2 文件格式为 `CODEX_HOME/<name>.config.toml`。例如，在 `CODEX_HOME/small.config.toml` 中设置 model 和 `model_provider`，然后在 CLI 调用时使用 `codex --profile small` 选择它。App-server 使用当前 active 配置；选择 CLI profile 不会切换 app-server 配置，也不会让未激活 profile 中的模型出现在 Discodex 选项中。
 
-此 profile 仅提供模型选择，不会启用该 profile 的其他设置。Codex catalog 元数据用于提供模型能力信息和通过 catalog 发现模型。 Native catalog 发现可使用启动时读取的 `model_catalog_json`，或由 `[model_providers.demo].model_catalog_url` 提供完整的 `{models: [ModelInfo, ...]}` schema。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。兼容性取决于模型和 provider，不保证工具支持。语音功能可能需要 native 语音 capability。
+Codex catalog 元数据用于提供模型能力信息和通过 catalog 发现模型。 Native catalog 发现可使用启动时读取的 `model_catalog_json`，或由 `[model_providers.demo].model_catalog_url` 提供完整的 `{models: [ModelInfo, ...]}` schema。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。兼容性取决于模型和 provider，不保证工具支持。语音功能可能需要 native 语音 capability。
 
 ## 更新
 
@@ -108,6 +104,8 @@ Windows PowerShell：
 更新脚本会从 GitHub 正式 Release 下载当前平台的预编译程序和 SHA-256 校验值。不修改源码 checkout，也不从源码构建。校验通过的程序会交给 `discodex update --source <new-binary> --config <existing-config>`，只更新指定且归产品所有的配置。`./install --update --config ...` 和 Windows 的 `./scripts/install.ps1 -Update -Config ...` 是同一更新流程的别名。
 
 更新保留现有配置的语言、设置、凭据和持久 Codex 对话状态，不会创建新配置。如果替换程序或重启服务失败，会恢复此前归产品所有的二进制、所有权记录和服务状态。为回滚或数据保留而留下的旧目录不会自动删除。需要更改现有配置或对话状态时，应使用单独且明确的迁移流程；更新本身不会执行这些更改。
+
+仅操作者可用的 `/discodex update` 若已有 queued、preparing、ready 或 applying 目标，则继续处理该目标。只有没有待处理目标时，才立即检查最新正式 Release（不受 6 小时检查间隔限制），并排队使用 Release 通知相同的已验证 updater。它不会创建 Codex turn，也不会中断工作或语音；仅在满足现有 5 分钟空闲条件后应用。即使通知已静音或版本已跳过，命令仍可使用且不会更改这些偏好。目标会继续固定；固定目标失败后无需重新查询 GitHub 即会重试。响应会说明配置已是最新、没有可用更新、缺少平台程序或发生错误。
 
 ## 服务与卸载
 

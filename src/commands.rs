@@ -234,6 +234,16 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
     command = command
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
+            "update",
+            language.text(
+                "Check for and queue the latest Discodex update",
+                "최신 Discodex 업데이트를 확인하고 대기열에 추가합니다",
+                "检查并加入最新 Discodex 更新",
+                "最新の Discodex 更新を確認して予約します",
+            ),
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
             "settings",
             language.text(
                 "Choose conversation settings with buttons",
@@ -568,6 +578,9 @@ async fn handle_authorized(
     let arg_string = || arg.and_then(option_string).map(str::to_owned);
     let mut output = String::new();
     match sub {
+        "update" => {
+            output = crate::discord_updates::manual_update(&state).await?;
+        }
         "status" => {
             let thread = state.native.refresh_thread_state().await;
             match thread {
@@ -9527,6 +9540,7 @@ mod display_tests {
         assert_eq!(
             names,
             vec![
+                "update",
                 "settings",
                 "voice",
                 "status",

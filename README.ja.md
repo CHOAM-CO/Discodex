@@ -42,7 +42,7 @@ Windows PowerShellでは`./scripts/install.ps1`を実行します。インスト
 
 ## カスタムモデルとローカルモデル
 
-メインとsubagentの選択画面ではアクティブproviderのモデル候補を共有し、明示設定したモデルも含みます。**既定subagentモデル**はDiscodex所有の上書きとして保存され、worker再起動後に有効になります。設定例と検出方法は[カスタムおよびローカルCodex provider](docs/installation.ja.md#カスタムおよびローカルcodex-provider)を参照してください。
+メインとsubagentの選択画面ではアクティブproviderのcatalogとworkerの有効設定にあるモデルを使います。既定、subagent、インストール時、現在のthreadのモデルが含まれます。**既定subagentモデル**はDiscodex所有の上書きとして保存され、worker再起動後に有効になります。設定例と検出方法は[カスタムおよびローカルCodex provider](docs/installation.ja.md#カスタムおよびローカルcodex-provider)を参照してください。
 
 ## 更新
 
@@ -60,6 +60,8 @@ Windows PowerShell:
 
 更新スクリプトは対象プラットフォーム用の公式Releaseバイナリを取得・検証し、指定したプロファイルに適用します。DiscordのRelease確認は保存した`last_checked_unix`に基づきます。初回だけ即時に確認し、その後は確認期限が来たときに行います。通常の次回確認は6時間後、失敗後は15分後です。起動時にも期限を確認しますが、毎回強制的に確認することはありません。期限確認ループは15秒間隔で動きます。新しいReleaseの通知タイミングはRelease確認とは独立しており、Codex接続中にturn、音声接続・終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく5分間アイドルならホームチャンネルへ通知します。Releaseが見つかった時点ですでに条件を満たしていれば、さらに5分待ちません。Discordの更新通知も同じビルド済みバイナリを使います。保存済み言語、設定、認証情報、永続Codex会話状態を保ちます。置換に失敗した場合は以前のバイナリとサービス状態に戻します。`./install --update --config ...`と`./scripts/install.ps1 -Update -Config ...`も同じ更新経路を使います。v0.1.3より前のプロファイルでは、インストーラーバンドルから一度手動更新してself-updaterを導入してください。この更新は既存セッションと設定を保持し、その後はDiscordの通知から更新できます。
 
+`/discodex update`はqueued、preparing、ready、applyingの対象があればそのまま保持します。対象がない場合に限り、6時間の確認間隔を待たずに最新Releaseを確認し、通知ボタンと同じ検証済みupdaterによる適用をキューに入れます。Codex turnを作らず、作業や音声を中断せず、通常の5分間のidle条件を待ちます。通知がミュート中、またはそのバージョンをスキップ済みでも実行でき、設定は変更しません。対象は固定したまま保持し、失敗した固定対象は新たなGitHub確認なしで再試行します。最新状態、更新なし、プラットフォーム用assetなし、エラーを結果として伝えます。
+
 ## Discordコマンド
 
 設定パネルは現在値を表示し、モデル、推論強度、サービス階層、権限プロファイル、入力の送信方法、音声を選べます。音声の変更は次の通話から反映されます。
@@ -70,6 +72,7 @@ Windows PowerShell:
 - `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加する
 - `/discodex voice-leave`：通話を終了する
 - `/discodex interrupt`：現在の応答の停止を依頼する
+- `/discodex update`：更新を確認して適用する
 - `/discodex new`：新しい会話を開始する
 
 音声通話を終了しても永続会話は残ります。ドキュメント：[日本語インストールガイド](docs/installation.ja.md) · [日本語の製品設計](docs/design.ja.md)

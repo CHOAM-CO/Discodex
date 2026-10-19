@@ -79,15 +79,11 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-Replace placeholder model names and the endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Explicitly configured models and native configuration profiles that select a model for the active provider can also appear as choices. For example:
+Replace placeholder model names and the endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Discodex model choices use the active native catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. Inactive profile files are not automatically enumerated.
 
-```toml
-[profiles.small]
-model = "example-small-model"
-model_provider = "demo"
-```
+Codex profile-v2 files use `CODEX_HOME/<name>.config.toml`. For example, put `model` and `model_provider` in `CODEX_HOME/small.config.toml`, then select it for a CLI invocation with `codex --profile small`. The app-server uses its active configuration; selecting a CLI profile does not switch that configuration or make inactive profile models appear in Discodex.
 
-This profile contributes its model choice; it does not activate the profile's other settings. Codex catalog metadata advertises model capabilities and supports model discovery through the catalog. For native catalog discovery, `model_catalog_json` is read at worker startup, or `[model_providers.demo].model_catalog_url` can serve the full `{models: [ModelInfo, ...]}` schema. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/), the [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), and [bundled model catalog examples](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Compatibility depends on the model and provider; tool support is not guaranteed. Native voice capability may be required for voice features.
+Codex catalog metadata advertises model capabilities and supports model discovery through the catalog. For native catalog discovery, `model_catalog_json` is read at worker startup, or `[model_providers.demo].model_catalog_url` can serve the full `{models: [ModelInfo, ...]}` schema. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/), the [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), and [bundled model catalog examples](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Compatibility depends on the model and provider; tool support is not guaranteed. Native voice capability may be required for voice features.
 
 ## Updating
 
@@ -110,6 +106,8 @@ The updater downloads and verifies the current platform's prebuilt executable fr
 Updates preserve the profile language, configuration, credentials, and persistent Codex conversation state. If executable replacement or service restart fails, the updater restores the previous owned executable, ownership record, and service state. It does not remove legacy directories kept for rollback. Changes to existing settings or conversation state require a separate explicit migration; updating does not perform that migration.
 
 The in-app release checker follows published GitHub Releases and its persisted schedule. See [Release update behavior](design.md#release-updates).
+
+The operator-only `/discodex update` command preserves any queued, preparing, ready, or applying target. Only when no target is pending does it force an immediate latest-release check, bypassing the six-hour interval, and queue installation through the same verified updater used by the release notice. It creates no Codex turn, does not interrupt work or voice, and applies only after the existing five-minute idle condition. It remains available when notices are muted or a version is skipped and leaves both preferences unchanged. Targets stay pinned; a failed pinned target is retried without a fresh GitHub check. The response reports whether the profile is current, no update is available, the platform asset is missing, or an error occurred.
 
 ## Running and removing
 

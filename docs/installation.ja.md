@@ -79,15 +79,11 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-プレースホルダーのモデル名とendpointをproviderに合う値に置き換えてください。ライブの `model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の `/v1/models` 応答はCodexのモデルmetadataに自動変換されません。明示設定したモデルと、アクティブproviderのモデルを選ぶnative設定profileも候補に含まれる場合があります。例:
+プレースホルダーのモデル名とendpointをproviderがサポートする値に置き換えてください。ライブの`model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。Discodexの候補はアクティブなnative catalogと有効なworker設定のモデルを使い、既定、subagent、インストール時、現在のthreadのモデルを含みます。非アクティブなprofileファイルは自動列挙されません。
 
-```toml
-[profiles.small]
-model = "example-small-model"
-model_provider = "demo"
-```
+Codex profile-v2ファイルは`CODEX_HOME/<name>.config.toml`形式です。たとえば`CODEX_HOME/small.config.toml`にmodelと`model_provider`を設定し、CLI実行時に`codex --profile small`で選びます。app-serverはアクティブな設定を使用します。CLI profileを選んでもapp-server設定は切り替わらず、非アクティブprofileのモデルがDiscodex候補に追加されることもありません。
 
-このprofileはモデル候補を提供するだけで、profileの他の設定は有効にしません。Codex catalog metadataはモデルの機能情報とcatalog経由のモデル検出に使われます。 native catalogによる検出には起動時に読み込む `model_catalog_json` を使うか、`[model_providers.demo].model_catalog_url` から完全な `{models: [ModelInfo, ...]}` スキーマを提供できます。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。互換性はモデルとproviderによって異なり、ツール対応は保証されません。音声機能にはnative音声capabilityが必要な場合があります。
+Codex catalog metadataはモデルの機能情報とcatalog経由のモデル検出に使われます。 native catalogによる検出には起動時に読み込む `model_catalog_json` を使うか、`[model_providers.demo].model_catalog_url` から完全な `{models: [ModelInfo, ...]}` スキーマを提供できます。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。互換性はモデルとproviderによって異なり、ツール対応は保証されません。音声機能にはnative音声capabilityが必要な場合があります。
 
 ## 更新
 
@@ -108,6 +104,8 @@ Windows PowerShell:
 更新スクリプトはGitHub公式Releaseから現在のプラットフォーム用のビルド済み実行ファイルとSHA-256チェックサムを取得して検証します。ソースcheckoutを変更したり、ソースからバイナリをビルドしたりしません。検証済みバイナリを`discodex update --source <new-binary> --config <existing-config>`に渡し、指定された所有プロファイルだけを更新します。`./install --update --config ...`とWindowsの`./scripts/install.ps1 -Update -Config ...`は同じ更新経路の別名です。
 
 更新では既存プロファイルの言語、設定、認証情報、永続Codex会話状態を保ち、新しいプロファイルは作りません。バイナリ置換またはサービス再起動が失敗した場合は、以前の所有バイナリ、所有記録、サービス状態へロールバックします。ロールバックやデータ保全のため残された旧ディレクトリは自動削除しません。既存設定や会話状態を変更する作業は明示的なmigration手順で行い、更新では代用できません。
+
+操作者専用の `/discodex update` はqueued、preparing、ready、applyingの対象があればそのまま保持します。対象がない場合に限り、6時間の確認間隔を待たずに最新の公開Releaseを確認し、Release通知と同じ検証済みupdaterによる適用をキューに入れます。Codex turnを作らず、作業や音声を中断せず、既存の5分間のidle条件を満たしてから適用します。通知がミュート中、またはバージョンをスキップ済みでも実行でき、設定は変更しません。対象は固定したまま保持し、固定対象に失敗があれば新たなGitHub確認なしで再試行します。最新状態、更新なし、プラットフォーム用assetなし、エラーを結果として伝えます。
 
 ## 運用と削除
 

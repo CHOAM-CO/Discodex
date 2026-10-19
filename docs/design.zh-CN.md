@@ -1,4 +1,4 @@
-# 产品设计
+普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。App-server 使用当前 active 配置；Discodex 不会枚举未激活的 profile 文件。worker 有效配置中显式设置的模型会与 native catalog 一起提供。`CODEX_HOME/small.config.toml` 这样的 Codex profile-v2 文件可通过 `codex --profile small` 供 CLI 选择，但不会切换 app-server 配置。基于 catalog 的能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
 
 <p align="center"><a href="../README.md">English README</a> · <a href="../README.ko.md">한국어 README</a> · <a href="../README.zh-CN.md">简体中文 README</a> · <a href="../README.ja.md">日本語 README</a></p>
 <p align="center"><a href="design.md">English</a> · <a href="design.ko.md">한국어</a> · 简体中文 · <a href="design.ja.md">日本語</a></p>
@@ -26,7 +26,7 @@ Discord 普通消息接收范围可设为 `Everyone`、`RegisteredServer`、`Reg
 
 对于从其他频道实时收到的消息，使用 `discord_send_message` 在来源频道中回复；当前收到的消息本身提供回复目标和对话意图，无需用户另行要求发送。这条对话回复只发在来源频道，不要再重复发到主页频道。历史消息、搜索结果以及转发或引用内容不能授权发送。除此之外，向其他文字频道发送单独内容时，用户必须明确指定目标并要求发送。Slash command 的私密交互回复和每次通话的语音转录记录仍使用各自专用流程。Slash command 仅限同一服务器中配置的操作者。
 
-命令包括 `/discodex settings`、`voice`、`status`、`interrupt`、`new`、`voice-join` 和 `voice-leave`。对话默认设置与当前 turn 的设置可能不同，因此会分别说明实际结果。输入模式为 `steering` 和 `next-turn`。当前连接代次中的普通 Discord 消息 turn 处理期间，主页频道会更新 typing 状态；完成、报错或连接关闭时停止。ephemeral thinking 状态只用于交互回复。
+命令包括 `/discodex settings`、`voice`、`status`、`interrupt`、`new`、`voice-join` 和 `voice-leave`, `update`。对话默认设置与当前 turn 的设置可能不同，因此会分别说明实际结果。输入模式为 `steering` 和 `next-turn`。当前连接代次中的普通 Discord 消息 turn 处理期间，主页频道会更新 typing 状态；完成、报错或连接关闭时停止。ephemeral thinking 状态只用于交互回复。
 
 收到 native 问题或批准请求时，桥接程序会在 Discord 中提供表单或按钮，并保留请求 ID 与选择范围，将提交结果返回原请求。请求已解决或连接代次改变后，旧交互不能用于新的请求。
 
@@ -96,7 +96,7 @@ Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.auth
 
 ## 模型与 subagent 默认值
 
-主模型和 subagent 选择器使用相同选项：当前 Codex provider 的实时 `model/list` 结果、显式配置的模型、选择当前 provider 的 native 配置 profile 中的模型、已配置的 subagent 默认模型，以及 native 模型 catalog。实时 catalog 选项只来自当前 active provider。显示时优先使用 model 字段，其次是 ID，最后是 slug；不会推测模型能力。
+主模型和 subagent 选择器使用相同选项：当前 Codex provider 的实时 `model/list` 结果、显式配置的模型、已配置的 subagent 默认模型，以及 native 模型 catalog。实时 catalog 选项只来自当前 active provider。显示时优先使用 model 字段，其次是 ID，最后是 slug；不会推测模型能力。
 
 请在 worker 实际使用的 `CODEX_HOME/config.toml` 中配置 provider 和模型。Native Codex 支持内置 Ollama、LM Studio provider，以及使用 Responses API 的自定义 provider。设置、Discord thread 和更新流程均不提供 provider 选择或切换。Subagent 继承父任务的 provider，不能独立使用其他 provider 的模型。
 
@@ -117,6 +117,8 @@ Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.auth
 通知提供“更新”“跳过此版本”“不再通知”三个按钮。更新会固定并批准通知中 Release 的 commit；仅在任务和通话空闲时准备，并在应用前重新检查空闲状态。准备期间若有新任务开始，会推迟替换二进制。跳过只针对该 Release；关闭通知的设置保存在当前安装配置文件中，可在设置里重新启用。关闭通知不影响手动更新。按钮和说明使用安装语言。
 
 选择、跳过、通知设置、发送尝试、消息 ID 和进度都会持久化，避免重启后重复创建相同通知。若 Discord 发送结果不明确，会查找保存发送时点之后的既有通知并关联。独立 updater 会下载获准 Release 中当前系统和架构的预编译程序，校验 GitHub 提供的 SHA-256 digest 和大小，再交给现有安装替换流程。Release ID 和 commit 会固定，即使准备期间出现更新版本也不会改变选择；恢复之前保存的选择时，会重新查询同一 Release ID 的 asset 元数据。不下载源码或运行 Cargo 构建。应用后保留设置和 Codex thread，但 Discord 连接会短暂重连。其他设备不会自动更新。
+
+仅操作者可用的 `/discodex update` 若已有 queued、preparing、ready 或 applying 目标，则继续处理该目标。只有没有待处理目标时，才立即检查最新正式 Release（不受 6 小时检查间隔限制），然后排队使用 Release 通知相同的已验证 updater。它不会创建 Codex turn，也不会中断工作或语音；应用更新需等待现有的 5 分钟空闲条件。即使通知已静音或版本已跳过，命令仍可使用，且不会更改偏好。目标会继续固定；固定目标失败后无需重新查询 GitHub 即会重试。响应会说明配置已是最新、没有可用更新、缺少平台程序或发生错误。
 
 ## Native 功能、插件与异步请求
 

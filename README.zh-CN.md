@@ -46,7 +46,7 @@ Windows PowerShell：
 
 ## 自定义与本地模型
 
-主模型和 subagent 选择器共享当前 provider 的模型选项，也包括显式配置的模型。**默认 subagent 模型**作为 Discodex 所有的覆盖项保存，并在 worker 重启后生效。配置示例和发现方式请参阅[自定义与本地 Codex provider](docs/installation.zh-CN.md#自定义与本地-codex-provider)。
+主模型和 subagent 选择器使用当前 provider catalog 以及 worker 有效配置中的模型，包括默认、subagent、安装和当前 thread 模型。**默认 subagent 模型**作为 Discodex 所有的覆盖项保存，并在 worker 重启后生效。配置示例和发现方式请参阅[自定义与本地 Codex provider](docs/installation.zh-CN.md#自定义与本地-codex-provider)。
 
 ## 更新
 
@@ -66,6 +66,8 @@ Windows PowerShell：
 
 若尚无上次检查记录，则立即执行首次正式 Release 检查；此后按照持久化的上次检查时间，在到期后再检查。检查循环约每 15 秒轮询一次是否到期；成功检查间隔为 6 小时，检查出错后 15 分钟重试。worker 重启遵循已保存的检查时间，不会强制立即检查。通知另有空闲条件：原生连接必须在线，且没有活动 turn、语音通话或清理、待处理批准、未处理输入、消息处理或输出发送；满足这些条件并已空闲至少 5 分钟后，才在主页频道提示。发现更新时若已空闲，不会再额外等待 5 分钟。
 
+`/discodex update` 若已有 queued、preparing、ready 或 applying 目标，则继续处理该目标。只有没有待处理目标时，才会立即检查最新 Release（不受 6 小时检查间隔限制），并排队使用通知按钮相同的已验证 updater。它不会创建 Codex turn，也不会中断工作或语音，而是等待现有的 5 分钟空闲条件。即使通知已静音或该版本已跳过，仍可使用此命令，且不会更改这些偏好。目标会保持固定；失败的固定目标无需重新查询 GitHub 即会重试。命令会说明当前已是最新版本、没有可用更新、缺少平台程序或发生错误。
+
 ## Discord 命令
 
 设置面板显示当前选项，可通过按钮选择模型、推理强度、Fast 模式、权限配置、输入传递方式和语音。语音变更从下一次通话开始生效。
@@ -76,6 +78,7 @@ Windows PowerShell：
 - `/discodex voice-join channel:<允许的语音频道>`：加入允许的语音频道
 - `/discodex voice-leave`：结束语音通话
 - `/discodex interrupt`：请求停止当前响应
+- `/discodex update`：检查并应用更新
 - `/discodex new`：开始新对话
 
 结束语音通话只会断开语音；持久 Codex 对话仍可继续。详细说明见[产品设计](docs/design.zh-CN.md)。

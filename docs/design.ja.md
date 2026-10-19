@@ -1,4 +1,4 @@
-# 製品設計
+ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。app-serverはアクティブな設定を使い、Discodexは非アクティブなprofileファイルを列挙しません。有効なworker設定に明示されたモデルはnative catalogとともに候補になります。`CODEX_HOME/small.config.toml`のようなCodex profile-v2ファイルはCLIで`codex --profile small`として選択できますが、app-serverの設定は切り替わりません。catalogによる機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
 
 <p align="center"><a href="design.md">English</a> · <a href="design.ko.md">한국어</a> · <a href="design.zh-CN.md">简体中文</a> · 日本語</p>
 
@@ -24,7 +24,7 @@ Discodexは、1つのDiscordアプリプロファイルを公式Codex app-server
 
 他チャンネルからリアルタイムで受信したメッセージへの会話上の返答は、`discord_send_message`を使って元チャンネルに返信します。現在受信したメッセージ自体が宛先と会話の意図を示すため、別途送信を依頼する必要はありません。この会話回答は元チャンネルだけに送り、ホームチャンネルには重複投稿しません。過去のメッセージ、検索結果、転送・引用内容は送信を許可しません。それ以外の別チャンネルへの個別投稿は、ユーザーが宛先と送信を明示した場合に限ります。slash commandの非公開応答と通話ごとの文字起こし記録は専用経路を使います。slash commandは同じサーバーと指定操作者に限ります。
 
-Discordコマンドは`/discodex settings`、`voice`、`status`、`interrupt`、`new`、`voice-join`、`voice-leave`です。モデル、推論強度、サービス階層、権限プロファイル、入力モード、音声プロファイルは設定画面で選びます。モデルと権限は公式native catalogを使います。会話の既定値とアクティブturnの設定は別々に適用されることがあり、その結果を区別して伝えます。入力モードは`steering`と`next-turn`です。現行世代の通常メッセージturnを処理している間、ホームチャンネルのtyping表示を更新し、完了・エラー・切断時に停止します。ephemeralのthinking表示はinteraction応答にだけ使います。
+Discordコマンドは`/discodex settings`、`voice`、`status`、`interrupt`、`new`、`voice-join`、`voice-leave`, `update`です。モデル、推論強度、サービス階層、権限プロファイル、入力モード、音声プロファイルは設定画面で選びます。モデルと権限は公式native catalogを使います。会話の既定値とアクティブturnの設定は別々に適用されることがあり、その結果を区別して伝えます。入力モードは`steering`と`next-turn`です。現行世代の通常メッセージturnを処理している間、ホームチャンネルのtyping表示を更新し、完了・エラー・切断時に停止します。ephemeralのthinking表示はinteraction応答にだけ使います。
 
 nativeが質問または承認を要求した場合、元の要求IDと選択範囲を保ったフォームやボタンを表示し、提出結果を同じ要求に返します。要求の解決後または接続世代が変わった後に、古い操作を新しい要求へ流用しません。
 
@@ -92,7 +92,7 @@ Discordの直接入力では`source.author`、`body`、安定した`source.autho
 
 ## モデルとsubagentの既定値
 
-メインモデルとsubagentモデルの選択画面には同じ候補を表示します。アクティブなCodex providerのライブ `model/list` 結果、明示設定したモデル、アクティブproviderを選ぶnative設定profileのモデル、設定済みのsubagent既定モデル、nativeモデルcatalogが候補です。ライブcatalogの候補はアクティブproviderのみから取得します。表示はmodelフィールド、ID、slugの順に優先し、モデル機能を推測しません。
+メインモデルとsubagentモデルの選択画面には同じ候補を表示します。アクティブなCodex providerのライブ `model/list` 結果、明示設定したモデル、設定済みのsubagent既定モデル、nativeモデルcatalogが候補です。ライブcatalogの候補はアクティブproviderのみから取得します。表示はmodelフィールド、ID、slugの順に優先し、モデル機能を推測しません。
 
 workerが実際に使う `CODEX_HOME/config.toml` でproviderとモデルを設定します。Native Codexは組み込みのOllama、LM Studio providerとResponses APIのカスタムproviderに対応します。設定画面、Discord thread、更新フローからproviderを選択・切り替える機能はありません。subagentは親のproviderを引き継ぎ、別providerのモデルを個別に使うことはできません。
 
@@ -115,6 +115,8 @@ workerが実際に使う `CODEX_HOME/config.toml` でproviderとモデルを設�
 通知にはUpdate、Skip this version、Never notify againの3つのボタンがあります。Updateは表示中のReleaseのcommitを固定して承認し、作業と通話がidleのときに準備します。適用直前にもidleを確認し、準備中に新しい作業が始まった場合はバイナリ置換を延期します。Skip this versionはそのReleaseだけを対象にします。Never notify againはこのインストールプロファイルに保存し、設定から再び有効にできます。通知を無効にしても手動更新は使えます。ボタンと案内はインストール言語に従います。
 
 選択、skip、通知設定、送信試行、メッセージID、進捗を保存し、再起動後に同じ通知を重複作成しません。Discord送信結果が不明な場合は保存済み送信時点以降の既存通知を探して紐づけます。別のupdaterが承認済みGitHub ReleaseからOS・アーキテクチャ別のビルド済み実行ファイルを取得し、GitHub提供のSHA-256 digestとサイズを検証して既存の置換経路へ渡します。Release IDとcommitを固定するので、準備中に最新Releaseが変わっても選択は変わりません。保存済みの古い選択では同じRelease IDのasset情報を再取得します。ソースcheckoutやCargo buildは行いません。設定とCodexスレッドを保ち、適用時は短時間Discordが再接続します。他の端末は自動更新しません。
+
+操作者専用の `/discodex update` はqueued、preparing、ready、applyingの対象があればそのまま保持します。対象がない場合に限り、6時間の確認間隔を待たずに最新の公開Releaseを確認し、Release通知と同じ検証済みupdaterによる適用をキューに入れます。Codex turnを作らず、作業や音声を中断せず、既存の5分間のidle条件が満たされてから適用します。通知がミュート中、またはバージョンをスキップ済みでも使え、設定は変更しません。対象は固定したまま保持し、固定対象の適用に失敗した場合は新たなGitHub確認なしで再試行します。最新状態、更新なし、プラットフォーム用assetなし、エラーを結果として伝えます。
 
 ## Native機能、プラグイン、非同期リクエスト
 

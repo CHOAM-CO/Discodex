@@ -37,7 +37,7 @@ Windows PowerShell에서는 `./scripts/install.ps1`을 실행합니다. 설치�
 
 ## 사용자 지정 및 로컬 모델
 
-기본 및 subagent 선택 화면은 활성 provider의 모델 선택지를 공유하며, 명시적으로 설정한 모델도 포함합니다. **기본 subagent 모델**은 Discodex 소유 재정의로 저장되고 worker 재시작 후 적용됩니다. 설정 예시와 검색 방식은 [사용자 지정 및 로컬 Codex provider](docs/installation.ko.md#사용자-지정-및-로컬-codex-provider)를 참고하세요.
+기본 및 subagent 선택 화면은 활성 provider catalog와 worker의 유효 설정에 지정된 기본·subagent·설치·현재 thread 모델을 사용합니다. **기본 subagent 모델**은 Discodex 소유 재정의로 저장되고 worker 재시작 후 적용됩니다. 설정 예시와 검색 방식은 [사용자 지정 및 로컬 Codex provider](docs/installation.ko.md#사용자-지정-및-로컬-codex-provider)를 참고하세요.
 
 ## 업데이트
 
@@ -57,6 +57,8 @@ Windows PowerShell에서는 다음을 실행합니다.
 
 업데이터는 플랫폼에 맞는 릴리스 바이너리를 다운로드·검증하고 `--config`가 지정한 프로필에 적용합니다. Discord의 업데이트 버튼도 같은 완성 바이너리를 사용합니다. 언어를 다시 묻거나 프로필 설정을 다시 쓰지 않습니다. 선택한 언어, 자격증명, 지속되는 Codex 대화 상태는 해당 프로필에 남습니다. 소유 바이너리 교체에 실패하면 이전 바이너리와 서비스 상태로 복구합니다. `./install --update --config ...` 및 `./scripts/install.ps1 -Update -Config ...`도 같은 업데이트를 실행합니다.
 
+`/discodex update`는 대기 중인 queued, preparing, ready, applying 대상이 있으면 이를 유지합니다. 대기 대상이 없을 때만 6시간 간격과 관계없이 최신 Release를 즉시 확인하고 알림 버튼과 같은 검증된 updater 적용을 대기열에 넣습니다. Codex turn을 만들지 않으며 작업이나 음성을 중단하지 않고 기존 5분 유휴 조건을 기다립니다. 알림이 꺼져 있거나 버전을 건너뛴 상태에서도 사용할 수 있고 해당 설정은 바꾸지 않습니다. 대상 버전은 계속 고정하며, 실패한 고정 대상은 새 GitHub 확인 없이 다시 시도합니다. 최신 상태, 업데이트 없음, 플랫폼 asset 없음 또는 오류 결과를 안내합니다.
+
 ## Discord 명령
 
 설정 패널에서 현재 값을 확인하고 모델·추론 강도·Fast 모드·권한 프로필·입력 전달 방식·음성 프로필·메시지 수신 정책·업데이트 알림을 버튼으로 선택합니다. 허용·차단 목록은 현재 서버 닉네임으로 조회하고 계정 ID를 입력해 추가·삭제합니다. 세부 화면은 뒤로가기, 메인 목록은 나가기를 제공합니다. 음성 프로필 변경은 다음 통화부터 적용됩니다.
@@ -67,6 +69,7 @@ Windows PowerShell에서는 다음을 실행합니다.
 - `/discodex voice-join channel:<허용 음성 채널>`: 음성 입장
 - `/discodex voice-leave`: 음성 통화 종료
 - `/discodex interrupt`: 진행 중 응답 중단 요청
+- `/discodex update`: 업데이트 확인 및 적용
 - `/discodex new`: 새 대화 시작
 
 수신 정책은 발신자의 허용 여부를 정하고, 입력은 홈 채널·봇 멘션·등록 채널/스레드·허용된 DM 경로를 따릅니다. 일반 답변은 홈채널에 모이며 답장할 상대를 멘션하도록 안내합니다. 다른 채널에 별도로 발송하려면 명시적으로 요청합니다. 통화 중에는 현재 전사 스레드의 글과 첨부를 바로 전달하고, 그 밖의 입력은 짧은 미리보기만 알립니다. 에이전트는 대화에 필요하거나 사용자가 요청할 때 수신함을 조회하고, 미조회 메시지는 통화 종료 뒤 처리합니다.

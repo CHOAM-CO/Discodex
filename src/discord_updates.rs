@@ -33,6 +33,8 @@ pub(crate) struct UpdateController {
     store: Mutex<UpdateStore>,
     state_dir: PathBuf,
     config_path: PathBuf,
+    check_lock: Mutex<()>,
+    manual_lock: Mutex<()>,
     initialization_error: Option<String>,
     activity: SyncMutex<Activity>,
     wake: Notify,
@@ -104,6 +106,8 @@ impl UpdateController {
             store: Mutex::new(store),
             state_dir,
             config_path,
+            check_lock: Mutex::new(()),
+            manual_lock: Mutex::new(()),
             initialization_error,
             activity: SyncMutex::new(Activity {
                 active: 0,
@@ -189,6 +193,45 @@ impl UpdateController {
         self.wake.notify_one();
         Ok(())
     }
+
+    async fn check_now(&self) -> Result<()> {
+        if let Some(error) = &self.initialization_error {
+            bail!("update state is unavailable: {error}");
+        }
+        let _check = self.check_lock.lock().await;
+        let etag = self.store.lock().await.snapshot().etag;
+        let result = tokio::task::spawn_blocking(move || {
+            updates::check_release(
+                etag,
+                epoch(),
+                updates::current_build_version(),
+                updates::current_build_commit(),
+            )
+        })
+        .await;
+        match result {
+            Ok(Ok(result)) => self.store.lock().await.apply_check(result)?,
+            Ok(Err(error)) => {
+                let message = format!("{error:#}");
+                let _ = self
+                    .store
+                    .lock()
+                    .await
+                    .record_check_failure(epoch(), message.clone());
+                bail!(message);
+            }
+            Err(error) => {
+                let message = format!("release check task failed: {error}");
+                let _ = self
+                    .store
+                    .lock()
+                    .await
+                    .record_check_failure(epoch(), message.clone());
+                bail!(message);
+            }
+        }
+        Ok(())
+    }
 }
 
 fn has_pending_delivery(delivery: QueueDelivery) -> bool {
@@ -228,6 +271,180 @@ fn check_due(snapshot: &UpdateSnapshot, now: u64) -> bool {
     snapshot
         .last_checked_unix
         .is_none_or(|last| now.saturating_sub(last) >= delay)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ManualUpdateAction {
+    Active(updates::PinnedRelease),
+    ActiveWithoutTarget,
+    Retry(updates::PinnedRelease),
+    Queue(u64),
+    NoUpdate,
+    MissingVerifiedAsset,
+}
+
+fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
+    match snapshot.status {
+        UpdateStatus::Selected
+        | UpdateStatus::Preparing
+        | UpdateStatus::Ready
+        | UpdateStatus::Applying => {
+            if let Some(pending) = snapshot.pending.clone() {
+                return ManualUpdateAction::Active(pending);
+            }
+            return ManualUpdateAction::ActiveWithoutTarget;
+        }
+        UpdateStatus::Failed => {
+            if let Some(pending) = snapshot.pending.clone() {
+                return ManualUpdateAction::Retry(pending);
+            }
+        }
+        UpdateStatus::Idle | UpdateStatus::Applied => {}
+    }
+    let Some(latest) = snapshot.latest_release.as_ref() else {
+        return ManualUpdateAction::NoUpdate;
+    };
+    if snapshot.last_applied_release_id == Some(latest.release_id)
+        || latest.commit == updates::current_build_commit()
+    {
+        return ManualUpdateAction::NoUpdate;
+    }
+    let verified_asset = latest.asset.as_ref().is_some_and(|asset| {
+        asset.digest.as_deref().is_some_and(|digest| {
+            digest.strip_prefix("sha256:").is_some_and(|hash| {
+                hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        })
+    });
+    if verified_asset {
+        ManualUpdateAction::Queue(latest.release_id)
+    } else {
+        ManualUpdateAction::MissingVerifiedAsset
+    }
+}
+
+fn manual_update_response(
+    store: &mut UpdateStore,
+    action: ManualUpdateAction,
+    language: Language,
+    wake: &Notify,
+) -> Result<String> {
+    let response = match action {
+        ManualUpdateAction::Active(target) => format!(
+            "{} **{}**.",
+            language.text(
+                "An update is already queued for",
+                "이미 다음 버전의 업데이트가 대기 중입니다:",
+                "更新已在队列中，目标版本为",
+                "次のバージョンへの更新はすでに予約されています:",
+            ),
+            target.version
+        ),
+        ManualUpdateAction::ActiveWithoutTarget => language
+            .text(
+                "An update is already in progress.",
+                "업데이트가 이미 진행 중입니다.",
+                "更新已在进行中。",
+                "更新はすでに進行中です。",
+            )
+            .to_owned(),
+        ManualUpdateAction::Retry(target) => {
+            store.retry_update(target.release_id)?;
+            wake.notify_one();
+            format!(
+                "{} **{}**.",
+                language.text(
+                    "Retried the queued update for",
+                    "대기 중인 다음 버전 업데이트를 다시 시도합니다:",
+                    "已重新尝试队列中的更新，目标版本为",
+                    "予約済みの更新を再試行します。対象バージョン:",
+                ),
+                target.version
+            )
+        }
+        ManualUpdateAction::Queue(release_id) => {
+            let target = store.select_update(release_id)?;
+            wake.notify_one();
+            format!(
+                "{} **{}**.",
+                language.text(
+                    "Queued the update for",
+                    "다음 버전 업데이트를 대기열에 추가했습니다:",
+                    "已将更新加入队列，目标版本为",
+                    "次のバージョンへの更新を予約しました:",
+                ),
+                target.version
+            )
+        }
+        ManualUpdateAction::NoUpdate => language
+            .text(
+                "No newer stable release is available.",
+                "사용 가능한 최신 안정 버전이 없습니다.",
+                "没有可用的更新稳定版本。",
+                "利用可能な新しい安定版はありません。",
+            )
+            .to_owned(),
+        ManualUpdateAction::MissingVerifiedAsset => language
+            .text(
+                "The latest release does not have a verified prebuilt executable for this platform, so no update was queued.",
+                "최신 릴리스에 이 플랫폼용 검증된 사전 빌드 실행 파일이 없어 업데이트를 대기열에 추가하지 않았습니다.",
+                "最新版本没有适用于此平台且可验证的预构建可执行文件，因此未将更新加入队列。",
+                "最新リリースにはこのプラットフォーム向けの検証済みビルドがないため、更新を予約しませんでした。",
+            )
+            .to_owned(),
+    };
+    Ok(response)
+}
+
+fn manual_check_failed(language: Language) -> String {
+    language
+        .text(
+            "Could not check for updates. Please try again later.",
+            "업데이트를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            "无法检查更新，请稍后重试。",
+            "更新を確認できませんでした。しばらくしてから再試行してください。",
+        )
+        .to_owned()
+}
+
+pub(crate) async fn manual_update(state: &Arc<BridgeState>) -> Result<String> {
+    if let Some(error) = &state.updates.initialization_error {
+        bail!("update state is unavailable: {error}");
+    }
+    let _manual = state.updates.manual_lock.lock().await;
+
+    // Existing durable work and explicit retries remain available during outages.
+    {
+        let mut store = state.updates.store.lock().await;
+        let action = manual_update_action(&store.snapshot());
+        if matches!(
+            action,
+            ManualUpdateAction::Active(_)
+                | ManualUpdateAction::ActiveWithoutTarget
+                | ManualUpdateAction::Retry(_)
+        ) {
+            return manual_update_response(
+                &mut store,
+                action,
+                state.config.language,
+                &state.updates.wake,
+            );
+        }
+    }
+
+    // Discovery is forced here regardless of check age, mute, or skipped release.
+    if let Err(error) = state.updates.check_now().await {
+        tracing::warn!(%error, "manual Discodex release check failed");
+        return Ok(manual_check_failed(state.config.language));
+    }
+    let mut store = state.updates.store.lock().await;
+    let action = manual_update_action(&store.snapshot());
+    manual_update_response(
+        &mut store,
+        action,
+        state.config.language,
+        &state.updates.wake,
+    )
 }
 
 fn epoch() -> u64 {
@@ -626,31 +843,9 @@ pub(crate) async fn run(
         let before = state.updates.store.lock().await.snapshot();
         let due = check_due(&before, epoch());
         if due && Instant::now() >= retry_after {
-            let result = tokio::task::spawn_blocking(move || {
-                updates::check_release(
-                    before.etag,
-                    epoch(),
-                    updates::current_build_version(),
-                    updates::current_build_commit(),
-                )
-            })
-            .await;
-            match result {
-                Ok(Ok(result)) => {
-                    if let Err(error) = state.updates.store.lock().await.apply_check(result) {
-                        tracing::warn!(%error, "could not save update discovery");
-                    }
-                }
-                error => {
-                    tracing::warn!(?error, "could not check Discodex releases");
-                    let _ = state
-                        .updates
-                        .store
-                        .lock()
-                        .await
-                        .record_check_failure(epoch(), format!("{error:?}"));
-                    retry_after = Instant::now() + RETRY_DELAY;
-                }
+            if let Err(error) = state.updates.check_now().await {
+                tracing::warn!(%error, "could not check Discodex releases");
+                retry_after = Instant::now() + RETRY_DELAY;
             }
         }
         let is_idle = idle(&state).await;
@@ -799,6 +994,132 @@ mod tests {
         assert!(!has_pending_delivery(QueueDelivery::Accepted));
         assert!(!has_pending_delivery(QueueDelivery::Rejected));
     }
+    fn pinned_release(release_id: u64) -> updates::PinnedRelease {
+        updates::PinnedRelease {
+            release_id,
+            version: format!("{}.0.0", release_id),
+            tag: format!("v{}.0.0", release_id),
+            commit: format!("commit-{release_id}"),
+            url: "https://example.invalid/release".into(),
+            asset: None,
+        }
+    }
+
+    fn release_notice(release_id: u64, digest: Option<&str>) -> updates::ReleaseNotice {
+        updates::ReleaseNotice {
+            release_id,
+            version: format!("{}.0.0", release_id),
+            tag: format!("v{}.0.0", release_id),
+            commit: format!("commit-{release_id}"),
+            url: "https://example.invalid/release".into(),
+            asset: Some(updates::ReleaseAsset {
+                name: "discodex-test".into(),
+                download_url: "https://example.invalid/download".into(),
+                digest: digest.map(str::to_owned),
+                size: 1,
+            }),
+            body: String::new(),
+            published_at: None,
+        }
+    }
+
+    #[test]
+    fn manual_update_preserves_active_target_and_retries_failed_target() {
+        let valid_digest = format!("sha256:{}", "a".repeat(64));
+        for status in [
+            UpdateStatus::Selected,
+            UpdateStatus::Preparing,
+            UpdateStatus::Ready,
+            UpdateStatus::Applying,
+        ] {
+            let snapshot = UpdateSnapshot {
+                status,
+                pending: Some(pinned_release(7)),
+                latest_release: Some(release_notice(8, Some(&valid_digest))),
+                ..UpdateSnapshot::default()
+            };
+            assert_eq!(
+                manual_update_action(&snapshot),
+                ManualUpdateAction::Active(pinned_release(7))
+            );
+        }
+        let active_without_target = UpdateSnapshot {
+            status: UpdateStatus::Applying,
+            ..UpdateSnapshot::default()
+        };
+        assert_eq!(
+            manual_update_action(&active_without_target),
+            ManualUpdateAction::ActiveWithoutTarget
+        );
+        let failed = UpdateSnapshot {
+            status: UpdateStatus::Failed,
+            pending: Some(pinned_release(7)),
+            latest_release: Some(release_notice(8, None)),
+            ..UpdateSnapshot::default()
+        };
+        assert_eq!(
+            manual_update_action(&failed),
+            ManualUpdateAction::Retry(pinned_release(7))
+        );
+    }
+
+    #[test]
+    fn applied_release_is_not_requeued_after_not_modified_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let notice = release_notice(11, Some(&format!("sha256:{}", "b".repeat(64))));
+        store
+            .apply_check(updates::CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: Some("release-tag".into()),
+                release: Some(notice),
+            })
+            .unwrap();
+        store.select_update(11).unwrap();
+        store.mark_applied(11).unwrap();
+        store
+            .apply_check(updates::CheckResult::NotModified {
+                checked_at_unix: 200,
+                etag: Some("release-tag".into()),
+            })
+            .unwrap();
+        let reopened = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert_eq!(reopened.last_applied_release_id, Some(11));
+        assert_eq!(
+            manual_update_action(&reopened),
+            ManualUpdateAction::NoUpdate
+        );
+    }
+
+    #[test]
+    fn manual_update_queues_only_latest_release_with_verified_prebuilt_digest() {
+        let valid_digest = format!("sha256:{}", "A".repeat(64));
+        let snapshot = UpdateSnapshot {
+            latest_release: Some(release_notice(9, Some(&valid_digest))),
+            muted: true,
+            skipped_release_id: Some(9),
+            ..UpdateSnapshot::default()
+        };
+        assert_eq!(
+            manual_update_action(&snapshot),
+            ManualUpdateAction::Queue(9)
+        );
+        for digest in [None, Some("sha1:bad"), Some("sha256:bad")] {
+            let snapshot = UpdateSnapshot {
+                latest_release: Some(release_notice(9, digest)),
+                ..UpdateSnapshot::default()
+            };
+            assert_eq!(
+                manual_update_action(&snapshot),
+                ManualUpdateAction::MissingVerifiedAsset
+            );
+        }
+        assert_eq!(
+            manual_update_action(&UpdateSnapshot::default()),
+            ManualUpdateAction::NoUpdate
+        );
+    }
+
     #[test]
     fn update_card_has_three_localized_actions_and_no_mentions() {
         let mut snapshot = UpdateSnapshot::default();

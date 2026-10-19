@@ -56,7 +56,7 @@ Setup connects the Codex app-server and Discord bot, configures a profile, and r
 
 ## Custom and local models
 
-The primary and subagent pickers share model choices, including models explicitly configured for the active provider. **Default subagent model** is saved as a Discodex-owned override and applies after a worker restart. See [Custom and local Codex providers](docs/installation.md#custom-and-local-codex-providers) for examples and discovery details.
+The primary and subagent pickers use the active provider catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. **Default subagent model** is saved as a Discodex-owned override and applies after a worker restart. See [Custom and local Codex providers](docs/installation.md#custom-and-local-codex-providers) for examples and discovery details.
 
 ## Updating
 
@@ -78,6 +78,8 @@ Release checks use the persisted last-check timestamp: every six hours after suc
 
 Profiles on versions older than v0.1.3 need a one-time manual update from the installer bundle to install the self-updater. This update preserves the existing session and settings. Afterward, Discord release updates are available from the notice buttons.
 
+`/discodex update` preserves any queued, preparing, ready, or applying target. Only when no target is pending does it force a latest-release check, even before the six-hour interval is due, then queue the same verified updater used by the notice button. It creates no Codex turn and waits for the normal five-minute idle condition without interrupting work or voice. It works when notices are muted or a version was skipped, without changing those preferences. Existing targets stay pinned; a failed pinned target is retried without a fresh GitHub check. The command reports when the profile is current, no platform asset is available, or an error occurs.
+
 ## Discord commands
 
 | Action | Command |
@@ -88,6 +90,7 @@ Profiles on versions older than v0.1.3 need a one-time manual update from the in
 | Join an allowed voice channel | `/discodex voice-join channel:<voice channel>` |
 | Leave the voice call | `/discodex voice-leave` |
 | Request that the current response stop | `/discodex interrupt` |
+| Check for and apply updates | `/discodex update` |
 | Start a new conversation | `/discodex new` |
 
 The settings panel offers supported models, reasoning effort, service tier, permission profile, input delivery, voice profile, and release notices. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel.
