@@ -1015,6 +1015,26 @@ impl Native {
             .unwrap_or(Value::Null)
     }
 
+    /// The official catalog is scoped to the active provider. Include configured
+    /// model names because local/custom providers may omit them from model/list.
+    pub async fn model_catalog(&self) -> Result<Value> {
+        let native_config = self
+            .request(
+                "config/read",
+                json!({"includeLayers":false,"cwd":self.inner.config.project_dir}),
+            )
+            .await
+            .context("read native model/provider configuration")?;
+        let models =
+            crate::model_catalog::read_pages(|params| self.request("model/list", params)).await?;
+        crate::model_catalog::assemble_catalog(
+            models,
+            &native_config,
+            &self.thread_state(),
+            self.inner.config.model.as_deref(),
+        )
+    }
+
     pub fn list_native_feature_settings(
         &self,
     ) -> Result<Vec<(NativeFeatureDescriptor, Option<Value>)>> {
@@ -1047,32 +1067,16 @@ impl Native {
         &self,
         preferences: &NativeFeaturePreferences,
     ) -> Result<NativeFeatureApplyResult> {
+        let mut preferences = preferences.clone();
         if let Some(model) = preferences.subagent_model.as_deref() {
-            let mut params = json!({"includeHidden": false});
-            loop {
-                let page = self
-                    .request("model/list", params.clone())
-                    .await
-                    .context("read native model catalog for subagent default")?;
-                let data = page
-                    .get("data")
-                    .and_then(Value::as_array)
-                    .context("native model catalog omitted its data list")?;
-                if data
-                    .iter()
-                    .any(|item| item.get("slug").and_then(Value::as_str) == Some(model))
-                {
-                    break;
-                }
-                match page.get("nextCursor").and_then(Value::as_str) {
-                    Some(cursor) => params["cursor"] = Value::String(cursor.to_owned()),
-                    None => {
-                        bail!("subagent model is not present in the current native model catalog")
-                    }
-                }
-            }
+            let catalog = self.model_catalog().await?;
+            let selected = catalog.get("data").and_then(Value::as_array)
+                .and_then(|models| models.iter().find(|item| crate::model_catalog::model_matches(item, model)))
+                .and_then(crate::model_catalog::model_id)
+                .context("subagent model is absent from the active native provider catalog and configuration")?;
+            preferences.subagent_model = Some(selected.to_owned());
         }
-        NativeFeatureStore::new(&self.inner.config.state_dir).apply(preferences)
+        NativeFeatureStore::new(&self.inner.config.state_dir).apply(&preferences)
     }
 
     pub async fn permission_profiles(&self) -> Result<Value> {

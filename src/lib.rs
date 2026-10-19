@@ -35,3 +35,5 @@ pub(crate) mod native_features;
 pub(crate) mod table_messages;
 pub(crate) mod table_render;
 pub(crate) mod table_source;
+
+pub(crate) mod model_catalog;

@@ -90,6 +90,16 @@ Windowsのログオン時タスクは、同じユーザーアカウントでのU
 
 Discordの直接入力では`source.author`、`body`、安定した`source.authorMention` tokenを渡します。ホーム外では`source.server`と`source.channel`を名前で付けます。会話回答では入力投稿者への明示的ユーザーメンションを許可できますが、状態・エラー通知では無効にします。転送メッセージのsnapshotは`forwardedMessages`として分け、通常添付とともにダウンロードします。繰り返し使う形式説明は基本promptに一度だけ置きます。ツールのチャンネル・ユーザー選択には名前、個別メッセージ参照にはDiscordリンク、添付選択にはファイル名を使います。重複候補に限り一時選択値を使いますが、内部IDと入力の出典・turn相関は保持します。
 
+## モデルとsubagentの既定値
+
+メインモデルとsubagentモデルの選択画面には同じ候補を表示します。アクティブなCodex providerのライブ `model/list` 結果、明示設定したモデル、アクティブproviderを選ぶnative設定profileのモデル、設定済みのsubagent既定モデル、nativeモデルcatalogが候補です。ライブcatalogの候補はアクティブproviderのみから取得します。表示はmodelフィールド、ID、slugの順に優先し、モデル機能を推測しません。
+
+workerが実際に使う `CODEX_HOME/config.toml` でproviderとモデルを設定します。Native Codexは組み込みのOllama、LM Studio providerとResponses APIのカスタムproviderに対応します。設定画面、Discord thread、更新フローからproviderを選択・切り替える機能はありません。subagentは親のproviderを引き継ぎ、別providerのモデルを個別に使うことはできません。
+
+ローカルの通常の `/v1/models` 応答はCodexモデルmetadataに自動変換されません。明示設定したモデル名とnative設定profileで選択したモデルは候補にできますが、そのprofileの他の設定は有効になりません。catalogによる機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
+
+設定ホームに**既定subagentモデル**があります。保存するとDiscodex所有の `agents.default_subagent_model` 機能上書きに記録され、worker再起動後に有効になります。リセットすると上書きを削除してnativeの既定値に戻します。モデル互換性は異なり、すべてのモデルがすべてのツールに対応するわけではありません。provider認証はCodexが担当し、音声機能にはnative音声capabilityが必要な場合があります。
+
 ## MCPツール実行の承認
 
 公式Codexのform elicitationで、`_meta.codex_approval_kind: "mcp_tool_call"`かつ空のobject schemaを持つ要求は、追加入力フォームではなく実行承認ボタンとして表示します。「今回のみ許可」「拒否」「キャンセル」を提示し、セッション許可と常時許可はnative要求の`_meta.persist`が示す範囲に限って表示します。選択結果は公式の`action`と必要な`_meta.persist`をそのまま渡し、ユーザー入力や認証情報を捏造しません。通常の入力フォームは従来経路を保ち、URLやユーザー認証要求を実行承認として解釈しません。要求ID、接続世代、重複応答防止には同じpending要求状態を使います。

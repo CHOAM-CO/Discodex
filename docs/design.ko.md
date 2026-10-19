@@ -91,6 +91,16 @@ Windows 예약 작업은 설치 시 같은 사용자 계정의 UAC 승인으로 
 
 Discord 직접 입력은 source.author와 body를 전달하고, 안정적인 `source.authorMention` 토큰도 제공한다. 홈 밖에서는 source.server와 source.channel을 이름으로 덧붙인다. 실제 대화 답변은 입력 발신자를 멘션할 수 있도록 명시적 사용자 멘션을 허용하지만, 별도 상태·오류 안내는 멘션을 비활성화한다. 전달된 메시지 스냅샷은 forwardedMessages로 분리하고 일반 첨부와 함께 다운로드한다. 반복되는 형식 설명은 기본 프롬프트에 한 번 둔다. 도구의 채널·사용자 선택은 이름, 개별 메시지 참조는 Discord 링크, 첨부 선택은 파일명을 사용한다. 중복 후보에만 임시 선택값을 제공하며 내부 ID와 입력 출처/턴 상관관계는 보존한다.
 
+## 모델 및 subagent 기본값
+
+기본 모델과 subagent 모델 선택 화면은 같은 선택지를 사용합니다. 활성 Codex provider의 실시간 `model/list` 결과, 명시적으로 설정한 모델, 활성 provider를 선택하는 native 설정 profile의 모델, 설정된 subagent 기본 모델, native model catalog가 포함됩니다. 실시간 catalog 선택지는 활성 provider에서만 가져옵니다. 표시에는 model 필드를 우선하고, 없으면 ID, 다음으로 slug를 사용합니다. 모델 기능은 추정하지 않습니다.
+
+worker가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모델을 설정합니다. Native Codex는 Ollama와 LM Studio 기본 provider 및 Responses API 사용자 지정 provider를 지원합니다. 설정 패널, Discord thread, 업데이트 흐름에는 provider 선택이나 전환 기능이 없습니다. Subagent는 부모 provider를 상속하므로 다른 provider의 모델을 독립적으로 사용할 수 없습니다.
+
+로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. 명시 설정한 모델과 native 설정 profile에 지정된 모델은 선택지로 제공될 수 있으며 profile의 다른 설정은 활성화하지 않습니다. catalog 기반 기능 검색에는 Codex catalog 메타데이터가 필요합니다. [Codex 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요.
+
+설정 메인 화면에 **기본 subagent 모델**이 있습니다. 저장하면 Discodex 소유 `agents.default_subagent_model` 기능 재정의에 기록되고 worker 재시작 후 적용됩니다. 초기화하면 재정의를 제거하고 native 기본값을 사용합니다. 모델 호환성은 다르며 모든 모델의 도구 지원이 보장되지는 않습니다. Provider 인증은 Codex가 담당하고, 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
+
 ## MCP 도구 실행 승인
 
 공식 Codex의 form elicitation 중 `_meta.codex_approval_kind: "mcp_tool_call"`과 빈 객체 스키마를 가진 요청은 추가 입력 폼 대신 실행 승인 버튼으로 표시한다. 이번만 허용·거절·취소를 제공하고, 세션 허용과 항상 허용은 native 요청의 `_meta.persist`가 제공한 범위에만 표시한다. 선택 응답은 공식 `action`과 필요한 `_meta.persist`를 그대로 전달하며 사용자 입력이나 인증 증명을 만들어 넣지 않는다. 일반 입력 form은 기존 입력 경로를 유지하고 URL·사용자 인증 요청을 실행 승인으로 해석하지 않는다. 요청 ID·연결 세대·중복 응답 보호는 같은 pending 요청 상태를 사용한다.

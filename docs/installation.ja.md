@@ -55,6 +55,40 @@ Discord tokenは安全な入力欄で指定します。インストーラーはD
 
 インストール一覧を保存しただけではサービスの準備完了ではありません。インストーラーはnativeアカウントとcatalog、Discord設定を確認し、ユーザーサービスを登録します。サービスが起動したことだけで、テキスト、質問・承認、音声の動作確認が済んだとは判断しません。
 
+## カスタムおよびローカルCodex provider
+
+選択したCodexプロセスが実際に使うものと同じ `CODEX_HOME/config.toml` でproviderとモデルを設定します。Codexには組み込みの `ollama`、`lmstudio` providerがあり、Responses APIのカスタムproviderにも対応します。provider認証はCodexが処理します。`env_key` で指定した認証情報はworkerサービスの環境から利用できるようにしてください。秘密情報をDiscodexプロファイルファイルに保存しないでください。nativeの非OpenAI providerを使うだけでChatGPTアカウントやOpenAI API keyが必要になることはありません。
+
+Ollamaではインストール済みモデル名を指定します。
+
+```toml
+model_provider = "ollama"
+model = "example-local-model"
+```
+
+カスタムResponses API providerの例:
+
+```toml
+model_provider = "demo"
+model = "example-model"
+
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+```
+
+プレースホルダーのモデル名とendpointをproviderに合う値に置き換えてください。ライブの `model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の `/v1/models` 応答はCodexのモデルmetadataに自動変換されません。明示設定したモデルと、アクティブproviderのモデルを選ぶnative設定profileも候補に含まれる場合があります。例:
+
+```toml
+[profiles.small]
+model = "example-small-model"
+model_provider = "demo"
+```
+
+このprofileはモデル候補を提供するだけで、profileの他の設定は有効にしません。Codex catalog metadataはモデルの機能情報とcatalog経由のモデル検出に使われます。 native catalogによる検出には起動時に読み込む `model_catalog_json` を使うか、`[model_providers.demo].model_catalog_url` から完全な `{models: [ModelInfo, ...]}` スキーマを提供できます。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。互換性はモデルとproviderによって異なり、ツール対応は保証されません。音声機能にはnative音声capabilityが必要な場合があります。
+
 ## 更新
 
 既存プロファイルの更新には、そのプロファイルの現在のconfigファイルを明示します。同じ端末に複数プロファイルがある場合も自動で選びません。更新では保存済み言語をそのまま使い、言語選択を再度求めません。

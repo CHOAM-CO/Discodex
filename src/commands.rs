@@ -33,6 +33,7 @@ use crate::message_access::{MessageAccess, MessagePolicy};
 pub(crate) enum SettingsKind {
     Hub,
     Model,
+    SubagentModel,
     Effort,
     Fast,
     Permissions,
@@ -952,6 +953,17 @@ async fn build_settings_menu(
                 ),
                 input_mode(mode, language)
             ));
+            if let Some(provider) = thread.get("modelProvider").and_then(Value::as_str) {
+                current.push_str(&format!(
+                    "\n{}: {provider}",
+                    language.text(
+                        "Active model provider",
+                        "현재 모델 제공자",
+                        "当前模型提供方",
+                        "現在のモデルプロバイダー"
+                    )
+                ));
+            }
             let selected_voice = state.voice.selected_voice()?;
             let voice = selected_voice.unwrap_or_else(|| {
                 language
@@ -974,6 +986,13 @@ async fn build_settings_menu(
             ));
             let choices = [
                 ("model", "Model", "모델", "模型", "モデル"),
+                (
+                    "subagent-model",
+                    "Default subagent model",
+                    "기본 하위 에이전트 모델",
+                    "默认子代理模型",
+                    "既定のサブエージェントモデル",
+                ),
                 (
                     "effort",
                     "Reasoning effort",
@@ -1033,14 +1052,64 @@ async fn build_settings_menu(
             .collect();
             (None, current, choices)
         }
+        SettingsKind::SubagentModel => {
+            let snapshot = state.native.read_native_feature_snapshot().await?;
+            let saved = snapshot.preferences.subagent_model.clone();
+            let catalog = state.native.model_catalog().await?;
+            let effective = effective_native_feature_text(
+                &snapshot.native_config,
+                NativeFeatureKey::SubagentModel,
+                language,
+            );
+            let selected = saved
+                .as_deref()
+                .and_then(|value| normalized_model_value(&catalog, value));
+            let current = format!(
+                "{}: {}\n{}: {}\n{}: {}\n{}",
+                language.text(
+                    "Saved preference",
+                    "저장된 설정",
+                    "已保存的偏好",
+                    "保存済みの設定"
+                ),
+                selected.as_deref().or(saved.as_deref()).unwrap_or_else(|| language.text(
+                    "Native default", "네이티브 기본값", "原生默认值", "ネイティブ既定値"
+                )),
+                language.text(
+                    "Active model provider",
+                    "현재 모델 제공자",
+                    "当前模型提供方",
+                    "現在のモデルプロバイダー"
+                ),
+                catalog.get("provider").and_then(Value::as_str).unwrap_or("unknown"),
+                language.text(
+                    "Effective Codex config",
+                    "실효 Codex 설정",
+                    "Codex 当前生效配置",
+                    "有効な Codex 設定"
+                ),
+                effective,
+                language.text(
+                    "The subagent model uses the active provider. Restart the Discodex worker to apply this saved default.",
+                    "하위 에이전트 모델은 현재 제공자를 사용합니다. 저장한 기본값을 적용하려면 Discodex 워커를 재시작하세요.",
+                    "子代理模型使用当前提供方。重启 Discodex 工作进程后应用此默认值。",
+                    "サブエージェントモデルは現在のプロバイダーを使います。保存した既定値を適用するには Discodex ワーカーを再起動してください。"
+                )
+            );
+            let current_value = selected
+                .or(saved)
+                .unwrap_or_else(|| "native-default".to_owned());
+            let choices = subagent_model_choices(&catalog, language);
+            (Some(current_value), current, choices)
+        }
         SettingsKind::NativeFeatures => {
             let descriptors = state.native.list_native_feature_settings()?;
             let mut current = language
                 .text(
-                    "Saved choices apply after the Codex app-server restarts.",
-                    "저장한 선택은 Codex 앱 서버를 다시 시작한 뒤 적용됩니다.",
-                    "保存的选择会在 Codex 应用服务器重启后生效。",
-                    "保存した選択は Codex アプリサーバーの再起動後に適用されます。",
+                    "Saved choices apply after the Discodex worker restarts.",
+                    "저장한 선택은 Discodex 워커를 다시 시작한 뒤 적용됩니다.",
+                    "保存的选择会在 Discodex 工作进程重启后生效。",
+                    "保存した選択は Discodex ワーカーの再起動後に適用されます。",
                 )
                 .to_owned();
             let preferences = state.native.read_native_feature_preferences()?;
@@ -1067,39 +1136,13 @@ async fn build_settings_menu(
             let snapshot = state.native.read_native_feature_snapshot().await?;
             let saved = native_feature_saved_value(&snapshot.preferences, key);
             let effective = effective_native_feature_text(&snapshot.native_config, key, language);
-            let choices = if key == NativeFeatureKey::SubagentModel {
-                let catalog =
-                    full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
-                let mut choices = vec![SettingsChoice {
-                    value: "native-default".to_owned(),
-                    label: language
-                        .text(
-                            "Native default",
-                            "네이티브 기본값",
-                            "原生默认值",
-                            "ネイティブ既定値",
-                        )
-                        .to_owned(),
-                }];
-                choices.extend(
-                    catalog
-                        .get("data")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|model| {
-                            let slug = model.get("slug")?.as_str()?;
-                            let display = model
-                                .get("displayName")
-                                .and_then(Value::as_str)
-                                .unwrap_or(slug);
-                            Some(SettingsChoice {
-                                value: slug.to_owned(),
-                                label: format!("{display} ({slug})"),
-                            })
-                        }),
-                );
-                choices
+            let subagent_catalog = if key == NativeFeatureKey::SubagentModel {
+                Some(state.native.model_catalog().await?)
+            } else {
+                None
+            };
+            let choices = if let Some(catalog) = &subagent_catalog {
+                subagent_model_choices(catalog, language)
             } else {
                 vec![
                     SettingsChoice {
@@ -1124,7 +1167,15 @@ async fn build_settings_menu(
                 ]
             };
             let current_value = if key == NativeFeatureKey::SubagentModel {
-                saved.clone().unwrap_or_else(|| "native-default".to_owned())
+                subagent_catalog
+                    .as_ref()
+                    .and_then(|catalog| {
+                        saved
+                            .as_deref()
+                            .and_then(|value| normalized_model_value(catalog, value))
+                    })
+                    .or_else(|| saved.clone())
+                    .unwrap_or_else(|| "native-default".to_owned())
             } else {
                 match saved.as_deref() {
                     Some("true") => "on".to_owned(),
@@ -1342,31 +1393,29 @@ async fn build_settings_menu(
             (Some(value.to_owned()), current, choices)
         }
         SettingsKind::Model => {
-            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
-            let choices = catalog
-                .get("data")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|model| {
-                    let value = model.get("id")?.as_str()?;
-                    let label = model
-                        .get("displayName")
-                        .and_then(Value::as_str)
-                        .or_else(|| model.get("name").and_then(Value::as_str))
-                        .unwrap_or(value);
-                    Some(SettingsChoice {
-                        value: value.to_owned(),
-                        label: label.to_owned(),
-                    })
-                })
-                .collect::<Vec<_>>();
-            let selected = model_scope.clone();
-            let current = choice_current_label(&choices, selected.as_deref(), language);
+            let catalog = state.native.model_catalog().await?;
+            let choices = catalog_model_choices(&catalog);
+            let selected = model_scope
+                .as_deref()
+                .and_then(|value| normalized_model_value(&catalog, value));
+            let provider = catalog
+                .get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let current = format!(
+                "{}\n{}: {provider}",
+                choice_current_label(&choices, selected.as_deref(), language),
+                language.text(
+                    "Active model provider",
+                    "현재 모델 제공자",
+                    "当前模型提供方",
+                    "現在のモデルプロバイダー"
+                )
+            );
             (selected, current, choices)
         }
         SettingsKind::Effort | SettingsKind::Fast => {
-            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+            let catalog = state.native.model_catalog().await?;
             let model = selected_model(&catalog, &model_scope)?;
             if kind == SettingsKind::Effort {
                 let choices = model
@@ -1607,6 +1656,12 @@ fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &
             "更新通知",
         ),
         SettingsKind::Model => language.text("Model", "모델", "模型", "モデル"),
+        SettingsKind::SubagentModel => language.text(
+            "Default subagent model",
+            "기본 하위 에이전트 모델",
+            "默认子代理模型",
+            "既定のサブエージェントモデル",
+        ),
         SettingsKind::Effort => {
             language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ")
         }
@@ -2179,6 +2234,7 @@ fn set_native_feature_preference(
 fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
     match value {
         "model" => Some(SettingsKind::Model),
+        "subagent-model" => Some(SettingsKind::SubagentModel),
         "effort" => Some(SettingsKind::Effort),
         "fast" => Some(SettingsKind::Fast),
         "permissions" => Some(SettingsKind::Permissions),
@@ -2829,9 +2885,13 @@ async fn apply_setting_choice(
                 "音声プロファイルを保存しました。現在の通話は変わらず、次回の通話から適用されます。",
             ).to_owned())
         }
-        SettingsKind::Model | SettingsKind::Effort | SettingsKind::Fast => {
+        SettingsKind::Model
+        | SettingsKind::SubagentModel
+        | SettingsKind::Effort
+        | SettingsKind::Fast => {
             let sub = match kind {
                 SettingsKind::Model => "model",
+                SettingsKind::SubagentModel => "model",
                 SettingsKind::Effort => "effort",
                 SettingsKind::Fast => "fast",
                 _ => unreachable!(),
@@ -2841,10 +2901,39 @@ async fn apply_setting_choice(
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            let catalog = full_catalog(state, "model/list", json!({"includeHidden":false})).await?;
+            let catalog = state.native.model_catalog().await?;
+            if kind == SettingsKind::SubagentModel {
+                if requested != "native-default"
+                    && !crate::model_catalog::catalog_has_model(&catalog, requested)
+                {
+                    bail!("subagent model is not present in the current native model catalog");
+                }
+                let selected = if requested == "native-default" {
+                    None
+                } else {
+                    Some(requested)
+                };
+                let mut preferences = state.native.read_native_feature_preferences()?;
+                set_native_feature_preference(
+                    &mut preferences,
+                    NativeFeatureKey::SubagentModel,
+                    selected,
+                )?;
+                state
+                    .native
+                    .apply_native_feature_preferences(&preferences)
+                    .await?;
+                return Ok(state.config.language.text(
+                    "Saved for the next Discodex worker start. The subagent model uses the active provider; restart required.",
+                    "다음 Discodex 워커 시작을 위해 저장했습니다. 하위 에이전트 모델은 현재 제공자를 사용하며 재시작이 필요합니다.",
+                    "已保存，供下次 Discodex 工作进程启动时使用。子代理模型使用当前提供方；需要重启。",
+                    "次回の Discodex ワーカー起動用に保存しました。サブエージェントモデルは現在のプロバイダーを使います。再起動が必要です。"
+                ).to_owned());
+            }
             validate_setting_choice(sub, requested, &catalog, &current_model).await?;
             let (field, value) = match kind {
                 SettingsKind::Model => ("model", Value::String(requested.to_owned())),
+                SettingsKind::SubagentModel => unreachable!(),
                 SettingsKind::Effort => ("effort", Value::String(requested.to_owned())),
                 SettingsKind::Fast => (
                     "serviceTier",
@@ -2931,10 +3020,10 @@ async fn apply_setting_choice(
                 .apply_native_feature_preferences(&preferences)
                 .await?;
             Ok(language.text(
-                "Saved for the next Codex app-server start. Restart required; the effective native config shown above is unchanged for this running process.",
-                "다음 Codex 앱 서버 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
-                "已保存，供下次 Codex 应用服务器启动时使用。需要重启；当前运行进程的有效原生配置未变。",
-                "次回の Codex アプリサーバー起動用に保存しました。再起動が必要です。現在のプロセスの有効なネイティブ設定は上記のままです。",
+                "Saved for the next Discodex worker start. Restart required; the effective native config shown above is unchanged for this running process.",
+                "다음 Discodex 워커 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
+                "已保存，供下次 Discodex 工作进程启动时使用。需要重启；当前运行进程的有效原生配置未变。",
+                "次回の Discodex ワーカー起動用に保存しました。再起動が必要です。現在のプロセスの有効なネイティブ設定は上記のままです。",
             ).to_owned())
         }
         SettingsKind::Hub => bail!("Choose a setting first."),
@@ -4293,6 +4382,39 @@ pub async fn unregister_commands(config: &crate::config::Config) -> anyhow::Resu
     Ok(())
 }
 
+fn normalized_model_value(catalog: &Value, value: &str) -> Option<String> {
+    catalog
+        .get("data")?
+        .as_array()?
+        .iter()
+        .find(|model| crate::model_catalog::model_matches(model, value))
+        .and_then(crate::model_catalog::model_id)
+        .map(str::to_owned)
+}
+
+fn catalog_model_choices(catalog: &Value) -> Vec<SettingsChoice> {
+    crate::model_catalog::model_choices(catalog)
+        .into_iter()
+        .map(|(value, label)| SettingsChoice { value, label })
+        .collect()
+}
+
+fn subagent_model_choices(catalog: &Value, language: crate::i18n::Language) -> Vec<SettingsChoice> {
+    let mut choices = vec![SettingsChoice {
+        value: "native-default".to_owned(),
+        label: language
+            .text(
+                "Native default",
+                "네이티브 기본값",
+                "原生默认值",
+                "ネイティブ既定値",
+            )
+            .to_owned(),
+    }];
+    choices.extend(catalog_model_choices(catalog));
+    choices
+}
+
 async fn full_catalog(state: &BridgeState, method: &str, base: Value) -> anyhow::Result<Value> {
     let mut page_params = base;
     let mut all = Vec::new();
@@ -4551,7 +4673,7 @@ fn catalog_has_model(catalog: &Value, requested: &str) -> bool {
         .is_some_and(|items| {
             items
                 .iter()
-                .any(|item| item.get("id").and_then(Value::as_str) == Some(requested))
+                .any(|item| crate::model_catalog::model_matches(item, requested))
         })
 }
 
@@ -4567,7 +4689,7 @@ fn selected_model<'a>(
         .as_deref()
         .ok_or_else(|| anyhow!("현재 모델을 확인할 수 없습니다"))?;
     data.iter()
-        .find(|model| model.get("id").and_then(Value::as_str) == Some(current_model))
+        .find(|model| crate::model_catalog::model_matches(model, current_model))
         .ok_or_else(|| anyhow!("현재 모델을 모델 목록에서 찾을 수 없습니다"))
 }
 
@@ -5272,7 +5394,7 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
                     "未命名模型",
                     "名前のないモデル",
                 ));
-            let value = model.get("id").and_then(Value::as_str).unwrap_or(name);
+            let value = crate::model_catalog::model_id(model).unwrap_or(name);
             let mut details = Vec::new();
             if let Some(efforts) = model
                 .get("supportedReasoningEfforts")
@@ -9333,6 +9455,7 @@ mod display_tests {
             for kind in [
                 SettingsKind::Hub,
                 SettingsKind::Model,
+                SettingsKind::SubagentModel,
                 SettingsKind::Effort,
                 SettingsKind::Fast,
                 SettingsKind::Permissions,
@@ -9787,6 +9910,60 @@ mod native_feature_settings_tests {
         assert_eq!(
             native_feature_saved_value(&preferences, NativeFeatureKey::SubagentModel),
             None
+        );
+    }
+
+    #[test]
+    fn model_and_subagent_choices_include_registered_provider_and_local_models() {
+        let catalog = json!({
+            "provider": "active-provider",
+            "data": [
+                {"model":"provider/model-a", "id":"legacy-a", "slug":"model-a", "displayName":"Provider model A"},
+                {"slug":"local-model-b", "displayName":"Local model B"}
+            ]
+        });
+        let primary = catalog_model_choices(&catalog);
+        assert_eq!(
+            primary
+                .iter()
+                .map(|choice| choice.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["provider/model-a", "local-model-b"]
+        );
+        assert!(primary[0].label.contains("Provider model A"));
+        assert!(primary[1].label.contains("Local model B"));
+        assert!(crate::model_catalog::catalog_has_model(
+            &catalog,
+            "provider/model-a"
+        ));
+        assert!(crate::model_catalog::model_matches(
+            &catalog["data"][0],
+            "legacy-a"
+        ));
+
+        let subagent = subagent_model_choices(&catalog, crate::i18n::Language::English);
+        assert_eq!(
+            subagent.first().map(|choice| choice.value.as_str()),
+            Some("native-default")
+        );
+        assert_eq!(
+            subagent
+                .iter()
+                .skip(1)
+                .map(|choice| choice.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["provider/model-a", "local-model-b"]
+        );
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        set_native_feature_preference(
+            &mut preferences,
+            NativeFeatureKey::SubagentModel,
+            Some(subagent[1].value.as_str()),
+        )
+        .unwrap();
+        assert_eq!(
+            preferences.subagent_model.as_deref(),
+            Some("provider/model-a")
         );
     }
 

@@ -40,6 +40,10 @@ Windows PowerShellでは`./scripts/install.ps1`を実行します。インスト
 
 インストーラーはCodexとDiscordを接続し、プロファイルとユーザー単位の自動起動を設定します。移行、更新、削除の詳細は[日本語インストールガイド](docs/installation.ja.md)を参照してください。
 
+## カスタムモデルとローカルモデル
+
+メインとsubagentの選択画面ではアクティブproviderのモデル候補を共有し、明示設定したモデルも含みます。**既定subagentモデル**はDiscodex所有の上書きとして保存され、worker再起動後に有効になります。設定例と検出方法は[カスタムおよびローカルCodex provider](docs/installation.ja.md#カスタムおよびローカルcodex-provider)を参照してください。
+
 ## 更新
 
 インストーラーバンドルの更新スクリプトに既存プロファイルの設定ファイルを指定します。

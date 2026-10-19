@@ -1642,10 +1642,10 @@ fn install_at(
         write_json_private(&list_path, &installed_list)?;
     }
     println!("{}", language.text(
-        "Codex account/read confirmed a ChatGPT account; the allowed permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
-        "Codex 계정 확인에서 ChatGPT 계정이 확인되었습니다. 허용된 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
-        "Codex 账户检查已确认 ChatGPT 账户；已保存获准的权限配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
-        "Codex アカウント確認で ChatGPT アカウントを確認しました。許可された権限プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
+        "Codex provider authentication settings were checked; the permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
+        "Codex 공급자의 인증 설정을 확인했습니다. 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
+        "已检查 Codex 提供商的身份验证设置，保存权限配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
+        "Codex プロバイダーの認証設定を確認しました。権限プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
     ));
     confirm_installed_features(&config, previous_run)?;
     Ok(())
@@ -4998,15 +4998,12 @@ fn remove_registered_commands(
 async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Result<()> {
     let native = crate::native::Native::connect(config).await?;
     let result = async {
-        let account = ensure_chatgpt_account(&native, config.language).await?;
+        ensure_native_account(&native, config.language).await?;
 
-        let models = native.request("model/list", serde_json::json!({"includeHidden": false})).await
-            .context("read the official Codex model catalog")?;
+        let models = native.model_catalog().await.context("read the native provider model catalog")?;
         if let Some(selected) = &config.model {
-            let found = models.get("data").and_then(serde_json::Value::as_array)
-                .is_some_and(|items| items.iter().any(|item| item.get("id").and_then(serde_json::Value::as_str) == Some(selected)));
-            if !found {
-                bail!("selected Codex model `{selected}` is absent from the current model/list: {}", serde_json::to_string(&models)?);
+            if !crate::model_catalog::catalog_has_model(&models, selected) {
+                bail!("selected model is absent from the native provider catalog and configuration");
             }
         }
 
@@ -5023,7 +5020,7 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
     Ok(())
 }
 
-async fn ensure_chatgpt_account(
+async fn ensure_native_account(
     native: &crate::native::Native,
     language: Language,
 ) -> Result<serde_json::Value> {
@@ -5031,41 +5028,17 @@ async fn ensure_chatgpt_account(
     let mut response = account_read()
         .await
         .context("query official Codex account/read")?;
-    let account_type = response
-        .pointer("/account/type")
-        .and_then(serde_json::Value::as_str);
-    if account_type == Some("chatgpt") {
-        println!("The selected Codex runtime is signed in with a ChatGPT account.");
-        return Ok(response);
-    }
-
-    let account_label = account_type.unwrap_or("none");
-    if let Some(existing_type) = account_type {
-        let answer = ask_text(
-            language,
-            &format!(
-                "This Codex home currently uses `{existing_type}` auth. Start official ChatGPT sign-in? It may replace the selected Codex home's current login"
-            ),
-            &format!(
-                "이 Codex 홈은 현재 `{existing_type}` 인증을 사용합니다. 공식 ChatGPT 로그인을 시작할까요? 선택한 Codex 홈의 기존 로그인이 바뀔 수 있습니다."
-            ),
-            &format!(
-                "此 Codex 主目录当前使用 `{existing_type}` 身份验证。是否开始官方 ChatGPT 登录？这可能替换所选 Codex 主目录的当前登录。"
-            ),
-            &format!(
-                "この Codex ホームは現在 `{existing_type}` 認証を使用しています。公式 ChatGPT サインインを開始しますか？選択した Codex ホームの現在のログインが置き換わる可能性があります。"
-            ),
-            "N",
-        )?;
-        if !matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes") {
-            bail!(
-                "ChatGPT account sign-in is required; the existing `{existing_type}` login was left unchanged"
-            )
-        }
-    } else {
+    if !crate::model_catalog::needs_chatgpt_login(&response) {
         println!(
-            "Codex reports account type `{account_label}`. This bridge requires an official ChatGPT account login; API-key-only auth is not supported."
+            "{}",
+            language.text(
+                "Using the active Codex provider and its existing authentication settings.",
+                "활성 Codex 공급자와 기존 인증 설정을 사용합니다.",
+                "使用当前 Codex 提供商及其现有身份验证设置。",
+                "有効な Codex プロバイダーと既存の認証設定を使用します。"
+            )
         );
+        return Ok(response);
     }
 
     let mut events = native.subscribe();

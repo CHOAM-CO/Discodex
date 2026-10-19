@@ -44,6 +44,10 @@ Windows PowerShell：
 
 安装器会连接 Codex 与 Discord，配置用户配置文件和登录后启动服务。迁移、更新和卸载步骤见[安装指南](docs/installation.zh-CN.md)。
 
+## 自定义与本地模型
+
+主模型和 subagent 选择器共享当前 provider 的模型选项，也包括显式配置的模型。**默认 subagent 模型**作为 Discodex 所有的覆盖项保存，并在 worker 重启后生效。配置示例和发现方式请参阅[自定义与本地 Codex provider](docs/installation.zh-CN.md#自定义与本地-codex-provider)。
+
 ## 更新
 
 使用发行包中的更新脚本，并指定现有配置文件：

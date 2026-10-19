@@ -94,6 +94,16 @@ Windows 计划任务在安装时通过同一用户账号的 UAC 批准以 Highes
 
 Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.authorMention` token。主页以外的输入还会附上名称形式的 `source.server` 和 `source.channel`。实际对话回复允许明确提及输入作者；独立状态和错误通知则关闭提及。转发消息快照单独放在 `forwardedMessages` 中，并与普通附件一同下载。重复的格式说明只放在默认 prompt 中。工具以名称选择频道和用户，以 Discord 链接引用具体消息，以文件名选择附件。只有重名候选才使用临时选择值；内部 ID、输入来源和 turn 关联仍保留。
 
+## 模型与 subagent 默认值
+
+主模型和 subagent 选择器使用相同选项：当前 Codex provider 的实时 `model/list` 结果、显式配置的模型、选择当前 provider 的 native 配置 profile 中的模型、已配置的 subagent 默认模型，以及 native 模型 catalog。实时 catalog 选项只来自当前 active provider。显示时优先使用 model 字段，其次是 ID，最后是 slug；不会推测模型能力。
+
+请在 worker 实际使用的 `CODEX_HOME/config.toml` 中配置 provider 和模型。Native Codex 支持内置 Ollama、LM Studio provider，以及使用 Responses API 的自定义 provider。设置、Discord thread 和更新流程均不提供 provider 选择或切换。Subagent 继承父任务的 provider，不能独立使用其他 provider 的模型。
+
+普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。显式配置的模型名称以及 native 配置 profile 选择的模型可以作为选项提供，但不会启用这些 profile 的其他设置。基于 catalog 的能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
+
+设置主页包含**默认 subagent 模型**。保存后写入 Discodex 所有的 `agents.default_subagent_model` 功能覆盖项，并在 worker 重启后生效。重置会移除此覆盖项并恢复 native 默认值。模型兼容性各异，不保证所有模型都支持所有工具。Provider 认证由 Codex 负责，语音功能可能需要 native 语音 capability。
+
 ## MCP 工具执行批准
 
 官方 Codex form elicitation 若包含 `_meta.codex_approval_kind: "mcp_tool_call"` 且 schema 为空对象，会显示工具执行批准按钮，而不是额外输入表单。提供“仅此次允许”“拒绝”和“取消”；“允许此会话”和“始终允许”只在 native 请求 `_meta.persist` 指明的范围内显示。响应原样传递官方 `action` 和所需 `_meta.persist`，不会伪造用户输入或身份凭据。普通输入表单仍走原有流程；URL 或用户认证请求不会被当成执行批准。请求 ID、连接代次及防止重复响应使用同一 pending 请求状态。

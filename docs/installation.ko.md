@@ -53,6 +53,40 @@ macOS, Linux, Windows에서 migration은 지정한 프로필만 소유 기록과
 
 설치 선택 목록 저장만으로 서비스가 준비된 것은 아니다. 설치기는 native 계정·catalog와 Discord 구성을 확인하고 사용자 서비스를 등록한다. 서비스 시작 여부만으로 텍스트·질문/승인·음성 기능 검증이 끝났다고 판단하지 않는다.
 
+## 사용자 지정 및 로컬 Codex provider
+
+선택한 Codex 프로세스가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모델을 설정합니다. Codex에는 `ollama`, `lmstudio` 기본 provider가 있고 Responses API 사용자 지정 provider도 지원합니다. Provider 인증은 Codex가 담당합니다. `env_key`로 지정한 자격 증명은 worker 서비스 환경에서 사용할 수 있어야 합니다. 비밀 값을 Discodex 프로필 파일에 넣지 마세요. Native 비 OpenAI provider를 사용하는 데 ChatGPT 계정이나 OpenAI API key가 필요한 것은 아닙니다.
+
+Ollama에서는 설치된 모델 이름을 지정합니다.
+
+```toml
+model_provider = "ollama"
+model = "example-local-model"
+```
+
+사용자 지정 Responses API provider 예시:
+
+```toml
+model_provider = "demo"
+model = "example-model"
+
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+```
+
+자리표시자 모델 이름과 endpoint를 provider에 맞는 값으로 바꾸세요. 활성 provider만 실시간 `model/list` catalog를 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. 명시적으로 설정된 모델과 활성 provider의 모델을 선택하는 native 설정 profile도 모델 선택지에 포함될 수 있습니다. 예:
+
+```toml
+[profiles.small]
+model = "example-small-model"
+model_provider = "demo"
+```
+
+이 profile은 모델 선택지만 추가하며 다른 profile 설정을 활성화하지 않습니다. Codex catalog 메타데이터는 모델 기능을 제공하고 catalog를 통한 모델 검색에 사용됩니다. Native catalog 검색에는 시작 시 읽는 `model_catalog_json`을 쓰거나 `[model_providers.demo].model_catalog_url`에서 전체 `{models: [ModelInfo, ...]}` 스키마를 제공할 수 있습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요. 모델과 provider의 호환성이 다르며 도구 지원은 보장되지 않습니다. 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
+
 ## 업데이트
 
 기존 프로필을 업데이트할 때는 설치 스크립트에 그 프로필의 기존 config 파일을 명시한다. 한 기기에 여러 프로필이 있어도 선택을 추측하지 않는다. 업데이트는 저장된 프로필 언어를 그대로 사용하며 언어 선택을 다시 묻지 않는다.

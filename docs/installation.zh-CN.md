@@ -55,6 +55,40 @@ Discord token 通过安全输入提供。安装器会检查 Discord 访问和 na
 
 仅保存安装选择清单并不代表服务已准备完成。安装器会检查 native 账号、catalog 和 Discord 配置，并注册用户服务。服务成功启动本身不能证明文字、问题/批准或语音功能均已验证。
 
+## 自定义与本地 Codex provider
+
+请在所选 Codex 进程实际使用的同一个 `CODEX_HOME/config.toml` 中配置 provider 和模型。Codex 内置 `ollama`、`lmstudio` provider，也支持自定义 Responses API provider。Provider 认证由 Codex 处理。`env_key` 指定的凭据必须能在 worker 服务环境中读取；请勿将密钥写入 Discodex 配置文件。使用 native 非 OpenAI provider 本身不要求 ChatGPT 账号或 OpenAI API key。
+
+对于 Ollama，请填写已安装的模型名称：
+
+```toml
+model_provider = "ollama"
+model = "example-local-model"
+```
+
+自定义 Responses API provider 示例：
+
+```toml
+model_provider = "demo"
+model = "example-model"
+
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+```
+
+请将占位符模型名称和 endpoint 替换为 provider 支持的值。只有当前 active provider 提供实时 `model/list` catalog。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。显式配置的模型，以及选择当前 active provider 模型的 native 配置 profile，也可以出现在模型选项中。例如：
+
+```toml
+[profiles.small]
+model = "example-small-model"
+model_provider = "demo"
+```
+
+此 profile 仅提供模型选择，不会启用该 profile 的其他设置。Codex catalog 元数据用于提供模型能力信息和通过 catalog 发现模型。 Native catalog 发现可使用启动时读取的 `model_catalog_json`，或由 `[model_providers.demo].model_catalog_url` 提供完整的 `{models: [ModelInfo, ...]}` schema。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。兼容性取决于模型和 provider，不保证工具支持。语音功能可能需要 native 语音 capability。
+
 ## 更新
 
 更新现有配置时，在安装脚本中明确指定该配置文件。即使设备上有多个配置，也不会猜测要更新哪一个。更新沿用保存的配置语言，不会再次询问语言。

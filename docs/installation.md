@@ -55,6 +55,40 @@ Provide the Discord token through the installer's secure prompt. The installer c
 
 Saving an installation plan alone does not finish setup. The installer checks the native account and catalog, checks Discord configuration, and registers the user service. A running service by itself does not verify text, question/approval, or voice behavior.
 
+## Custom and local Codex providers
+
+Configure the provider and model in the same `CODEX_HOME/config.toml` used by the selected Codex process. Codex includes built-in `ollama` and `lmstudio` providers and supports custom Responses API providers. Provider authentication belongs to Codex. The credential named by `env_key` must be available in the worker service environment; do not place the secret in Discodex profile files. A native non-OpenAI provider does not by itself require a ChatGPT account or OpenAI API key.
+
+For Ollama, use the installed model name:
+
+```toml
+model_provider = "ollama"
+model = "example-local-model"
+```
+
+For a custom Responses API provider:
+
+```toml
+model_provider = "demo"
+model = "example-model"
+
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+```
+
+Replace placeholder model names and the endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Explicitly configured models and native configuration profiles that select a model for the active provider can also appear as choices. For example:
+
+```toml
+[profiles.small]
+model = "example-small-model"
+model_provider = "demo"
+```
+
+This profile contributes its model choice; it does not activate the profile's other settings. Codex catalog metadata advertises model capabilities and supports model discovery through the catalog. For native catalog discovery, `model_catalog_json` is read at worker startup, or `[model_providers.demo].model_catalog_url` can serve the full `{models: [ModelInfo, ...]}` schema. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/), the [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), and [bundled model catalog examples](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Compatibility depends on the model and provider; tool support is not guaranteed. Native voice capability may be required for voice features.
+
 ## Updating
 
 Pass the existing profile config explicitly so the updater does not guess when several profiles exist. It keeps the saved profile language and does not prompt for a new one.

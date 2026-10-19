@@ -54,6 +54,10 @@ The installer offers English (default), Korean, Simplified Chinese, and Japanese
 
 Setup connects the Codex app-server and Discord bot, configures a profile, and registers a user-level startup service. See the [installation guide](docs/installation.md) for migration, updates, removal, and macOS permissions.
 
+## Custom and local models
+
+The primary and subagent pickers share model choices, including models explicitly configured for the active provider. **Default subagent model** is saved as a Discodex-owned override and applies after a worker restart. See [Custom and local Codex providers](docs/installation.md#custom-and-local-codex-providers) for examples and discovery details.
+
 ## Updating
 
 Use the updater from the installer bundle with the existing profile config:
