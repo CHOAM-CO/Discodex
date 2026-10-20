@@ -421,6 +421,43 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
             ),
         )
         .await?;
+    if interaction
+        .data
+        .options
+        .first()
+        .is_some_and(|sub| sub.name == "update")
+    {
+        let (content, rows) =
+            match crate::discord_updates::manual_update(&state, interaction.user.id.get()).await {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::warn!(%error, "could not check manual update");
+                    (
+                        state
+                            .config
+                            .language
+                            .text(
+                                "Could not check for updates. Please try again.",
+                                "업데이트를 확인하지 못했습니다. 다시 시도해 주세요.",
+                                "无法检查更新，请重试。",
+                                "更新を確認できませんでした。再試行してください。",
+                            )
+                            .to_owned(),
+                        Vec::new(),
+                    )
+                }
+            };
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(content)
+                    .components(rows)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+        return Ok(());
+    }
     if settings_ui_requested(interaction) {
         let response = match settings_menu_from_command(ctx, interaction, &state).await {
             Ok((content, rows)) => {
@@ -578,9 +615,6 @@ async fn handle_authorized(
     let arg_string = || arg.and_then(option_string).map(str::to_owned);
     let mut output = String::new();
     match sub {
-        "update" => {
-            output = crate::discord_updates::manual_update(&state).await?;
-        }
         "status" => {
             let thread = state.native.refresh_thread_state().await;
             match thread {
@@ -3177,6 +3211,13 @@ pub(crate) async fn handle_component(
     )?;
     if interaction.data.custom_id.starts_with("asyncq:") {
         return crate::async_questions::handle_component(ctx, interaction, &state).await;
+    }
+    if interaction
+        .data
+        .custom_id
+        .starts_with("discodex:update-confirm:")
+    {
+        return crate::discord_updates::handle_confirmation(ctx, interaction, &state).await;
     }
     if interaction.data.custom_id.starts_with("discodex:update:") {
         return crate::discord_updates::handle_component(ctx, interaction, &state).await;

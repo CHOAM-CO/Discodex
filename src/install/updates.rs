@@ -87,6 +87,9 @@ pub struct UpdateSnapshot {
     pub apply_attempt_id: Option<String>,
     pub helper_started_attempt_id: Option<String>,
     pub helper_pid: Option<u32>,
+    pub immediate_release_id: Option<u64>,
+    pub result_notification_id: Option<String>,
+    pub result_notified_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -257,6 +260,9 @@ impl UpdateStore {
         self.snapshot.status = UpdateStatus::Selected;
         self.snapshot.prepared = None;
         self.snapshot.last_error = None;
+        self.snapshot.immediate_release_id = None;
+        self.snapshot.result_notification_id = Some(Uuid::new_v4().to_string());
+        self.snapshot.result_notified_id = None;
         self.persist()?;
         Ok(pinned)
     }
@@ -281,7 +287,109 @@ impl UpdateStore {
             UpdateStatus::Selected
         };
         self.snapshot.last_error = None;
+        self.snapshot.immediate_release_id = None;
+        self.snapshot.result_notification_id = Some(Uuid::new_v4().to_string());
+        self.snapshot.result_notified_id = None;
         self.persist()?;
+        Ok(target)
+    }
+
+    /// Select or retry a release and request application as soon as it is safe to hand off.
+    /// Repeated requests for the same active target preserve prepared data and result identity.
+    pub fn request_immediate(&mut self, release_id: u64) -> Result<PinnedRelease> {
+        let snapshot = self.snapshot();
+        if let Some(pending) = snapshot.pending.as_ref() {
+            if pending.release_id == release_id {
+                match snapshot.status {
+                    UpdateStatus::Selected | UpdateStatus::Preparing | UpdateStatus::Ready => {
+                        self.persist_with(|snapshot| {
+                            ensure!(
+                                snapshot
+                                    .pending
+                                    .as_ref()
+                                    .is_some_and(|p| p.release_id == release_id)
+                                    && matches!(
+                                        snapshot.status,
+                                        UpdateStatus::Selected
+                                            | UpdateStatus::Preparing
+                                            | UpdateStatus::Ready
+                                    ),
+                                "selected update changed before immediate request"
+                            );
+                            snapshot.immediate_release_id = Some(release_id);
+                            Ok(())
+                        })?;
+                        return Ok(pending.clone());
+                    }
+                    UpdateStatus::Failed => {
+                        let target = pending.clone();
+                        self.persist_with(|snapshot| {
+                            ensure!(
+                                snapshot.status == UpdateStatus::Failed
+                                    && snapshot
+                                        .pending
+                                        .as_ref()
+                                        .is_some_and(|p| p.release_id == release_id),
+                                "failed update changed before immediate retry"
+                            );
+                            snapshot.status = if snapshot.prepared.is_some() {
+                                UpdateStatus::Ready
+                            } else {
+                                UpdateStatus::Selected
+                            };
+                            snapshot.last_error = None;
+                            snapshot.immediate_release_id = Some(release_id);
+                            snapshot.result_notification_id = Some(Uuid::new_v4().to_string());
+                            snapshot.result_notified_id = None;
+                            Ok(())
+                        })?;
+                        return Ok(target);
+                    }
+                    UpdateStatus::Applying => return Ok(pending.clone()),
+                    UpdateStatus::Idle | UpdateStatus::Applied => {}
+                }
+            } else if snapshot.status == UpdateStatus::Applying {
+                bail!("another release is already applying");
+            }
+        } else if snapshot.status == UpdateStatus::Applying {
+            bail!("an update is already applying");
+        }
+
+        let release = snapshot
+            .latest_release
+            .as_ref()
+            .filter(|release| release.release_id == release_id)
+            .context("selected release is no longer the latest discovered release")?;
+        let target = PinnedRelease {
+            release_id: release.release_id,
+            version: release.version.clone(),
+            tag: release.tag.clone(),
+            commit: release.commit.clone(),
+            url: release.url.clone(),
+            asset: release.asset.clone(),
+        };
+        let notification_id = Uuid::new_v4().to_string();
+        self.persist_with(|snapshot| {
+            ensure!(
+                snapshot
+                    .latest_release
+                    .as_ref()
+                    .is_some_and(|release| release.release_id == release_id),
+                "selected release is no longer the latest discovered release"
+            );
+            ensure!(
+                snapshot.status != UpdateStatus::Applying,
+                "an update is already applying"
+            );
+            snapshot.pending = Some(target.clone());
+            snapshot.status = UpdateStatus::Selected;
+            snapshot.prepared = None;
+            snapshot.last_error = None;
+            snapshot.immediate_release_id = Some(release_id);
+            snapshot.result_notification_id = Some(notification_id);
+            snapshot.result_notified_id = None;
+            Ok(())
+        })?;
         Ok(target)
     }
 
@@ -296,8 +404,34 @@ impl UpdateStore {
             self.snapshot.pending = None;
             self.snapshot.prepared = None;
             self.snapshot.status = UpdateStatus::Idle;
+            self.snapshot.immediate_release_id = None;
         }
         self.persist()
+    }
+
+    fn ensure_result_notification(snapshot: &mut UpdateSnapshot) {
+        if snapshot.result_notification_id.is_none() {
+            snapshot.result_notification_id = Some(Uuid::new_v4().to_string());
+            snapshot.result_notified_id = None;
+        }
+    }
+
+    pub fn record_result_notified(&mut self, notification_id: &str) -> Result<()> {
+        self.persist_with(|snapshot| {
+            ensure!(
+                snapshot.result_notification_id.as_deref() == Some(notification_id),
+                "update result notification identity is stale"
+            );
+            ensure!(
+                matches!(
+                    snapshot.status,
+                    UpdateStatus::Failed | UpdateStatus::Applied
+                ),
+                "update result is not terminal"
+            );
+            snapshot.result_notified_id = Some(notification_id.to_owned());
+            Ok(())
+        })
     }
 
     pub fn set_muted(&mut self, muted: bool) -> Result<()> {
@@ -445,6 +579,8 @@ impl UpdateStore {
                 && snapshot.helper_started_attempt_id.is_none()
             {
                 snapshot.status = UpdateStatus::Failed;
+                Self::ensure_result_notification(snapshot);
+                snapshot.immediate_release_id = None;
                 snapshot.last_error = Some(error.clone());
                 snapshot.last_result = snapshot.pending.clone();
                 snapshot.apply_attempt_id = None;
@@ -467,6 +603,8 @@ impl UpdateStore {
                 && snapshot.helper_started_attempt_id.as_deref() == Some(attempt.as_str())
             {
                 snapshot.status = UpdateStatus::Failed;
+                Self::ensure_result_notification(snapshot);
+                snapshot.immediate_release_id = None;
                 snapshot.last_error = Some(error.clone());
                 snapshot.last_result = snapshot.pending.clone();
                 snapshot.apply_attempt_id = None;
@@ -480,20 +618,23 @@ impl UpdateStore {
     }
 
     pub fn mark_apply_failed(&mut self, release_id: u64, error: String) -> Result<()> {
-        if self
-            .snapshot
-            .pending
-            .as_ref()
-            .is_some_and(|p| p.release_id == release_id)
-        {
-            self.snapshot.last_error = Some(error);
-            self.snapshot.last_result = self.snapshot.pending.clone();
-            self.snapshot.status = UpdateStatus::Failed;
-            self.snapshot.apply_attempt_id = None;
-            self.snapshot.helper_started_attempt_id = None;
-            self.snapshot.helper_pid = None;
-        }
-        self.persist()
+        self.persist_with(|snapshot| {
+            if snapshot
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.release_id == release_id)
+            {
+                Self::ensure_result_notification(snapshot);
+                snapshot.immediate_release_id = None;
+                snapshot.last_error = Some(error);
+                snapshot.last_result = snapshot.pending.clone();
+                snapshot.status = UpdateStatus::Failed;
+                snapshot.apply_attempt_id = None;
+                snapshot.helper_started_attempt_id = None;
+                snapshot.helper_pid = None;
+            }
+            Ok(())
+        })
     }
 
     pub fn mark_applied(&mut self, release_id: u64) -> Result<()> {
@@ -503,6 +644,8 @@ impl UpdateStore {
                 .as_ref()
                 .is_some_and(|pending| pending.release_id == release_id)
             {
+                Self::ensure_result_notification(snapshot);
+                snapshot.immediate_release_id = None;
                 snapshot.last_applied_release_id = Some(release_id);
                 snapshot.last_result = snapshot.pending.clone();
                 snapshot.status = UpdateStatus::Applied;
@@ -517,6 +660,7 @@ impl UpdateStore {
             {
                 // A restarted worker may already have recorded this helper's result.
                 // Preserve the retained release card and all newer pending selections.
+                Self::ensure_result_notification(snapshot);
             }
             Ok(())
         })
@@ -613,6 +757,9 @@ fn merge_snapshot(
         apply_attempt_id: field!(apply_attempt_id),
         helper_started_attempt_id: field!(helper_started_attempt_id),
         helper_pid: field!(helper_pid),
+        immediate_release_id: field!(immediate_release_id),
+        result_notification_id: field!(result_notification_id),
+        result_notified_id: field!(result_notified_id),
     }
 }
 
@@ -1368,6 +1515,137 @@ mod tests {
             .unwrap();
         assert_eq!(store.retry_update(5).unwrap().release_id, 5);
         assert_eq!(store.snapshot().pending.unwrap().release_id, 5);
+    }
+
+    #[test]
+    fn immediate_request_persists_and_repeats_without_replacing_prepared_state() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(notice(5)),
+            })
+            .unwrap();
+        let pinned = store.select_update(5).unwrap();
+        let prepared = PreparedUpdate {
+            release_id: 5,
+            version: pinned.version.clone(),
+            commit: pinned.commit.clone(),
+            binary: dir.path().join("prepared-binary"),
+        };
+        store.store_prepared(prepared.clone()).unwrap();
+        store.set_muted(true).unwrap();
+        store.snapshot.skipped_release_id = Some(8);
+        store.persist().unwrap();
+        let selected = store.request_immediate(5).unwrap();
+        let token = store.snapshot().result_notification_id.clone().unwrap();
+        let repeated = store.request_immediate(5).unwrap();
+        let snapshot = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert_eq!(selected, pinned);
+        assert_eq!(repeated, pinned);
+        assert_eq!(snapshot.immediate_release_id, Some(5));
+        assert_eq!(snapshot.prepared, Some(prepared));
+        assert_eq!(snapshot.status, UpdateStatus::Ready);
+        assert!(snapshot.muted);
+        assert_eq!(snapshot.skipped_release_id, Some(8));
+        assert_eq!(
+            snapshot.result_notification_id.as_deref(),
+            Some(token.as_str())
+        );
+        assert_eq!(snapshot.result_notified_id, None);
+    }
+
+    #[test]
+    fn immediate_request_retries_failed_target_with_fresh_result_identity() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(notice(5)),
+            })
+            .unwrap();
+        let pinned = store.select_update(5).unwrap();
+        let prepared = PreparedUpdate {
+            release_id: 5,
+            version: pinned.version.clone(),
+            commit: pinned.commit.clone(),
+            binary: dir.path().join("prepared-binary"),
+        };
+        store.store_prepared(prepared.clone()).unwrap();
+        store.mark_apply_failed(5, "failed".into()).unwrap();
+        let failed_token = store.snapshot().result_notification_id.clone().unwrap();
+        store.record_result_notified(&failed_token).unwrap();
+        assert_eq!(store.request_immediate(5).unwrap(), pinned);
+        let snapshot = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert_eq!(snapshot.immediate_release_id, Some(5));
+        assert_eq!(snapshot.status, UpdateStatus::Ready);
+        assert_eq!(snapshot.prepared, Some(prepared));
+        assert_ne!(
+            snapshot.result_notification_id.as_deref(),
+            Some(failed_token.as_str())
+        );
+        assert_eq!(snapshot.result_notified_id, None);
+    }
+
+    #[test]
+    fn terminal_result_notification_is_deduplicated_and_validated() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(notice(5)),
+            })
+            .unwrap();
+        store.request_immediate(5).unwrap();
+        store.mark_apply_failed(5, "failed".into()).unwrap();
+        let notification_id = store.snapshot().result_notification_id.clone().unwrap();
+        assert!(store.record_result_notified("stale-id").is_err());
+        store.record_result_notified(&notification_id).unwrap();
+        store.record_result_notified(&notification_id).unwrap();
+        let snapshot = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert_eq!(
+            snapshot.result_notified_id.as_deref(),
+            Some(notification_id.as_str())
+        );
+        assert_eq!(snapshot.immediate_release_id, None);
+    }
+
+    #[test]
+    fn immediate_request_merges_concurrent_preferences_and_check_state() {
+        let dir = tempdir().unwrap();
+        let mut initial = UpdateStore::load(dir.path()).unwrap();
+        initial
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(notice(5)),
+            })
+            .unwrap();
+        let mut stale_request = UpdateStore::load(dir.path()).unwrap();
+        let mut concurrent = UpdateStore::load(dir.path()).unwrap();
+        concurrent.set_muted(true).unwrap();
+        concurrent
+            .apply_check(CheckResult::NotModified {
+                checked_at_unix: 200,
+                etag: Some("etag".into()),
+            })
+            .unwrap();
+        stale_request.request_immediate(5).unwrap();
+        let snapshot = UpdateStore::load(dir.path()).unwrap().snapshot();
+        assert!(snapshot.muted);
+        assert_eq!(snapshot.last_checked_unix, Some(200));
+        assert_eq!(snapshot.immediate_release_id, Some(5));
+        assert_eq!(
+            snapshot.pending.as_ref().map(|target| target.release_id),
+            Some(5)
+        );
+        assert!(snapshot.result_notification_id.is_some());
     }
 
     #[test]
