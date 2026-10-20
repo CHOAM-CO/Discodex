@@ -96,14 +96,16 @@ Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.auth
 
 ## 模型与 subagent 默认值
 
-主模型和 subagent 选择器使用相同选项：当前 Codex provider 的实时 `model/list` 结果、显式配置的模型、已配置的 subagent 默认模型，以及 native 模型 catalog。实时 catalog 选项只来自当前 active provider。显示时优先使用 model 字段，其次是 ID，最后是 slug；不会推测模型能力。
+主模型和 subagent 选择器会显示当前 native 模型 catalog，以及在 native 配置 profile 中明确注册的模型。请在 `[profiles.NAME]` 表中同时设置 `model` 和 `model_provider` 来注册模型。仅定义 provider 不会添加模型；Discodex 不会扫描任意的 `*.config.toml` 文件。显示时优先使用 model 字段，其次是 ID，最后是 slug。
 
-请在 worker 实际使用的 `CODEX_HOME/config.toml` 中配置 provider 和模型。Native Codex 支持内置 Ollama、LM Studio provider，以及使用 Responses API 的自定义 provider。设置、Discord thread 和更新流程均不提供 provider 选择或切换。Subagent 继承父任务的 provider，不能独立使用其他 provider 的模型。
+选择模型时，可以在同一个持久 Codex thread 中切换 provider 并保留对话历史。切换到当前 provider 下的其他模型可在 thread 活跃时应用；切换到另一 provider 则会等到 thread 空闲。Native subagent 会继承父任务的 provider，因此不能为 subagent 使用其他 provider 的模型。Discodex 会说明并拒绝不兼容的 subagent 选择。只有 native catalog 提供的能力和推理强度选项才可用。
 
-普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。显式配置的模型名称以及 native 配置 profile 选择的模型可以作为选项提供，但不会启用这些 profile 的其他设置。基于 catalog 的能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
+请在 worker 实际使用的 `CODEX_HOME/config.toml` 中定义 provider。Native Codex 支持内置 Ollama、LM Studio provider，以及使用 Responses API 的自定义 provider。Provider 认证由 Codex 处理。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
 
-设置主页包含**默认 subagent 模型**。保存后写入 Discodex 所有的 `agents.default_subagent_model` 功能覆盖项，并在 worker 重启后生效。重置会移除此覆盖项并恢复 native 默认值。模型兼容性各异，不保证所有模型都支持所有工具。Provider 认证由 Codex 负责，语音功能可能需要 native 语音 capability。
 
+设置主页包含默认 subagent 模型。保存后写入 Discodex 所有的 agents.default_subagent_model 功能覆盖项，并在 worker 重启后生效。重置会移除此覆盖项并恢复 native 默认值。模型与工具的兼容性各异；语音功能可能需要 native 语音 capability。
+
+Discodex 会将 provider 与已保存的 subagent 模型偏好一起记录。主模型切换 provider 后，偏好仍会保留；偏好与当前 provider 不兼容期间，subagent 会以新的父模型作为有效默认值。主模型切回匹配的 provider 后，已保存的偏好会恢复生效。
 ## MCP 工具执行批准
 
 官方 Codex form elicitation 若包含 `_meta.codex_approval_kind: "mcp_tool_call"` 且 schema 为空对象，会显示工具执行批准按钮，而不是额外输入表单。提供“仅此次允许”“拒绝”和“取消”；“允许此会话”和“始终允许”只在 native 请求 `_meta.persist` 指明的范围内显示。响应原样传递官方 `action` 和所需 `_meta.persist`，不会伪造用户输入或身份凭据。普通输入表单仍走原有流程；URL 或用户认证请求不会被当成执行批准。请求 ID、连接代次及防止重复响应使用同一 pending 请求状态。

@@ -20,6 +20,7 @@ use tokio_tungstenite::{WebSocketStream, client_async_with_config};
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::model_catalog::ModelSelection;
 use crate::state::StateStore;
 
 #[path = "native_features.rs"]
@@ -143,6 +144,13 @@ impl NativeRequestError {
             && (self.message == "no active turn to steer"
                 || self.message.starts_with("expected active turn id"))
     }
+    fn is_thread_closing(&self) -> bool {
+        self.method == "thread/resume"
+            && self.code == Some(-32600)
+            && self
+                .message
+                .contains("is closing; retry thread/resume after the thread is closed")
+    }
 }
 
 // Matches Codex TUI app_server_session.rs history compatibility fallback.
@@ -215,6 +223,7 @@ struct Inner {
     next_observation_order: AtomicU64,
     thread_id: Mutex<String>,
     thread_state: Mutex<Value>,
+    applied_subagent_model: Mutex<Option<String>>,
     child: AsyncMutex<Option<Child>>,
     reconnect: AsyncMutex<()>,
     endpoint: PathBuf,
@@ -388,13 +397,17 @@ impl Native {
             if saved.pending_new_thread {
                 native.start_new_raw().await?;
             } else if let Some(thread_id) = saved.thread_id.as_ref() {
-                let thread = native
-                    .request("thread/resume", json!({
-                        "threadId": thread_id,
-                        "baseInstructions": crate::instructions::agent_base_instructions(&config.name, config.language)
-                    }))
-                    .await
+                let mut params = json!({
+                    "threadId": thread_id,
+                    "baseInstructions": crate::instructions::agent_base_instructions(&config.name, config.language)
+                });
+                let child_model = native.prepare_model_params(&mut params, saved.model_selection.as_ref()).await?;
+                let thread = native.request("thread/resume", params).await
                     .with_context(|| format!("resume saved Codex thread {thread_id}"))?;
+                if let Some(selection) = saved.model_selection.as_ref() {
+                    validate_model_selection_response(&thread, selection)?;
+                }
+                native.remember_subagent_model(child_model)?;
                 let actual_thread_id = response_thread_id(&thread)?;
                 if let Some(enabled) = config.memory_enabled {
                     native
@@ -690,6 +703,7 @@ impl Native {
             next_observation_order: AtomicU64::new(1),
             thread_id: Mutex::new(initial_thread_id),
             thread_state: Mutex::new(Value::Null),
+            applied_subagent_model: Mutex::new(None),
             child: AsyncMutex::new(Some(child)),
             reconnect: AsyncMutex::new(()),
             endpoint,
@@ -756,6 +770,12 @@ impl Native {
     }
 
     async fn start_new_raw(&self) -> Result<String> {
+        let saved = StateStore::new(&self.inner.config.state_dir).load()?;
+        self.start_new_raw_with(saved.model_selection.as_ref())
+            .await
+    }
+
+    async fn start_new_raw_with(&self, selection: Option<&ModelSelection>) -> Result<String> {
         let mut params = json!({
             "cwd": self.inner.config.project_dir,
             "ephemeral": false,
@@ -764,6 +784,7 @@ impl Native {
         if let Some(model) = &self.inner.config.model {
             params["model"] = Value::String(model.clone());
         }
+        let child_model = self.prepare_model_params(&mut params, selection).await?;
         if let Some(profile_id) = &self.inner.config.permissions {
             self.validate_permission_profile(profile_id).await?;
             params["permissions"] = Value::String(profile_id.clone());
@@ -772,6 +793,9 @@ impl Native {
             .request_raw("thread/start", params)
             .await
             .context("start a Codex thread")?;
+        if let Some(selection) = selection {
+            validate_model_selection_response(&response, selection)?;
+        }
         let thread_id = response_thread_id(&response)?;
         if response
             .pointer("/thread/ephemeral")
@@ -793,6 +817,12 @@ impl Native {
                 );
             }
         }
+        if let Some(settings) = configured_thread_settings_update(&self.inner.config, &thread_id) {
+            self.request_raw("thread/settings/update", settings)
+                .await
+                .context("apply configured settings to newly started Codex thread")?;
+        }
+        self.remember_subagent_model(child_model)?;
         *self
             .inner
             .thread_id
@@ -803,12 +833,198 @@ impl Native {
             .thread_state
             .lock()
             .map_err(|_| anyhow!("thread state lock poisoned"))? = thread_state_summary(&response);
-        if let Some(settings) = configured_thread_settings_update(&self.inner.config, &thread_id) {
-            self.request_raw("thread/settings/update", settings)
-                .await
-                .context("apply configured settings to newly started Codex thread")?;
-        }
         Ok(thread_id)
+    }
+
+    /// Prepare native per-thread model overrides. Provider definitions/auth remain in Codex.
+    async fn prepare_model_params(
+        &self,
+        params: &mut Value,
+        selection: Option<&ModelSelection>,
+    ) -> Result<Option<String>> {
+        let response = self
+            .request_raw(
+                "config/read",
+                json!({
+                    "includeLayers": false, "cwd": self.inner.config.project_dir
+                }),
+            )
+            .await?;
+        let config = response.get("config").unwrap_or(&response);
+        let provider = crate::model_catalog::configured_provider(config);
+        let configured_model = config
+            .get("profile")
+            .and_then(Value::as_str)
+            .and_then(|name| config.get("profiles")?.get(name)?.get("model"))
+            .or_else(|| config.get("model"))
+            .and_then(Value::as_str);
+        let target = selection.cloned().or_else(|| {
+            params
+                .get("model")
+                .and_then(Value::as_str)
+                .or(configured_model)
+                .map(|model| ModelSelection {
+                    provider: provider.to_owned(),
+                    model: model.to_owned(),
+                })
+        });
+        if let Some(selection) = selection {
+            apply_model_selection(params, selection);
+        }
+        let preferences = self.read_native_feature_preferences()?;
+        let child_model = target.as_ref().and_then(|target| {
+            native_features::subagent_model_for_provider(
+                &preferences,
+                target,
+                provider,
+                config
+                    .pointer("/agents/default_subagent_model")
+                    .and_then(Value::as_str),
+            )
+        });
+        // Without an explicit parent model, inherit Codex's default model and
+        // never forward a saved child model belonging to a different provider.
+        let child_model = child_model.or_else(|| {
+            if target.is_none() {
+                native_features::subagent_model_without_parent_override(
+                    &preferences,
+                    provider,
+                    config
+                        .pointer("/agents/default_subagent_model")
+                        .and_then(Value::as_str),
+                )
+            } else {
+                None
+            }
+        });
+        if let Some(model) = child_model.as_ref() {
+            params["config"] = json!({"agents.default_subagent_model": model});
+        }
+        Ok(child_model)
+    }
+
+    fn remember_subagent_model(&self, model: Option<String>) -> Result<()> {
+        *self
+            .inner
+            .applied_subagent_model
+            .lock()
+            .map_err(|_| anyhow!("subagent model lock poisoned"))? = model;
+        Ok(())
+    }
+
+    /// Callers hold input admission, settings, and active-turn locks for this transition.
+    pub(crate) async fn set_model_selection(&self, selection: &ModelSelection) -> Result<Value> {
+        self.ensure_connected().await?;
+        let store = StateStore::new(&self.inner.config.state_dir);
+        let saved = store.load()?;
+        let thread_id = self.thread_id();
+        if thread_id.is_empty() {
+            bail!("there is no active Codex thread to change models on");
+        }
+        if saved.thread_id.as_deref() != Some(thread_id.as_str()) {
+            let old = self.thread_state();
+            let old_child = self
+                .inner
+                .applied_subagent_model
+                .lock()
+                .map_err(|_| anyhow!("subagent model lock poisoned"))?
+                .clone();
+            let new_id = self.start_new_raw_with(Some(selection)).await?;
+            if let Err(error) = store.save_model_selection(selection) {
+                *self
+                    .inner
+                    .thread_id
+                    .lock()
+                    .map_err(|_| anyhow!("thread ID lock poisoned"))? = thread_id.clone();
+                *self
+                    .inner
+                    .thread_state
+                    .lock()
+                    .map_err(|_| anyhow!("thread state lock poisoned"))? = old;
+                self.remember_subagent_model(old_child)?;
+                let cleanup = self
+                    .request_raw("thread/unsubscribe", json!({"threadId":new_id}))
+                    .await;
+                return Err(error).context(format!("could not save the model selection; kept the previous empty conversation (replacement cleanup: {})", if cleanup.is_ok(){"done"}else{"failed"}));
+            }
+            // The old empty thread has no history. An unsubscribe cleanup error
+            // must not misreport a successfully applied and persisted selection.
+            if let Err(error) = self
+                .request_raw("thread/unsubscribe", json!({"threadId": thread_id}))
+                .await
+            {
+                tracing::warn!(%error,"could not detach previous empty thread after selecting model");
+            }
+            return Ok(self.thread_state());
+        }
+        let old = self.thread_state();
+        let previous = old
+            .get("modelProvider")
+            .and_then(Value::as_str)
+            .zip(old.get("model").and_then(Value::as_str))
+            .map(|(provider, model)| ModelSelection {
+                provider: provider.into(),
+                model: model.into(),
+            })
+            .or(saved.model_selection.clone())
+            .context("cannot determine the current model/provider for restoring the thread")?;
+        let mut params = json!({"threadId":thread_id});
+        let child_model = self
+            .prepare_model_params(&mut params, Some(selection))
+            .await?;
+        let mut rollback = json!({"threadId":thread_id});
+        apply_model_selection(&mut rollback, &previous);
+        if let Some(model) = self
+            .inner
+            .applied_subagent_model
+            .lock()
+            .map_err(|_| anyhow!("subagent model lock poisoned"))?
+            .as_ref()
+        {
+            rollback["config"] = json!({"agents.default_subagent_model":model});
+        }
+        // Subscribe before detach so a fast background unload cannot lose its closing event.
+        let mut events = self.subscribe();
+        let response = switch_model_thread(
+            |method, params| self.request_raw(method, params),
+            &mut events,
+            &thread_id,
+            &params,
+            selection,
+            &rollback,
+            &previous,
+        )
+        .await?;
+        if let Err(error) = store.save_model_selection(selection) {
+            let restored = switch_model_thread(
+                |method, params| self.request_raw(method, params),
+                &mut events,
+                &thread_id,
+                &rollback,
+                &previous,
+                &params,
+                selection,
+            )
+            .await;
+            return match restored {
+                Ok(response) => {
+                    *self.inner.thread_state.lock().map_err(|_|anyhow!("thread state lock poisoned"))?=thread_state_summary(&response);
+                    Err(error).context("could not persist the selected model; restored the previous conversation")
+                }
+                Err(restore_error) => Err(error).context(format!("could not persist the selected model; restoring the previous model also failed: {restore_error:#}")),
+            };
+        }
+        *self
+            .inner
+            .thread_state
+            .lock()
+            .map_err(|_| anyhow!("thread state lock poisoned"))? = thread_state_summary(&response);
+        self.remember_subagent_model(child_model)?;
+        Ok(thread_state_summary(&response))
+    }
+
+    pub(crate) fn save_model_selection(&self, selection: &ModelSelection) -> Result<()> {
+        StateStore::new(&self.inner.config.state_dir).save_model_selection(selection)
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
@@ -1033,6 +1249,7 @@ impl Native {
             &native_config,
             &self.thread_state(),
             self.inner.config.model.as_deref(),
+            None,
         )
     }
 
@@ -1049,33 +1266,60 @@ impl Native {
     /// Read the persisted profile preferences together with Codex's effective config and origins.
     pub async fn read_native_feature_snapshot(&self) -> Result<NativeFeatureSnapshot> {
         let preferences = self.read_native_feature_preferences()?;
-        let native_config = self
+        let mut native_config = self
             .request(
                 "config/read",
                 feature_config_read_params(&self.inner.config.project_dir),
             )
             .await
             .context("read effective native feature configuration")?;
+        if let Some(model) = self
+            .inner
+            .applied_subagent_model
+            .lock()
+            .map_err(|_| anyhow!("subagent model lock poisoned"))?
+            .as_ref()
+        {
+            native_config["config"]["agents"]["default_subagent_model"] = json!(model);
+        }
         Ok(NativeFeatureSnapshot {
             preferences,
             native_config,
         })
     }
 
-    /// Save per-profile choices for the next owned app-server start. Session-level CLI
-    /// overrides outrank user config, so this deliberately does not claim hot application.
+    /// Save per-profile choices for the next owned app-server start. The child-model
+    /// preference is applied through per-thread config, retaining its provider affinity.
     pub async fn apply_native_feature_preferences(
         &self,
         preferences: &NativeFeaturePreferences,
     ) -> Result<NativeFeatureApplyResult> {
         let mut preferences = preferences.clone();
-        if let Some(model) = preferences.subagent_model.as_deref() {
-            let catalog = self.model_catalog().await?;
-            let selected = catalog.get("data").and_then(Value::as_array)
-                .and_then(|models| models.iter().find(|item| crate::model_catalog::model_matches(item, model)))
-                .and_then(crate::model_catalog::model_id)
-                .context("subagent model is absent from the active native provider catalog and configuration")?;
-            preferences.subagent_model = Some(selected.to_owned());
+        let previous = self.read_native_feature_preferences()?;
+        if preferences.subagent_model != previous.subagent_model
+            || preferences.subagent_model_provider != previous.subagent_model_provider
+        {
+            if let Some(model) = preferences.subagent_model.as_deref() {
+                let catalog = self.model_catalog().await?;
+                let requested = preferences
+                    .subagent_model_provider
+                    .as_ref()
+                    .map(|provider| {
+                        serde_json::to_string(&[provider.as_str(), model])
+                            .expect("model identity serializes")
+                    })
+                    .unwrap_or_else(|| model.to_owned());
+                let selection = crate::model_catalog::resolve_selection(&catalog, &requested)?;
+                if catalog.get("provider").and_then(Value::as_str)
+                    != Some(selection.provider.as_str())
+                {
+                    bail!("Codex subagents inherit their parent model provider");
+                }
+                preferences.subagent_model = Some(selection.model);
+                preferences.subagent_model_provider = Some(selection.provider);
+            } else {
+                preferences.subagent_model_provider = None;
+            }
         }
         NativeFeatureStore::new(&self.inner.config.state_dir).apply(&preferences)
     }
@@ -1315,10 +1559,27 @@ impl Native {
             if !active_thread_id.is_empty()
                 && saved.thread_id.as_deref() == Some(active_thread_id.as_str())
             {
+                let mut params = json!({"threadId":active_thread_id});
+                if let Some(selection) = saved.model_selection.as_ref() {
+                    apply_model_selection(&mut params, selection);
+                }
+                let child_model = self
+                    .inner
+                    .applied_subagent_model
+                    .lock()
+                    .map_err(|_| anyhow!("subagent model lock poisoned"))?
+                    .clone();
+                if let Some(model) = child_model.as_ref() {
+                    params["config"] = json!({"agents.default_subagent_model":model});
+                }
                 let response = self
-                    .request_raw("thread/resume", json!({ "threadId": active_thread_id }))
+                    .request_raw("thread/resume", params)
                     .await
                     .context("rejoin Codex thread after socket reconnect")?;
+                if let Some(selection) = saved.model_selection.as_ref() {
+                    validate_model_selection_response(&response, selection)?;
+                }
+                self.remember_subagent_model(child_model)?;
                 let update = thread_state_summary(&response);
                 let mut state = self
                     .inner
@@ -1937,6 +2198,110 @@ fn initialize_params() -> Value {
             "requestAttestation": false
         }
     })
+}
+
+fn apply_model_selection(params: &mut Value, selection: &ModelSelection) {
+    params["model"] = Value::String(selection.model.clone());
+    params["modelProvider"] = Value::String(selection.provider.clone());
+}
+fn validate_model_selection_response(response: &Value, selection: &ModelSelection) -> Result<()> {
+    let thread = thread_state_summary(response);
+    let model = thread.get("model").and_then(Value::as_str);
+    let provider = thread.get("modelProvider").and_then(Value::as_str);
+    if model != Some(selection.model.as_str()) || provider != Some(selection.provider.as_str()) {
+        bail!(
+            "Codex applied model/provider {:?}/{:?}, expected {}/{}",
+            provider,
+            model,
+            selection.provider,
+            selection.model
+        );
+    }
+    Ok(())
+}
+async fn resume_model_thread<F, Fut>(
+    request: &mut F,
+    events: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    params: &Value,
+    selection: &ModelSelection,
+) -> Result<Value>
+where
+    F: FnMut(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Value>>,
+{
+    loop {
+        match request("thread/resume", params.clone()).await {
+            Ok(response) => {
+                if response_thread_id(&response)? != thread_id {
+                    bail!("Codex resumed a different thread");
+                }
+                validate_model_selection_response(&response, selection)?;
+                return Ok(response);
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<NativeRequestError>()
+                    .is_some_and(NativeRequestError::is_thread_closing) =>
+            {
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    loop {
+                        let event = events
+                            .recv()
+                            .await
+                            .context("native event stream closed while resuming thread")?;
+                        match event.get("method").and_then(Value::as_str) {
+                            Some("thread/closed")
+                                if event.pointer("/params/threadId").and_then(Value::as_str)
+                                    == Some(thread_id) =>
+                            {
+                                return Ok::<(), anyhow::Error>(());
+                            }
+                            Some("discodex/connection-closed") => {
+                                bail!("Codex connection closed while waiting for thread unload")
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+                .await
+                .context("timed out waiting for Codex thread to close")??;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+async fn switch_model_thread<F, Fut>(
+    mut request: F,
+    events: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    params: &Value,
+    selection: &ModelSelection,
+    rollback: &Value,
+    previous: &ModelSelection,
+) -> Result<Value>
+where
+    F: FnMut(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Value>>,
+{
+    let unsubscribe = json!({"threadId":thread_id});
+    request("thread/unsubscribe", unsubscribe.clone()).await?;
+    match resume_model_thread(&mut request, events, thread_id, params, selection).await {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            // A successful but mismatched resume may have reattached the listener already.
+            let restored = async {
+                request("thread/unsubscribe", unsubscribe).await?;
+                resume_model_thread(&mut request, events, thread_id, rollback, previous).await
+            }
+            .await;
+            match restored {
+                Ok(_) => Err(error).context("could not switch model/provider; restored the previous conversation"),
+                Err(restore_error) => Err(error).context(format!("could not switch model/provider; restoring the previous conversation also failed: {restore_error:#}")),
+            }
+        }
+    }
 }
 
 fn response_thread_id(response: &Value) -> Result<String> {
@@ -2845,3 +3210,7 @@ mod bridge_event_buffer_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "native_model_tests.rs"]
+mod model_switch_tests;

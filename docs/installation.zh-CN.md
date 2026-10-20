@@ -81,9 +81,21 @@ wire_api = "responses"
 
 请将占位符模型名称和 endpoint 替换为 provider 支持的值。实时 `model/list` catalog 只由当前 active provider 提供。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。Discodex 模型选项使用 active native catalog 和 worker 有效配置中的模型，包括默认、subagent、安装及当前 thread 模型。未激活的 profile 文件不会自动枚举。
 
-Codex profile-v2 文件格式为 `CODEX_HOME/<name>.config.toml`。例如，在 `CODEX_HOME/small.config.toml` 中设置 model 和 `model_provider`，然后在 CLI 调用时使用 `codex --profile small` 选择它。App-server 使用当前 active 配置；选择 CLI profile 不会切换 app-server 配置，也不会让未激活 profile 中的模型出现在 Discodex 选项中。
+实时 `model/list` 结果来自当前 active native catalog。Discodex 也会显示在 native 配置的 `[profiles.NAME]` 表中同时设置 `model` 和 `model_provider` 而明确注册的模型。仅定义 provider 不会注册模型，独立的 `*.config.toml` profile 文件也不会自动加载或扫描。例如：
 
-Codex catalog 元数据用于提供模型能力信息和通过 catalog 发现模型。 Native catalog 发现可使用启动时读取的 `model_catalog_json`，或由 `[model_providers.demo].model_catalog_url` 提供完整的 `{models: [ModelInfo, ...]}` schema。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。兼容性取决于模型和 provider，不保证工具支持。语音功能可能需要 native 语音 capability。
+```toml
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+
+[profiles.example]
+model = "example-model"
+model_provider = "demo"
+```
+
+当前官方 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；同一 provider 内的更改可立即应用，跨 provider 更改会等到 thread 空闲。只有 native 元数据明确提供的能力和推理强度选项才会显示。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
 
 ## 更新
 

@@ -948,10 +948,7 @@ async fn build_settings_menu(
     } else {
         state.native.refresh_thread_state().await?
     };
-    let model_scope = thread
-        .get("model")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let model_scope = thread_model_scope(&thread);
     let (current_value, current, choices) = match kind {
         SettingsKind::Hub => {
             let mut current = format_settings_with_language(&settings_snapshot(&thread), language);
@@ -1074,9 +1071,8 @@ async fn build_settings_menu(
                 NativeFeatureKey::SubagentModel,
                 language,
             );
-            let selected = saved
-                .as_deref()
-                .and_then(|value| normalized_model_value(&catalog, value));
+            let selected = subagent_preference_scope(&snapshot.preferences, &catalog)
+                .and_then(|value| normalized_model_value(&catalog, &value));
             let current = format!(
                 "{}: {}\n{}: {}\n{}: {}\n{}",
                 language.text(
@@ -1085,7 +1081,7 @@ async fn build_settings_menu(
                     "已保存的偏好",
                     "保存済みの設定"
                 ),
-                selected.as_deref().or(saved.as_deref()).unwrap_or_else(|| language.text(
+                saved.as_deref().unwrap_or_else(|| language.text(
                     "Native default", "네이티브 기본값", "原生默认值", "ネイティブ既定値"
                 )),
                 language.text(
@@ -1183,9 +1179,8 @@ async fn build_settings_menu(
                 subagent_catalog
                     .as_ref()
                     .and_then(|catalog| {
-                        saved
-                            .as_deref()
-                            .and_then(|value| normalized_model_value(catalog, value))
+                        subagent_preference_scope(&snapshot.preferences, catalog)
+                            .and_then(|value| normalized_model_value(catalog, &value))
                     })
                     .or_else(|| saved.clone())
                     .unwrap_or_else(|| "native-default".to_owned())
@@ -2792,6 +2787,13 @@ async fn apply_setting_choice(
     requested: &str,
     expected_thread_id: Option<&str>,
 ) -> anyhow::Result<String> {
+    // Match new-session admission order: input gate, settings, then active turn.
+    // Keep incoming Discord input outside a provider detach/resume transition.
+    let input_phase = if kind == SettingsKind::Model {
+        Some(state.voice.input_gate.state.lock().await)
+    } else {
+        None
+    };
     let _settings_change = state.settings_change_lock.lock().await;
     if expected_thread_id.is_some_and(|thread| thread != state.native.thread_id()) {
         bail!("Codex conversation changed before the setting could be applied");
@@ -2898,10 +2900,82 @@ async fn apply_setting_choice(
                 "音声プロファイルを保存しました。現在の通話は変わらず、次回の通話から適用されます。",
             ).to_owned())
         }
-        SettingsKind::Model
-        | SettingsKind::SubagentModel
-        | SettingsKind::Effort
-        | SettingsKind::Fast => {
+        SettingsKind::Model => {
+            let thread = state.native.refresh_thread_state().await?;
+            let catalog = state.native.model_catalog().await?;
+            let selection = crate::model_catalog::resolve_selection(&catalog, requested)?;
+            let active_provider = thread
+                .get("modelProvider")
+                .and_then(Value::as_str)
+                .or_else(|| catalog.get("provider").and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("current model provider is unavailable"))?;
+            if selection.provider != active_provider {
+                let current_turn = state.current_turn.lock().await;
+                ensure_provider_switch_idle(
+                    input_phase
+                        .as_ref()
+                        .is_some_and(|phase| phase.allow_ordinary()),
+                    current_turn.is_some(),
+                    language,
+                )?;
+                let snapshot = state.native.set_model_selection(&selection).await?;
+                return Ok(format_settings_update_result_with_language(
+                    &format!("{} — {}", selection.model, selection.provider),
+                    Some(&snapshot),
+                    None,
+                    language,
+                ));
+            }
+            state
+                .native
+                .request(
+                    "thread/settings/update",
+                    json!({
+                        "threadId":thread_id,"model":selection.model
+                    }),
+                )
+                .await?;
+            if let Err(error) = state.native.save_model_selection(&selection) {
+                let previous_model =
+                    thread.get("model").and_then(Value::as_str).ok_or_else(|| {
+                        anyhow!("could not persist model selection or determine previous model")
+                    })?;
+                let restored = state
+                    .native
+                    .request(
+                        "thread/settings/update",
+                        json!({"threadId":thread_id,"model":previous_model}),
+                    )
+                    .await;
+                return match restored {
+                    Ok(_)=>Err(error).context("could not persist selected model; restored the previous conversation default"),
+                    Err(restore_error)=>Err(error).context(format!("could not persist selected model; restoring previous default also failed: {restore_error:#}")),
+                };
+            }
+            let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
+                Some(
+                    state
+                        .native
+                        .request(
+                            "turn/settings/update",
+                            json!({
+                                "threadId":thread_id,"turnId":turn_id,"model":selection.model
+                            }),
+                        )
+                        .await,
+                )
+            } else {
+                None
+            };
+            let snapshot = state.native.refresh_thread_state().await?;
+            Ok(format_settings_update_result_with_language(
+                &format!("{} — {}", selection.model, selection.provider),
+                Some(&snapshot),
+                live_result.as_ref(),
+                language,
+            ))
+        }
+        SettingsKind::SubagentModel | SettingsKind::Effort | SettingsKind::Fast => {
             let sub = match kind {
                 SettingsKind::Model => "model",
                 SettingsKind::SubagentModel => "model",
@@ -2921,17 +2995,20 @@ async fn apply_setting_choice(
                 {
                     bail!("subagent model is not present in the current native model catalog");
                 }
-                let selected = if requested == "native-default" {
+                let selection = if requested == "native-default" {
                     None
                 } else {
-                    Some(requested)
+                    Some(subagent_model_selection(&catalog, requested, language)?)
                 };
+                let selected = selection.as_ref().map(|value| value.model.as_str());
                 let mut preferences = state.native.read_native_feature_preferences()?;
                 set_native_feature_preference(
                     &mut preferences,
                     NativeFeatureKey::SubagentModel,
                     selected,
                 )?;
+                preferences.subagent_model_provider =
+                    selection.as_ref().map(|value| value.provider.clone());
                 state
                     .native
                     .apply_native_feature_preferences(&preferences)
@@ -3022,12 +3099,30 @@ async fn apply_setting_choice(
         SettingsKind::NativeFeatures => bail!("Choose a native feature first."),
         SettingsKind::NativeFeature(key) => {
             let mut preferences = state.native.read_native_feature_preferences()?;
+            let selection =
+                if key == NativeFeatureKey::SubagentModel && requested != "native-default" {
+                    Some(subagent_model_selection(
+                        &state.native.model_catalog().await?,
+                        requested,
+                        language,
+                    )?)
+                } else {
+                    None
+                };
             let selected = if requested == "native-default" {
                 None
             } else {
-                Some(requested)
+                Some(
+                    selection
+                        .as_ref()
+                        .map_or(requested, |value| value.model.as_str()),
+                )
             };
             set_native_feature_preference(&mut preferences, key, selected)?;
+            if key == NativeFeatureKey::SubagentModel {
+                preferences.subagent_model_provider =
+                    selection.as_ref().map(|value| value.provider.clone());
+            }
             state
                 .native
                 .apply_native_feature_preferences(&preferences)
@@ -4395,14 +4490,72 @@ pub async fn unregister_commands(config: &crate::config::Config) -> anyhow::Resu
     Ok(())
 }
 
+fn thread_model_scope(thread: &Value) -> Option<String> {
+    let model = thread.get("model")?.as_str()?;
+    Some(match thread.get("modelProvider").and_then(Value::as_str) {
+        Some(provider) => {
+            serde_json::to_string(&[provider, model]).expect("model identity serializes")
+        }
+        None => model.to_owned(),
+    })
+}
+
 fn normalized_model_value(catalog: &Value, value: &str) -> Option<String> {
-    catalog
-        .get("data")?
-        .as_array()?
-        .iter()
-        .find(|model| crate::model_catalog::model_matches(model, value))
-        .and_then(crate::model_catalog::model_id)
+    let model = selected_model(catalog, &Some(value.to_owned())).ok()?;
+    crate::model_catalog::selection_value(model)
+        .or_else(|| crate::model_catalog::model_id(model))
         .map(str::to_owned)
+}
+
+fn subagent_preference_scope(
+    preferences: &crate::native::NativeFeaturePreferences,
+    catalog: &Value,
+) -> Option<String> {
+    let model = preferences.subagent_model.as_deref()?;
+    let provider = preferences
+        .subagent_model_provider
+        .as_deref()
+        .or_else(|| catalog.get("catalogProvider").and_then(Value::as_str))
+        .or_else(|| catalog.get("provider").and_then(Value::as_str));
+    Some(match provider {
+        Some(provider) => {
+            serde_json::to_string(&[provider, model]).expect("model identity serializes")
+        }
+        None => model.to_owned(),
+    })
+}
+
+fn subagent_model_selection(
+    catalog: &Value,
+    requested: &str,
+    language: crate::i18n::Language,
+) -> anyhow::Result<crate::model_catalog::ModelSelection> {
+    let selection = crate::model_catalog::resolve_selection(catalog, requested)?;
+    if catalog.get("provider").and_then(Value::as_str) != Some(selection.provider.as_str()) {
+        bail!("{}", language.text(
+            "Codex subagents inherit the main agent's provider. Select this provider for the main model first, then choose its subagent model.",
+            "Codex 하위 에이전트는 메인 에이전트의 공급자를 따릅니다. 먼저 메인 모델을 이 공급자로 변경한 뒤 하위 에이전트 모델을 선택하세요.",
+            "Codex 子代理继承主代理的提供方。请先将主模型切换到此提供方，再选择其子代理模型。",
+            "Codex サブエージェントはメインエージェントのプロバイダーを継承します。先にメインモデルをこのプロバイダーに変更してから、サブエージェントモデルを選択してください。"
+        ));
+    }
+    Ok(selection)
+}
+
+fn ensure_provider_switch_idle(
+    voice_idle: bool,
+    turn_active: bool,
+    language: crate::i18n::Language,
+) -> anyhow::Result<()> {
+    if !voice_idle || turn_active {
+        bail!("{}", language.text(
+            "Wait for the active response or voice call to finish before switching model providers. Your current model is unchanged.",
+            "모델 공급자를 변경하려면 진행 중인 응답이나 음성 통화가 끝난 뒤 다시 선택하세요. 현재 모델은 그대로입니다.",
+            "请等待当前回复或语音通话结束后再切换模型提供方。当前模型未更改。",
+            "実行中の応答や音声通話が終了してからモデルプロバイダーを変更してください。現在のモデルは変更されていません。"
+        ));
+    }
+    Ok(())
 }
 
 fn catalog_model_choices(catalog: &Value) -> Vec<SettingsChoice> {
@@ -4701,8 +4854,16 @@ fn selected_model<'a>(
     let current_model = current_model
         .as_deref()
         .ok_or_else(|| anyhow!("현재 모델을 확인할 수 없습니다"))?;
+    let selected = crate::model_catalog::resolve_selection(catalog, current_model)?;
     data.iter()
-        .find(|model| crate::model_catalog::model_matches(model, current_model))
+        .find(|model| {
+            crate::model_catalog::model_id(model) == Some(selected.model.as_str())
+                && model
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .unwrap_or(selected.provider.as_str())
+                    == selected.provider
+        })
         .ok_or_else(|| anyhow!("현재 모델을 모델 목록에서 찾을 수 없습니다"))
 }
 
@@ -9925,6 +10086,76 @@ mod native_feature_settings_tests {
             native_feature_saved_value(&preferences, NativeFeatureKey::SubagentModel),
             None
         );
+    }
+
+    #[test]
+    fn saved_subagent_checkmark_preserves_its_provider_affinity() {
+        let catalog = json!({"provider":"local","catalogProvider":"cloud"});
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        preferences.subagent_model = Some("shared".into());
+        assert_eq!(
+            subagent_preference_scope(&preferences, &catalog),
+            Some(serde_json::to_string(&["cloud", "shared"]).unwrap())
+        );
+        preferences.subagent_model_provider = Some("local".into());
+        assert_eq!(
+            subagent_preference_scope(&preferences, &catalog),
+            Some(serde_json::to_string(&["local", "shared"]).unwrap())
+        );
+        preferences.subagent_model = None;
+        assert_eq!(subagent_preference_scope(&preferences, &catalog), None);
+    }
+
+    #[test]
+    fn model_menu_scope_changes_when_only_the_provider_changes() {
+        let cloud = json!({"model":"shared-model","modelProvider":"cloud"});
+        let local = json!({"model":"shared-model","modelProvider":"local"});
+        assert_ne!(thread_model_scope(&cloud), thread_model_scope(&local));
+        assert_eq!(
+            thread_model_scope(&json!({"model":"legacy"})),
+            Some("legacy".into())
+        );
+        assert_eq!(thread_model_scope(&json!({})), None);
+    }
+
+    #[test]
+    fn provider_qualified_choices_resolve_current_model_and_subagent_provider() {
+        use crate::i18n::Language;
+        let catalog = crate::model_catalog::assemble_catalog(
+            vec![json!({"model":"shared-model", "supportedReasoningEfforts":["low"]})],
+            &json!({"model_provider":"cloud", "profiles":{"local":{"model":"shared-model","model_provider":"local"}}}),
+            &json!({"model":"shared-model","modelProvider":"local"}),
+            None, None,
+        ).unwrap();
+        let local = serde_json::to_string(&["local", "shared-model"]).unwrap();
+        let cloud = serde_json::to_string(&["cloud", "shared-model"]).unwrap();
+        assert_eq!(
+            normalized_model_value(&catalog, "shared-model"),
+            Some(local.clone())
+        );
+        assert_eq!(
+            selected_model(&catalog, &Some(cloud.clone())).unwrap()["provider"],
+            "cloud"
+        );
+        assert_eq!(
+            subagent_model_selection(&catalog, &local, Language::English)
+                .unwrap()
+                .provider,
+            "local"
+        );
+        for language in [
+            Language::English,
+            Language::Korean,
+            Language::Chinese,
+            Language::Japanese,
+        ] {
+            assert!(subagent_model_selection(&catalog, &cloud, language).is_err());
+            assert!(ensure_provider_switch_idle(true, false, language).is_ok());
+            assert!(ensure_provider_switch_idle(false, false, language).is_err());
+            assert!(ensure_provider_switch_idle(true, true, language).is_err());
+        }
+        assert_eq!(catalog_model_choices(&catalog).len(), 2);
+        assert_eq!(subagent_model_choices(&catalog, Language::English).len(), 3);
     }
 
     #[test]

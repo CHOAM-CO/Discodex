@@ -93,14 +93,16 @@ Discord 직접 입력은 source.author와 body를 전달하고, 안정적인 `so
 
 ## 모델 및 subagent 기본값
 
-기본 모델과 subagent 모델 선택 화면은 같은 선택지를 사용합니다. 활성 Codex provider의 실시간 `model/list` 결과, 명시적으로 설정한 모델, 설정된 subagent 기본 모델, native model catalog가 포함됩니다. 실시간 catalog 선택지는 활성 provider에서만 가져옵니다. 표시에는 model 필드를 우선하고, 없으면 ID, 다음으로 slug를 사용합니다. 모델 기능은 추정하지 않습니다.
+기본 모델과 subagent 모델 선택 화면은 활성 native 모델 catalog와 native 설정 profile에 명시적으로 등록한 모델을 표시합니다. 모델은 `[profiles.NAME]` 항목에 `model`과 `model_provider`를 함께 지정해 등록합니다. provider 정의만으로는 모델이 추가되지 않으며 Discodex는 임의의 `*.config.toml` 파일을 검색하지 않습니다. 표시에는 model 필드를 우선하고, 없으면 ID, 다음으로 slug를 사용합니다.
 
-worker가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모델을 설정합니다. Native Codex는 Ollama와 LM Studio 기본 provider 및 Responses API 사용자 지정 provider를 지원합니다. 설정 패널, Discord thread, 업데이트 흐름에는 provider 선택이나 전환 기능이 없습니다. Subagent는 부모 provider를 상속하므로 다른 provider의 모델을 독립적으로 사용할 수 없습니다.
+모델을 선택하면 같은 영구 Codex thread에서 provider를 전환하고 대화 기록을 이어갑니다. 현재 provider 안에서 모델을 바꾸면 활성 thread에도 적용할 수 있고, 다른 provider로 바꾸는 경우에는 thread가 idle 상태가 될 때까지 기다립니다. Native subagent는 부모 provider를 상속하므로 다른 provider의 모델을 subagent에 사용할 수 없습니다. Discodex는 호환되지 않는 subagent 선택을 설명하고 거부합니다. 기능과 추론 강도 선택지는 native catalog가 제공하는 경우에만 사용할 수 있습니다.
 
-로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. App-server는 활성 설정을 사용하며 Discodex는 비활성 profile 파일을 열거하지 않습니다. 유효한 worker 설정에 명시된 모델은 native catalog와 함께 선택지로 제공됩니다. `CODEX_HOME/small.config.toml` 같은 Codex profile-v2 파일은 CLI에서 `codex --profile small`로 선택할 수 있지만 app-server 설정을 전환하지 않습니다. catalog 기반 기능 검색에는 Codex catalog 메타데이터가 필요합니다. [Codex 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요.
+worker가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider 정의를 설정합니다. Native Codex는 Ollama와 LM Studio 기본 provider 및 Responses API 사용자 지정 provider를 지원합니다. Provider 인증은 Codex가 담당합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. 기능 검색에는 Codex catalog 메타데이터가 필요합니다. [Codex 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요.
 
-설정 메인 화면에 **기본 subagent 모델**이 있습니다. 저장하면 Discodex 소유 `agents.default_subagent_model` 기능 재정의에 기록되고 worker 재시작 후 적용됩니다. 초기화하면 재정의를 제거하고 native 기본값을 사용합니다. 모델 호환성은 다르며 모든 모델의 도구 지원이 보장되지는 않습니다. Provider 인증은 Codex가 담당하고, 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
 
+설정 메인 화면에는 기본 subagent 모델이 있습니다. 저장하면 Discodex 소유 agents.default_subagent_model 기능 재정의에 기록되며 worker 재시작 후 적용됩니다. 초기화하면 재정의를 제거하고 native 기본값을 사용합니다. 모델과 도구 호환성은 다르며 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
+
+Discodex는 저장된 subagent 모델 설정에 provider도 함께 보관합니다. 기본 모델의 provider가 바뀌어 저장된 설정이 호환되지 않는 동안에는 저장값을 유지하고, 하위 에이전트는 새 부모 모델을 실효 기본값으로 사용합니다. 기본 모델을 다시 해당 provider로 바꾸면 저장된 설정이 다시 적용됩니다.
 ## MCP 도구 실행 승인
 
 공식 Codex의 form elicitation 중 `_meta.codex_approval_kind: "mcp_tool_call"`과 빈 객체 스키마를 가진 요청은 추가 입력 폼 대신 실행 승인 버튼으로 표시한다. 이번만 허용·거절·취소를 제공하고, 세션 허용과 항상 허용은 native 요청의 `_meta.persist`가 제공한 범위에만 표시한다. 선택 응답은 공식 `action`과 필요한 `_meta.persist`를 그대로 전달하며 사용자 입력이나 인증 증명을 만들어 넣지 않는다. 일반 입력 form은 기존 입력 경로를 유지하고 URL·사용자 인증 요청을 실행 승인으로 해석하지 않는다. 요청 ID·연결 세대·중복 응답 보호는 같은 pending 요청 상태를 사용한다.

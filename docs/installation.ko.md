@@ -77,11 +77,23 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-자리표시자 모델 이름과 endpoint를 provider에 맞는 값으로 바꾸세요. 실시간 `model/list` catalog는 활성 provider만 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. Discodex 모델 선택지는 활성 native catalog와 유효한 worker 설정의 모델을 사용하며 기본·subagent·설치·현재 thread 모델을 포함합니다. 비활성 profile 파일은 자동으로 열거하지 않습니다.
+자리표시자 모델 이름과 endpoint를 provider가 지원하는 값으로 바꾸세요. 실시간 `model/list` catalog는 활성 provider만 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. Discodex 모델 선택지는 활성 native catalog와 유효한 worker 설정의 모델을 사용하며 기본·subagent·설치·현재 thread 모델을 포함합니다. 비활성 profile 파일은 자동으로 열거하지 않습니다.
 
-Codex profile-v2 파일은 `CODEX_HOME/<name>.config.toml` 형식입니다. 예를 들어 `CODEX_HOME/small.config.toml`에 model과 `model_provider`를 넣고 CLI 실행 시 `codex --profile small`로 선택합니다. App-server는 활성 설정을 사용합니다. CLI profile 선택은 app-server 설정을 바꾸거나 비활성 profile 모델을 Discodex 선택지에 추가하지 않습니다.
+실시간 `model/list` 결과는 활성 native catalog에서 가져옵니다. Discodex는 native 설정의 `[profiles.NAME]` 항목에 `model`과 `model_provider`를 모두 지정해 명시적으로 등록한 모델도 표시합니다. provider 정의만으로는 모델이 등록되지 않으며, 별도의 `*.config.toml` profile 파일을 자동으로 불러오거나 검색하지 않습니다. 예시:
 
-Codex catalog 메타데이터는 모델 기능을 제공하고 catalog를 통한 모델 검색에 사용됩니다. Native catalog 검색에는 시작 시 읽는 `model_catalog_json`을 쓰거나 `[model_providers.demo].model_catalog_url`에서 전체 `{models: [ModelInfo, ...]}` 스키마를 제공할 수 있습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/), [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), [포함된 모델 catalog 예시](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)를 참고하세요. 모델과 provider의 호환성이 다르며 도구 지원은 보장되지 않습니다. 음성 기능에는 native 음성 capability가 필요할 수 있습니다.
+```toml
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+
+[profiles.example]
+model = "example-model"
+model_provider = "demo"
+```
+
+활성 공식 catalog와 등록된 profile이 모델 선택지를 제공합니다. 모델을 선택하면 같은 영구 thread에서 provider를 전환하고 대화 기록을 유지합니다. 같은 provider 안의 변경은 바로 적용할 수 있으며, 다른 provider로 바꾸는 변경은 thread가 idle 상태가 될 때까지 기다립니다. 기능과 추론 강도 선택지는 native 메타데이터가 제공하는 경우에만 표시됩니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/)와 [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)를 참고하세요.
 
 ## 업데이트
 

@@ -6,6 +6,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::model_catalog::ModelSelection;
+
 fn enabled_by_default() -> Option<bool> {
     Some(true)
 }
@@ -35,6 +37,9 @@ pub struct NativeFeaturePreferences {
     /// Optional private profile default. None inherits the native config.
     #[serde(default)]
     pub subagent_model: Option<String>,
+    /// Provider to which the saved child-model preference belongs.
+    #[serde(default)]
+    pub subagent_model_provider: Option<String>,
 }
 
 impl Default for NativeFeaturePreferences {
@@ -50,6 +55,7 @@ impl Default for NativeFeaturePreferences {
             token_budget: Some(true),
             history_notes: Some(true),
             subagent_model: None,
+            subagent_model_provider: None,
         }
     }
 }
@@ -232,13 +238,58 @@ fn startup_overrides(preferences: &NativeFeaturePreferences) -> Result<Vec<(Stri
         "features.token_budget.use_history_notes_extension",
         preferences.history_notes,
     );
-    if let Some(model) = &preferences.subagent_model {
-        result.push((
-            "agents.default_subagent_model".to_owned(),
-            serde_json::to_string(model).context("encode native subagent model config")?,
-        ));
-    }
     Ok(result)
+}
+
+/// Resolve the child default for a parent thread without applying cross-provider slugs.
+pub fn subagent_model_for_provider(
+    preferences: &NativeFeaturePreferences,
+    target: &ModelSelection,
+    configured_provider: &str,
+    configured_default: Option<&str>,
+) -> Option<String> {
+    if let Some(saved_model) = preferences.subagent_model.as_deref() {
+        let affinity = preferences
+            .subagent_model_provider
+            .as_deref()
+            .unwrap_or(configured_provider);
+        return Some(
+            if affinity == target.provider {
+                saved_model
+            } else {
+                &target.model
+            }
+            .to_owned(),
+        );
+    }
+    configured_default.map(|model| {
+        if configured_provider == target.provider {
+            model
+        } else {
+            &target.model
+        }
+        .to_owned()
+    })
+}
+
+pub(crate) fn subagent_model_without_parent_override(
+    preferences: &NativeFeaturePreferences,
+    configured_provider: &str,
+    configured_default: Option<&str>,
+) -> Option<String> {
+    if preferences
+        .subagent_model_provider
+        .as_deref()
+        .unwrap_or(configured_provider)
+        == configured_provider
+    {
+        preferences
+            .subagent_model
+            .clone()
+            .or_else(|| configured_default.map(str::to_owned))
+    } else {
+        configured_default.map(str::to_owned)
+    }
 }
 
 pub fn feature_config_read_params(cwd: &Path) -> Value {
@@ -288,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn unset_preferences_inherit_native_values_and_model_override_is_private_setting_data() {
+    fn unset_preferences_produce_no_startup_overrides() {
         let preferences = NativeFeaturePreferences {
             code_mode: None,
             code_mode_host: None,
@@ -300,15 +351,66 @@ mod tests {
             token_budget: None,
             history_notes: None,
             subagent_model: Some("model-example".to_owned()),
+            subagent_model_provider: Some("provider-example".to_owned()),
         };
         let overrides = startup_overrides(&preferences).expect("build native config overrides");
+        assert!(overrides.is_empty());
+    }
 
+    #[test]
+    fn child_model_uses_saved_affinity_and_inherits_parent_on_provider_mismatch() {
+        let target = ModelSelection {
+            provider: "provider-local".into(),
+            model: "parent-local".into(),
+        };
+        let mut preferences = NativeFeaturePreferences::default();
+        preferences.subagent_model = Some("child-openai".into());
+        preferences.subagent_model_provider = Some("openai".into());
         assert_eq!(
-            overrides,
-            vec![(
-                "agents.default_subagent_model".to_owned(),
-                "\"model-example\"".to_owned()
-            )]
+            subagent_model_for_provider(&preferences, &target, "openai", None),
+            Some("parent-local".into())
+        );
+
+        preferences.subagent_model_provider = Some("provider-local".into());
+        assert_eq!(
+            subagent_model_for_provider(&preferences, &target, "openai", None),
+            Some("child-openai".into())
+        );
+    }
+
+    #[test]
+    fn legacy_child_model_binds_to_configured_provider_and_native_default_falls_back_safely() {
+        let target = ModelSelection {
+            provider: "provider-local".into(),
+            model: "parent-local".into(),
+        };
+        let mut preferences = NativeFeaturePreferences::default();
+        preferences.subagent_model = Some("legacy-child".into());
+        assert_eq!(
+            subagent_model_for_provider(&preferences, &target, "openai", None),
+            Some("parent-local".into())
+        );
+        preferences.subagent_model = None;
+        assert_eq!(
+            subagent_model_for_provider(&preferences, &target, "openai", Some("global-child")),
+            Some("parent-local".into())
+        );
+        let openai_target = ModelSelection {
+            provider: "openai".into(),
+            model: "gpt-example".into(),
+        };
+        assert_eq!(
+            subagent_model_for_provider(
+                &preferences,
+                &openai_target,
+                "openai",
+                Some("global-child")
+            ),
+            Some("global-child".into())
+        );
+        assert_eq!(
+            subagent_model_for_provider(&preferences, &target, "openai", None),
+            None
         );
     }
 
@@ -318,6 +420,7 @@ mod tests {
         let store = NativeFeatureStore::new(directory.path());
         let mut preferences = NativeFeaturePreferences::default();
         preferences.subagent_model = Some("model-example".to_owned());
+        preferences.subagent_model_provider = Some("provider-example".to_owned());
 
         assert_eq!(
             store.apply(&preferences).expect("save preferences"),
@@ -325,5 +428,30 @@ mod tests {
         );
         assert_eq!(store.read().expect("read preferences"), preferences);
         assert!(store.path.starts_with(directory.path()));
+    }
+}
+
+#[cfg(test)]
+mod unspecified_parent_tests {
+    use super::*;
+    #[test]
+    fn default_parent_does_not_receive_a_foreign_saved_child() {
+        let preferences = NativeFeaturePreferences {
+            subagent_model: Some("local-child".into()),
+            subagent_model_provider: Some("local".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            subagent_model_without_parent_override(&preferences, "cloud", None),
+            None
+        );
+        assert_eq!(
+            subagent_model_without_parent_override(&preferences, "cloud", Some("cloud-child")),
+            Some("cloud-child".into())
+        );
+        assert_eq!(
+            subagent_model_without_parent_override(&preferences, "local", None),
+            Some("local-child".into())
+        );
     }
 }

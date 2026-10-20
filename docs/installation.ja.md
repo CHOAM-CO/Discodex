@@ -79,11 +79,23 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-プレースホルダーのモデル名とendpointをproviderがサポートする値に置き換えてください。ライブの`model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。Discodexの候補はアクティブなnative catalogと有効なworker設定のモデルを使い、既定、subagent、インストール時、現在のthreadのモデルを含みます。非アクティブなprofileファイルは自動列挙されません。
+プレースホルダーのモデル名とendpointをproviderが対応する値に置き換えてください。ライブの`model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。Discodexの候補はアクティブなnative catalogと有効なworker設定のモデルを使い、既定、subagent、インストール時、現在のthreadのモデルを含みます。非アクティブなprofileファイルは自動列挙されません。
 
-Codex profile-v2ファイルは`CODEX_HOME/<name>.config.toml`形式です。たとえば`CODEX_HOME/small.config.toml`にmodelと`model_provider`を設定し、CLI実行時に`codex --profile small`で選びます。app-serverはアクティブな設定を使用します。CLI profileを選んでもapp-server設定は切り替わらず、非アクティブprofileのモデルがDiscodex候補に追加されることもありません。
+ライブの`model/list`結果はアクティブなnative catalogから取得します。Discodexはnative設定の`[profiles.NAME]`テーブルに`model`と`model_provider`を両方指定して明示登録したモデルも表示します。provider定義だけではモデルは登録されず、別の`*.config.toml` profileファイルも自動ロード・検索されません。例:
 
-Codex catalog metadataはモデルの機能情報とcatalog経由のモデル検出に使われます。 native catalogによる検出には起動時に読み込む `model_catalog_json` を使うか、`[model_providers.demo].model_catalog_url` から完全な `{models: [ModelInfo, ...]}` スキーマを提供できます。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。互換性はモデルとproviderによって異なり、ツール対応は保証されません。音声機能にはnative音声capabilityが必要な場合があります。
+```toml
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+
+[profiles.example]
+model = "example-model"
+model_provider = "demo"
+```
+
+アクティブな公式catalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、別providerへの変更はthreadがidleになるまで待ちます。機能と推論強度はnative metadataが提供する場合にだけ表示されます。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
 
 ## 更新
 

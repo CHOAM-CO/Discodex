@@ -1,4 +1,4 @@
-ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。app-serverはアクティブな設定を使い、Discodexは非アクティブなprofileファイルを列挙しません。有効なworker設定に明示されたモデルはnative catalogとともに候補になります。`CODEX_HOME/small.config.toml`のようなCodex profile-v2ファイルはCLIで`codex --profile small`として選択できますが、app-serverの設定は切り替わりません。catalogによる機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
+ローカルの通常の`/v1/models`応答はCodex model metadataに自動変換されません。モデル候補はアクティブなnative catalogと、`[profiles.NAME]`に`model`と`model_provider`を指定して明示登録したモデルです。provider定義だけではモデルは登録されず、任意のprofileファイルも自動列挙されません。機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
 
 <p align="center"><a href="design.md">English</a> · <a href="design.ko.md">한국어</a> · <a href="design.zh-CN.md">简体中文</a> · 日本語</p>
 
@@ -92,14 +92,16 @@ Discordの直接入力では`source.author`、`body`、安定した`source.autho
 
 ## モデルとsubagentの既定値
 
-メインモデルとsubagentモデルの選択画面には同じ候補を表示します。アクティブなCodex providerのライブ `model/list` 結果、明示設定したモデル、設定済みのsubagent既定モデル、nativeモデルcatalogが候補です。ライブcatalogの候補はアクティブproviderのみから取得します。表示はmodelフィールド、ID、slugの順に優先し、モデル機能を推測しません。
+メインモデルとsubagentモデルの選択画面には、アクティブなnative model catalogとnative設定profileに明示登録したモデルが表示されます。`[profiles.NAME]`テーブルに`model`と`model_provider`を両方指定してモデルを登録します。provider定義だけではモデルは追加されず、Discodexは任意の`*.config.toml`ファイルを検索しません。表示はmodelフィールド、ID、slugの順に優先します。
 
-workerが実際に使う `CODEX_HOME/config.toml` でproviderとモデルを設定します。Native Codexは組み込みのOllama、LM Studio providerとResponses APIのカスタムproviderに対応します。設定画面、Discord thread、更新フローからproviderを選択・切り替える機能はありません。subagentは親のproviderを引き継ぎ、別providerのモデルを個別に使うことはできません。
+モデルを選ぶと、同じ永続Codex threadでproviderを切り替えて会話履歴を引き継ぎます。同じprovider内のモデル変更はthreadが動作中でも適用でき、別providerへの切り替えはthreadがidleになるまで待ちます。Native subagentは親のproviderを引き継ぐため、別providerのモデルはsubagentに使用できません。互換性のないsubagent選択はDiscodexが理由を示して拒否します。機能と推論強度はnative catalogが提供する場合にだけ選択できます。
 
-ローカルの通常の `/v1/models` 応答はCodexモデルmetadataに自動変換されません。明示設定したモデル名とnative設定profileで選択したモデルは候補にできますが、そのprofileの他の設定は有効になりません。catalogによる機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
+provider定義はworkerが実際に使う`CODEX_HOME/config.toml`に設定します。Native Codexは組み込みのOllama、LM Studio providerとResponses APIのカスタムproviderに対応します。provider認証はCodexが処理します。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
 
-設定ホームに**既定subagentモデル**があります。保存するとDiscodex所有の `agents.default_subagent_model` 機能上書きに記録され、worker再起動後に有効になります。リセットすると上書きを削除してnativeの既定値に戻します。モデル互換性は異なり、すべてのモデルがすべてのツールに対応するわけではありません。provider認証はCodexが担当し、音声機能にはnative音声capabilityが必要な場合があります。
 
+設定ホームには既定subagentモデルがあります。保存するとDiscodex所有の agents.default_subagent_model 機能上書きに記録され、worker再起動後に有効になります。リセットすると上書きを削除してnativeの既定値に戻します。モデルとツールの互換性は異なり、音声機能にはnative音声capabilityが必要な場合があります。
+
+Discodexは保存したsubagentモデル設定とproviderを一緒に保持します。メインモデルのproviderが変わって保存設定と互換性がない間も設定は残り、subagentの有効な既定値には新しい親モデルを使います。メインモデルを一致するproviderに戻すと、保存済み設定が再び適用されます。
 ## MCPツール実行の承認
 
 公式Codexのform elicitationで、`_meta.codex_approval_kind: "mcp_tool_call"`かつ空のobject schemaを持つ要求は、追加入力フォームではなく実行承認ボタンとして表示します。「今回のみ許可」「拒否」「キャンセル」を提示し、セッション許可と常時許可はnative要求の`_meta.persist`が示す範囲に限って表示します。選択結果は公式の`action`と必要な`_meta.persist`をそのまま渡し、ユーザー入力や認証情報を捏造しません。通常の入力フォームは従来経路を保ち、URLやユーザー認証要求を実行承認として解釈しません。要求ID、接続世代、重複応答防止には同じpending要求状態を使います。

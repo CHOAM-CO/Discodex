@@ -79,11 +79,23 @@ env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
 ```
 
-Replace placeholder model names and the endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Discodex model choices use the active native catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. Inactive profile files are not automatically enumerated.
+Replace the placeholder model name and endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Discodex model choices use the active native catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. Inactive profile files are not automatically enumerated.
 
-Codex profile-v2 files use `CODEX_HOME/<name>.config.toml`. For example, put `model` and `model_provider` in `CODEX_HOME/small.config.toml`, then select it for a CLI invocation with `codex --profile small`. The app-server uses its active configuration; selecting a CLI profile does not switch that configuration or make inactive profile models appear in Discodex.
+Only the active native catalog supplies live `model/list` results. Discodex also lists models explicitly registered in native configuration with both `model` and `model_provider` under a `[profiles.NAME]` table. A provider definition by itself does not register a model, and unrelated `*.config.toml` profile files are not loaded or scanned automatically. For example:
 
-Codex catalog metadata advertises model capabilities and supports model discovery through the catalog. For native catalog discovery, `model_catalog_json` is read at worker startup, or `[model_providers.demo].model_catalog_url` can serve the full `{models: [ModelInfo, ...]}` schema. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/), the [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs), and [bundled model catalog examples](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Compatibility depends on the model and provider; tool support is not guaranteed. Native voice capability may be required for voice features.
+```toml
+[model_providers.demo]
+name = "Example provider"
+base_url = "https://provider.example/v1"
+env_key = "PROVIDER_API_KEY"
+wire_api = "responses"
+
+[profiles.example]
+model = "example-model"
+model_provider = "demo"
+```
+
+The active official catalog and registered profiles provide model choices. Selecting a model switches the provider on the same durable thread and keeps its history; changes within one provider can apply immediately, while a cross-provider change waits for the thread to become idle. Capability and effort choices appear only when native metadata advertises them. A regular local `/v1/models` response is not automatically converted to Codex model metadata. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/) and [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).
 
 ## Updating
 

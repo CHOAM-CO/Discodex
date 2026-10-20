@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::model_catalog::ModelSelection;
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct NativeState {
     pub thread_id: Option<String>,
@@ -12,6 +14,8 @@ pub struct NativeState {
     pub previous_thread_ids: Vec<String>,
     #[serde(default)]
     pub pending_new_thread: bool,
+    #[serde(default)]
+    pub(crate) model_selection: Option<ModelSelection>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +50,12 @@ impl StateStore {
         }
         state.thread_id = Some(thread_id.to_owned());
         state.pending_new_thread = false;
+        self.save(&state)
+    }
+
+    pub(crate) fn save_model_selection(&self, selection: &ModelSelection) -> Result<()> {
+        let mut state = self.load()?;
+        state.model_selection = Some(selection.clone());
         self.save(&state)
     }
 
@@ -126,5 +136,25 @@ mod tests {
             vec!["thread-old".to_owned()]
         );
         assert!(!materialized.pending_new_thread);
+    }
+    #[test]
+    fn provider_model_selection_round_trips_and_legacy_state_defaults_to_none() {
+        let dir = tempfile::tempdir().expect("temporary state directory");
+        let store = StateStore::new(dir.path());
+        std::fs::write(store.path(), r#"{"thread_id":"legacy-thread"}"#)
+            .expect("write legacy state without selection");
+        assert_eq!(store.load().unwrap().model_selection, None);
+
+        let selection = ModelSelection {
+            provider: "local-provider".to_owned(),
+            model: "local-model".to_owned(),
+        };
+        store
+            .save_model_selection(&selection)
+            .expect("save selection");
+        assert_eq!(
+            StateStore::new(dir.path()).load().unwrap().model_selection,
+            Some(selection)
+        );
     }
 }
