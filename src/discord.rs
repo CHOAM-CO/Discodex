@@ -1066,7 +1066,14 @@ pub async fn run(
                 return read_voice_inbox(&state, &arguments).await;
             }
             if name == "voice_join" {
-                let _activity = state.updates.activity();
+                let _activity = state.updates.try_activity().ok_or_else(|| {
+                    anyhow::anyhow!(state.config.language.text(
+                        "Discodex is updating. Retry after it reconnects.",
+                        "Discodex 업데이트 중입니다. 다시 연결된 후 재시도해 주세요.",
+                        "Discodex 正在更新，请在重新连接后重试。",
+                        "Discodexを更新中です。再接続後に再試行してください。"
+                    ))
+                })?;
                 let channel = tools.resolve_voice_channel(&arguments).await?;
                 let result = state
                     .voice

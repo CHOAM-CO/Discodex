@@ -393,6 +393,110 @@ impl UpdateStore {
         Ok(target)
     }
 
+    /// Reconcile stale release pins after the installed binary advanced outside
+    /// the update helper. Clear obsolete intent without reporting a failed update.
+    pub fn reconcile_installed_release(
+        &mut self,
+        installed_version: &str,
+        installed_commit: &str,
+    ) -> Result<bool> {
+        fn at_most(candidate: &str, installed: &str) -> Option<bool> {
+            fn parts(value: &str) -> Option<[u64; 3]> {
+                let value = value.trim_start_matches('v');
+                let mut parts = value.split('.');
+                Some([
+                    parts.next()?.parse().ok()?,
+                    parts.next()?.parse().ok()?,
+                    parts.next()?.split(['-', '+']).next()?.parse().ok()?,
+                ])
+            }
+            Some(parts(candidate)? <= parts(installed)?)
+        }
+        let obsolete = |version: &str, commit: &str| {
+            let commit_matches = !commit.trim().is_empty()
+                && !commit.eq_ignore_ascii_case("unknown")
+                && commit == installed_commit;
+            commit_matches || at_most(version, installed_version) == Some(true)
+        };
+        let mut changed = false;
+        if self
+            .snapshot
+            .latest_release
+            .as_ref()
+            .is_some_and(|release| obsolete(&release.version, &release.commit))
+        {
+            self.snapshot.latest_release = None;
+            self.snapshot.etag = None;
+            self.snapshot.last_checked_unix = None;
+            self.snapshot.no_published_release = false;
+            changed = true;
+        }
+        if self.snapshot.pending.as_ref().is_some_and(|target| {
+            obsolete(&target.version, &target.commit)
+                && self.snapshot.status != UpdateStatus::Applying
+        }) {
+            let release_id = self.snapshot.pending.as_ref().unwrap().release_id;
+            self.snapshot.pending = None;
+            self.snapshot.prepared = None;
+            self.snapshot.status = UpdateStatus::Idle;
+            self.snapshot.last_error = None;
+            self.snapshot.immediate_release_id = None;
+            self.snapshot.result_notification_id = None;
+            self.snapshot.result_notified_id = None;
+            self.snapshot.apply_attempt_id = None;
+            self.snapshot.helper_started_attempt_id = None;
+            self.snapshot.helper_pid = None;
+            if self
+                .snapshot
+                .last_result
+                .as_ref()
+                .is_some_and(|result| result.release_id == release_id)
+            {
+                self.snapshot.last_result = None;
+            }
+            changed = true;
+        }
+        if self.snapshot.status != UpdateStatus::Applied
+            && self
+                .snapshot
+                .last_result
+                .as_ref()
+                .is_some_and(|result| obsolete(&result.version, &result.commit))
+        {
+            self.snapshot.last_result = None;
+            changed = true;
+        }
+        if changed {
+            self.persist()?;
+        }
+        Ok(changed)
+    }
+
+    /// Retire old scheduled selections that were never explicitly confirmed for
+    /// immediate application. They remain discoverable as latest releases but
+    /// must not install from a legacy idle queue.
+    pub fn clear_unconfirmed_update(&mut self) -> Result<bool> {
+        if self.snapshot.immediate_release_id.is_some()
+            || !matches!(
+                self.snapshot.status,
+                UpdateStatus::Selected | UpdateStatus::Preparing | UpdateStatus::Ready
+            )
+        {
+            return Ok(false);
+        }
+        self.snapshot.pending = None;
+        self.snapshot.prepared = None;
+        self.snapshot.status = UpdateStatus::Idle;
+        self.snapshot.last_error = None;
+        self.snapshot.result_notification_id = None;
+        self.snapshot.result_notified_id = None;
+        self.snapshot.apply_attempt_id = None;
+        self.snapshot.helper_started_attempt_id = None;
+        self.snapshot.helper_pid = None;
+        self.persist()?;
+        Ok(true)
+    }
+
     pub fn skip_release(&mut self, release_id: u64) -> Result<()> {
         self.snapshot.skipped_release_id = Some(release_id);
         if self
@@ -1269,6 +1373,10 @@ pub fn helper_running(state_dir: &Path, attempt_id: &str) -> Result<bool> {
     Ok(false)
 }
 
+fn windows_worker_task_arguments(config_file: &Path) -> String {
+    format!("run --config \"{}\"", config_file.display())
+}
+
 #[cfg(windows)]
 fn launch_windows_task(
     prepared: &PreparedUpdate,
@@ -1293,8 +1401,10 @@ fn launch_windows_task(
         .context("owned Windows worker executable is missing")?;
     let task_executable = super::windows_task_executable_path(service_executable)?;
     let expected_executable = super::ps_single_quote(&task_executable.display().to_string());
+    // Compare against the ownership record's original spelling. The canonical
+    // config path can have different case or a `\\?\` prefix than the task.
     let expected_arguments =
-        super::ps_single_quote(&format!("run --config \"{}\"", config.display()));
+        super::ps_single_quote(&windows_worker_task_arguments(&ownership.config_file));
     let (task_state, run_level) =
         super::inspect_owned_windows_task(&expected_executable, &expected_arguments, &ownership)?;
     ensure!(
@@ -1363,6 +1473,185 @@ mod tests {
             body: String::new(),
             published_at: None,
         }
+    }
+
+    #[test]
+    fn installed_release_reconciles_stale_queue_and_notice_without_changing_preferences() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let mut old = notice(5);
+        old.version = "0.1.11".into();
+        old.commit = "old-commit".into();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: Some("old-etag".into()),
+                release: Some(old.clone()),
+            })
+            .unwrap();
+        store.record_notice(5, 12).unwrap();
+        store.set_muted(true).unwrap();
+        store.skip_release(3).unwrap();
+        let selected = store.select_update(5).unwrap();
+        store
+            .store_prepared(PreparedUpdate {
+                release_id: 5,
+                version: selected.version,
+                commit: selected.commit,
+                binary: dir.path().join("prepared/discodex"),
+            })
+            .unwrap();
+        store.request_immediate(5).unwrap();
+
+        assert!(
+            store
+                .reconcile_installed_release("0.1.13", "new-commit")
+                .unwrap()
+        );
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.status, UpdateStatus::Idle);
+        assert!(snapshot.pending.is_none());
+        assert!(snapshot.prepared.is_none());
+        assert!(snapshot.latest_release.is_none());
+        assert!(snapshot.last_result.is_none());
+        assert_eq!(snapshot.last_checked_unix, None);
+        assert_eq!(snapshot.etag, None);
+        assert_eq!(snapshot.message_id, Some(12));
+        assert!(snapshot.muted);
+        assert_eq!(snapshot.skipped_release_id, Some(3));
+    }
+
+    #[test]
+    fn unconfirmed_selection_is_retired_but_confirmed_immediate_intent_is_kept() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let mut latest = notice(5);
+        latest.version = "0.1.14".into();
+        latest.commit = "newer-commit".into();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(latest),
+            })
+            .unwrap();
+        store.select_update(5).unwrap();
+        assert!(store.clear_unconfirmed_update().unwrap());
+        assert_eq!(store.snapshot().status, UpdateStatus::Idle);
+        assert!(store.snapshot().pending.is_none());
+        assert!(store.snapshot().latest_release.is_some());
+
+        store.select_update(5).unwrap();
+        store.request_immediate(5).unwrap();
+        let confirmed = store.snapshot();
+        assert!(!store.clear_unconfirmed_update().unwrap());
+        assert_eq!(store.snapshot(), confirmed);
+    }
+
+    #[test]
+    fn installed_applied_result_and_notification_token_survive_reconciliation() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let mut release = notice(13);
+        release.version = "0.1.13".into();
+        release.commit = "installed-commit".into();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: Some("applied-release-etag".into()),
+                release: Some(release),
+            })
+            .unwrap();
+        store.select_update(13).unwrap();
+        store.request_immediate(13).unwrap();
+        store.mark_preparing(13).unwrap();
+        store
+            .store_prepared(PreparedUpdate {
+                release_id: 13,
+                version: "0.1.13".into(),
+                commit: "installed-commit".into(),
+                binary: dir.path().join("prepared/discodex"),
+            })
+            .unwrap();
+        store.mark_applying(13).unwrap();
+        store.mark_applied(13).unwrap();
+        let before = store.snapshot();
+        assert!(before.result_notification_id.is_some());
+        assert_eq!(
+            before.last_result.as_ref().map(|result| result.release_id),
+            Some(13)
+        );
+
+        assert!(
+            store
+                .reconcile_installed_release("0.1.13", "installed-commit")
+                .unwrap()
+        );
+        let after = store.snapshot();
+        assert_eq!(after.status, UpdateStatus::Applied);
+        assert_eq!(after.result_notification_id, before.result_notification_id);
+        assert_eq!(after.result_notified_id, before.result_notified_id);
+        assert_eq!(after.last_result, before.last_result);
+    }
+
+    #[test]
+    fn installed_commit_retires_same_commit_pending_release_even_when_version_differs() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let mut release = notice(5);
+        release.version = "0.1.14".into();
+        release.commit = "installed-commit".into();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: Some("same-commit-etag".into()),
+                release: Some(release),
+            })
+            .unwrap();
+        store.select_update(5).unwrap();
+        store.request_immediate(5).unwrap();
+
+        assert!(
+            store
+                .reconcile_installed_release("0.1.13", "installed-commit")
+                .unwrap()
+        );
+        let snapshot = store.snapshot();
+        assert_eq!(snapshot.status, UpdateStatus::Idle);
+        assert!(snapshot.pending.is_none());
+        assert!(snapshot.latest_release.is_none());
+        assert_eq!(snapshot.etag, None);
+    }
+
+    #[test]
+    fn installed_release_keeps_a_newer_failed_update_visible() {
+        let dir = tempdir().unwrap();
+        let mut store = UpdateStore::load(dir.path()).unwrap();
+        let mut newer = notice(6);
+        newer.version = "0.1.14".into();
+        newer.commit = "newer-commit".into();
+        store
+            .apply_check(CheckResult::Modified {
+                checked_at_unix: 100,
+                etag: None,
+                release: Some(newer),
+            })
+            .unwrap();
+        store.select_update(6).unwrap();
+        store
+            .mark_apply_failed(6, "download failed".into())
+            .unwrap();
+        assert!(
+            !store
+                .reconcile_installed_release("0.1.13", "installed-commit")
+                .unwrap()
+        );
+        assert_eq!(store.snapshot().status, UpdateStatus::Failed);
+        assert_eq!(store.snapshot().pending.as_ref().unwrap().release_id, 6);
+        assert_eq!(
+            store.snapshot().latest_release.as_ref().unwrap().release_id,
+            6
+        );
     }
 
     #[test]
@@ -1857,6 +2146,15 @@ mod tests {
         ).unwrap();
         assert_eq!(pinned.release_id, 7);
         assert!(pinned.asset.is_none());
+    }
+
+    #[test]
+    fn windows_worker_arguments_keep_recorded_config_path_spelling() {
+        let config = Path::new(r"C:\Users\example\AppData\config.json");
+        assert_eq!(
+            windows_worker_task_arguments(config),
+            r#"run --config "C:\Users\example\AppData\config.json""#
+        );
     }
 
     #[test]

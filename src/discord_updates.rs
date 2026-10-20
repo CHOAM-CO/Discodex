@@ -8,7 +8,8 @@ use anyhow::{Context as _, Result, bail};
 use serenity::{
     all::{
         ButtonStyle, ChannelId, ComponentInteraction, Context, CreateActionRow, CreateButton,
-        CreateInteractionResponse, CreateInteractionResponseMessage, MessageFlags, MessageId,
+        CreateInteractionResponse, CreateInteractionResponseMessage, GuildId, MessageFlags,
+        MessageId,
     },
     builder::{CreateAllowedMentions, CreateMessage, EditMessage},
     http::Http,
@@ -23,11 +24,15 @@ use tokio::sync::{Mutex, Notify};
 
 const IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const RETRY_DELAY: Duration = Duration::from_secs(15 * 60);
+const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(5);
+const VOICE_LEAVE_TIMEOUT: Duration = Duration::from_secs(10);
+const HANDLER_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct Activity {
     active: usize,
     last: Instant,
     applying: bool,
+    updater_started: bool,
 }
 
 pub(crate) struct UpdateController {
@@ -93,6 +98,14 @@ impl UpdateController {
                 Some(format!("{error:#}")),
             ),
         };
+        if let Err(error) = store.reconcile_installed_release(
+            updates::current_build_version(),
+            updates::current_build_commit(),
+        ) {
+            initialization_error = Some(format!("{error:#}"));
+        } else if let Err(error) = store.clear_unconfirmed_update() {
+            initialization_error = Some(format!("{error:#}"));
+        }
         let snapshot = store.snapshot();
         if snapshot.status == UpdateStatus::Applying {
             if let Some(target) = snapshot.pending {
@@ -100,13 +113,11 @@ impl UpdateController {
                     if let Err(error) = store.mark_applied(target.release_id) {
                         initialization_error = Some(format!("{error:#}"));
                     }
-                } else {
-                    if let Err(error) = store.mark_apply_failed(
-                        target.release_id,
-                        "Previous update was interrupted or restored the previous version".into(),
-                    ) {
-                        initialization_error = Some(format!("{error:#}"));
-                    }
+                } else if let Err(error) = store.mark_apply_failed(
+                    target.release_id,
+                    "Previous update was interrupted or restored the previous version".into(),
+                ) {
+                    initialization_error = Some(format!("{error:#}"));
                 }
             }
         }
@@ -122,6 +133,7 @@ impl UpdateController {
                 active: 0,
                 last: Instant::now(),
                 applying: false,
+                updater_started: false,
             }),
             wake: Notify::new(),
             handlers_finished: Notify::new(),
@@ -143,6 +155,19 @@ impl UpdateController {
         let mut guard = self.admission();
         guard.mark_activity();
         guard
+    }
+
+    pub(crate) fn try_activity(self: &Arc<Self>) -> Option<ActivityGuard> {
+        let mut state = self.activity.lock().unwrap_or_else(|e| e.into_inner());
+        if state.applying {
+            return None;
+        }
+        state.active += 1;
+        state.last = Instant::now();
+        Some(ActivityGuard {
+            controller: self.clone(),
+            meaningful: true,
+        })
     }
 
     pub(crate) async fn wait_for_handlers(&self) {
@@ -182,21 +207,35 @@ impl UpdateController {
 
     fn claim_apply(&self, immediate: bool) -> bool {
         let mut state = self.activity.lock().unwrap_or_else(|e| e.into_inner());
-        if !ready_activity(
-            state.active,
-            state.last.elapsed(),
-            state.applying,
-            immediate,
-        ) {
+        if state.applying
+            || (!immediate
+                && !ready_activity(state.active, state.last.elapsed(), state.applying, false))
+        {
             return false;
         }
         state.applying = true;
+        state.updater_started = false;
         true
+    }
+
+    fn updater_started(&self) {
+        self.activity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .updater_started = true;
+    }
+
+    fn updater_is_started(&self) -> bool {
+        self.activity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .updater_started
     }
 
     fn release_apply(&self) {
         let mut state = self.activity.lock().unwrap_or_else(|e| e.into_inner());
         state.applying = false;
+        state.updater_started = false;
         state.last = Instant::now();
     }
 
@@ -250,6 +289,22 @@ impl UpdateController {
             }
         }
         Ok(())
+    }
+}
+
+fn version_is_newer(candidate: &str, installed: &str) -> Option<bool> {
+    fn parts(value: &str) -> Option<[u64; 3]> {
+        let value = value.trim_start_matches('v');
+        let mut parts = value.split('.');
+        Some([
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.split(['-', '+']).next()?.parse().ok()?,
+        ])
+    }
+    match (parts(candidate), parts(installed)) {
+        (Some(candidate), Some(installed)) => Some(candidate > installed),
+        _ => None,
     }
 }
 
@@ -321,28 +376,35 @@ struct UpdateConfirmation {
 }
 
 fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
+    if snapshot.status == UpdateStatus::Applying {
+        return snapshot.pending.clone().map_or(
+            ManualUpdateAction::ActiveWithoutTarget,
+            ManualUpdateAction::Active,
+        );
+    }
     if matches!(
         snapshot.status,
-        UpdateStatus::Selected
-            | UpdateStatus::Preparing
-            | UpdateStatus::Ready
-            | UpdateStatus::Applying
-            | UpdateStatus::Failed
-    ) {
-        if let Some(pending) = snapshot.pending.clone() {
-            if snapshot.status == UpdateStatus::Applying
-                || (snapshot.status != UpdateStatus::Failed
-                    && snapshot.immediate_release_id == Some(pending.release_id))
-            {
-                return ManualUpdateAction::Active(pending);
+        UpdateStatus::Selected | UpdateStatus::Preparing | UpdateStatus::Ready
+    ) && snapshot
+        .pending
+        .as_ref()
+        .is_some_and(|pending| snapshot.immediate_release_id == Some(pending.release_id))
+    {
+        return ManualUpdateAction::Active(snapshot.pending.clone().expect("checked pending"));
+    }
+    // Keep an actual failed, still-newer pinned update retryable. Startup
+    // reconciliation silently removes superseded failures before this is reached.
+    if snapshot.status == UpdateStatus::Failed {
+        if let Some(pending) = snapshot.pending.as_ref().filter(|pending| {
+            version_is_newer(&pending.version, updates::current_build_version()) != Some(false)
+                && pending.commit != updates::current_build_commit()
+        }) {
+            let latest_is_newer = snapshot.latest_release.as_ref().is_some_and(|latest| {
+                version_is_newer(&latest.version, &pending.version) == Some(true)
+            });
+            if !latest_is_newer {
+                return ManualUpdateAction::Confirm(pending.clone());
             }
-            // Unconfirmed legacy selections and failures must not hide a newer release.
-            if snapshot.latest_release.is_none() {
-                return ManualUpdateAction::Confirm(pending);
-            }
-        }
-        if snapshot.status == UpdateStatus::Applying {
-            return ManualUpdateAction::ActiveWithoutTarget;
         }
     }
     let Some(latest) = snapshot.latest_release.as_ref() else {
@@ -354,6 +416,7 @@ fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
     };
     if snapshot.last_applied_release_id == Some(latest.release_id)
         || latest.commit == updates::current_build_commit()
+        || version_is_newer(&latest.version, updates::current_build_version()) == Some(false)
     {
         return ManualUpdateAction::NoUpdate;
     }
@@ -380,10 +443,10 @@ fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
 
 fn update_start_text(language: Language) -> &'static str {
     language.text(
-        "Starting the update now, without an idle timer. If a response, call, or approval is active, installation follows as soon as it finishes. A completion message will appear in the home channel after restart.",
-        "유휴 시간 대기 없이 업데이트를 시작합니다. 진행 중인 응답·통화·승인이 있으면 그것이 끝나는 즉시 설치합니다. 재시작 후 홈채널에 완료 메시지를 보냅니다.",
-        "立即开始更新，无需等待空闲计时。若有进行中的回复、通话或审批，将在其结束后立即安装。重启后会在主频道发送完成消息。",
-        "待機タイマーなしで更新を開始します。応答・通話・承認が進行中の場合は終了次第インストールします。再起動後にホームチャンネルへ完了メッセージを送ります。",
+        "Starting the update now. All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
+        "업데이트를 시작합니다. 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
+        "现在开始更新。包括子代理在内的所有进行中工作和通话都会中断，中断的工作不会自动恢复。会话历史和设置会保留。",
+        "更新を開始します。サブエージェントを含む進行中の作業と通話は中断され、中断した作業は自動再開されません。セッション履歴と設定は保持されます。",
     )
 }
 
@@ -401,10 +464,10 @@ fn manual_update_response(
         ManualUpdateAction::Confirm(target) => format!(
             "**Discodex {}**\n{}\n[{}](<{}>)", target.version,
             language.text(
-                "Update now? Your session and settings will be preserved. The worker will briefly restart; there is no five-minute idle wait. Any active response, call, or approval finishes before installation.",
-                "지금 업데이트할까요? 세션과 설정을 유지하고 워커를 잠시 재시작합니다. 5분 유휴 대기는 없으며, 진행 중인 응답·통화·승인이 있으면 끝난 뒤 설치합니다.",
-                "现在更新吗？会话和设置将被保留，工作进程会短暂重启。无需等待五分钟空闲；进行中的回复、通话或审批结束后安装。",
-                "今すぐ更新しますか？セッションと設定を保持し、ワーカーを短時間再起動します。5分間の待機はなく、進行中の応答・通話・承認が終了したらインストールします。"),
+                "Update now? All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
+                "지금 업데이트할까요? 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
+                "现在更新吗？包括子代理在内的所有进行中工作和通话都会中断，且不会自动恢复。会话历史和设置会保留。",
+                "今すぐ更新しますか？サブエージェントを含む進行中の作業と通話は中断され、自動再開されません。セッション履歴と設定は保持されます。"),
             language.text("Release notes", "변경 내용", "版本说明", "リリースノート"),
             target.url),
         ManualUpdateAction::NoUpdate => format!(
@@ -727,32 +790,84 @@ pub(crate) async fn handle_component(
         )
         .await?;
     let language = state.config.language;
-    let message = {
-        let mut store = state.updates.store.lock().await;
-        let snapshot = store.snapshot();
-        if snapshot.message_id != Some(interaction.message.id.get())
-            || snapshot.notified_release_id != Some(id)
-        {
-            language.text(
-                "This update notice has been replaced. Use the latest notice.",
-                "새 업데이트 알림을 사용해 주세요.",
-                "此通知已被替换，请使用最新通知。",
-                "最新の更新通知を使用してください。",
+    let snapshot = state.updates.store.lock().await.snapshot();
+    if snapshot.message_id != Some(interaction.message.id.get())
+        || snapshot.notified_release_id != Some(id)
+    {
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(language.text(
+                        "This update notice has been replaced. Use the latest notice.",
+                        "새 업데이트 알림을 사용해 주세요.",
+                        "此通知已被替换，请使用最新通知。",
+                        "最新の更新通知を使用してください。",
+                    ))
+                    .allowed_mentions(mentions()),
             )
-        } else if snapshot.status == UpdateStatus::Applying {
-            language.text(
-                "The update is already being installed.",
-                "업데이트를 이미 설치하고 있습니다.",
-                "正在安装更新。",
-                "更新をインストール中です。",
+            .await?;
+        return Ok(());
+    }
+    if snapshot.status == UpdateStatus::Applying {
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(language.text(
+                        "The update is already being installed.",
+                        "업데이트를 이미 설치하고 있습니다.",
+                        "正在安装更新。",
+                        "更新をインストール中です。",
+                    ))
+                    .allowed_mentions(mentions()),
             )
-        } else {
-            match parts[3] {
-                "install" => {
-                    store.request_immediate(id)?;
-                    update_start_text(language)
-                }
-                "skip" => {
+            .await?;
+        return Ok(());
+    }
+    match parts[3] {
+        "install" => {
+            // A public notice may be stale. Resolve latest before presenting the
+            // same explicit interrupt warning used by /discodex update.
+            let _manual = state.updates.manual_lock.lock().await;
+            if let Err(error) = state.updates.check_now().await {
+                tracing::warn!(%error, "notice update release check failed");
+                interaction
+                    .edit_response(
+                        ctx,
+                        serenity::builder::EditInteractionResponse::new()
+                            .content(manual_check_failed(language))
+                            .allowed_mentions(mentions()),
+                    )
+                    .await?;
+                return Ok(());
+            }
+            let action = manual_update_action(&state.updates.store.lock().await.snapshot());
+            let key = uuid::Uuid::new_v4().simple().to_string();
+            if let ManualUpdateAction::Confirm(target) = &action {
+                state.updates.confirmations.lock().await.insert(
+                    key.clone(),
+                    UpdateConfirmation {
+                        requester_id: interaction.user.id.get(),
+                        target: target.clone(),
+                    },
+                );
+            }
+            let (content, components) = manual_update_response(&action, language, &key);
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new()
+                        .content(content)
+                        .components(components)
+                        .allowed_mentions(mentions()),
+                )
+                .await?;
+        }
+        "skip" | "mute" => {
+            let message = {
+                let mut store = state.updates.store.lock().await;
+                if parts[3] == "skip" {
                     store.skip_release(id)?;
                     language.text(
                         "Skipped this version.",
@@ -760,8 +875,7 @@ pub(crate) async fn handle_component(
                         "已跳过此版本。",
                         "このバージョンをスキップしました。",
                     )
-                }
-                "mute" => {
+                } else {
                     store.set_muted(true)?;
                     language.text(
                         "Update notifications are off. Turn them back on in Settings.",
@@ -770,19 +884,19 @@ pub(crate) async fn handle_component(
                         "更新通知をオフにしました。設定で再度オンにできます。",
                     )
                 }
-                _ => bail!("unknown update action"),
-            }
+            };
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new()
+                        .content(message)
+                        .allowed_mentions(mentions()),
+                )
+                .await?;
+            state.updates.wake.notify_one();
         }
-    };
-    interaction
-        .edit_response(
-            ctx,
-            serenity::builder::EditInteractionResponse::new()
-                .content(message)
-                .allowed_mentions(mentions()),
-        )
-        .await?;
-    state.updates.wake.notify_one();
+        _ => bail!("unknown update action"),
+    }
     Ok(())
 }
 
@@ -968,6 +1082,44 @@ fn immediate_requested(snapshot: &UpdateSnapshot) -> bool {
         .is_some_and(|p| snapshot.immediate_release_id == Some(p.release_id))
 }
 
+async fn interrupt_owned_turns(state: &BridgeState) {
+    // Turn-state handlers take current_turn before active_turns. Keep that order
+    // while taking a stable snapshot, then release both locks before IPC.
+    let current = state.current_turn.lock().await;
+    let mut turns = state.active_turns.lock().await.clone();
+    if let Some(turn_id) = current.as_ref() {
+        turns
+            .entry(state.native.thread_id())
+            .or_insert_with(|| turn_id.clone());
+    }
+    drop(current);
+
+    let requests = turns.into_iter().map(|(thread_id, turn_id)| async move {
+        let result = tokio::time::timeout(
+            INTERRUPT_TIMEOUT,
+            state.native.request(
+                "turn/interrupt",
+                serde_json::json!({"threadId": thread_id, "turnId": turn_id}),
+            ),
+        )
+        .await;
+        (thread_id, turn_id, result)
+    });
+    for (thread_id, turn_id, result) in futures_util::future::join_all(requests).await {
+        match result {
+            Ok(Ok(_)) => {
+                tracing::info!(%thread_id, %turn_id, "requested active turn interruption for update")
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(%error, %thread_id, %turn_id, "could not interrupt active turn for update")
+            }
+            Err(error) => {
+                tracing::warn!(%error, %thread_id, %turn_id, "active turn interruption timed out for update")
+            }
+        }
+    }
+}
+
 pub(crate) async fn run(
     state: Arc<BridgeState>,
     http: Arc<Http>,
@@ -986,9 +1138,9 @@ pub(crate) async fn run(
         if state.bot_user_id.lock().await.is_none() {
             continue;
         }
-        if state.updates.applying() {
-            // The helper owns disk state while replacing the worker. If it dies
-            // before replacement, reopen admission without retrying the update.
+        if state.updates.applying() && state.updates.updater_is_started() {
+            // Before launch, applying closes ingress while the worker interrupts
+            // its active session. Once launched, the helper owns disk state.
             let dir = state.updates.state_dir.clone();
             let recovery = tokio::task::spawn_blocking(move || -> Result<UpdateStore> {
                 let mut store = UpdateStore::load(&dir)?;
@@ -1022,24 +1174,26 @@ pub(crate) async fn run(
             }
             continue;
         }
-        if let Err(error) = deliver_result(&state, &http).await {
-            tracing::warn!(%error, "could not deliver update result");
-        }
         let before = state.updates.store.lock().await.snapshot();
-        let due = check_due(&before, epoch());
-        if due && Instant::now() >= retry_after {
-            if let Err(error) = state.updates.check_now().await {
-                tracing::warn!(%error, "could not check Discodex releases");
-                retry_after = Instant::now() + RETRY_DELAY;
+        let immediate = immediate_requested(&before);
+        if !immediate {
+            if let Err(error) = deliver_result(&state, &http).await {
+                tracing::warn!(%error, "could not deliver update result");
+            }
+            let due = check_due(&before, epoch());
+            if due && Instant::now() >= retry_after {
+                if let Err(error) = state.updates.check_now().await {
+                    tracing::warn!(%error, "could not check Discodex releases");
+                    retry_after = Instant::now() + RETRY_DELAY;
+                }
+            }
+            let is_idle = idle(&state).await;
+            if let Err(error) = deliver_notice(&state, &http, is_idle, &mut rendered).await {
+                tracing::warn!(%error, "could not deliver update notice");
             }
         }
-        let is_idle = idle(&state).await;
-        if let Err(error) = deliver_notice(&state, &http, is_idle, &mut rendered).await {
-            tracing::warn!(%error, "could not deliver update notice");
-        }
         let snapshot = state.updates.store.lock().await.snapshot();
-        let immediate = immediate_requested(&snapshot);
-        if (!immediate && !is_idle)
+        if !immediate
             || !matches!(
                 snapshot.status,
                 UpdateStatus::Selected | UpdateStatus::Preparing | UpdateStatus::Ready
@@ -1056,7 +1210,6 @@ pub(crate) async fn run(
                 tracing::warn!(%error, "could not record update preparation");
                 continue;
             }
-            let _ = deliver_notice(&state, &http, false, &mut rendered).await;
             let dir = state.updates.state_dir.clone();
             let result =
                 tokio::task::spawn_blocking(move || updates::prepare_update(target, &dir)).await;
@@ -1081,7 +1234,9 @@ pub(crate) async fn run(
         }
         // Final gate is serialized with ingress and output handlers. All later
         // ingress is durably queued until this short replacement finishes.
-        if !ready_to_apply(&state, immediate).await || !state.updates.claim_apply(immediate) {
+        // Only an explicit confirmation can enter the durable applying phase.
+        // This closes ingress before active turns and voice are interrupted.
+        if !state.updates.claim_apply(true) {
             continue;
         }
         let (prepared, attempt_id) = {
@@ -1105,10 +1260,49 @@ pub(crate) async fn run(
                 }
             }
         };
-        let _ = deliver_notice(&state, &http, false, &mut rendered).await;
+        if immediate {
+            if let Err(error) =
+                tokio::time::timeout(HANDLER_DRAIN_TIMEOUT, state.updates.wait_for_handlers()).await
+            {
+                tracing::warn!(%error, "ingress handler drain timed out before update interruption");
+            }
+            interrupt_owned_turns(&state).await;
+            match tokio::time::timeout(
+                VOICE_LEAVE_TIMEOUT,
+                state.voice.leave(GuildId::new(state.config.guild_id)),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not fully close voice before update restart")
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "voice shutdown timed out before update restart")
+                }
+            }
+            if let Err(error) =
+                tokio::time::timeout(HANDLER_DRAIN_TIMEOUT, state.updates.wait_for_handlers()).await
+            {
+                tracing::warn!(%error, "handler drain timed out before confirmed update restart");
+            }
+        }
+        if immediate {
+            if let Err(error) = tokio::time::timeout(
+                INTERRUPT_TIMEOUT,
+                deliver_notice(&state, &http, false, &mut rendered),
+            )
+            .await
+            {
+                tracing::warn!(%error, "update notice delivery timed out before restart");
+            }
+        } else {
+            let _ = deliver_notice(&state, &http, false, &mut rendered).await;
+        }
         let config = state.updates.config_path.clone();
         let id = prepared.release_id;
         let helper_attempt = attempt_id.clone();
+        state.updates.updater_started();
         let launched = tokio::task::spawn_blocking(move || {
             updates::launch_apply(&prepared, &config, &helper_attempt)
         })
@@ -1145,6 +1339,14 @@ pub(crate) async fn run(
 mod tests {
     use super::*;
     #[test]
+    fn old_or_equal_selected_version_is_not_newer_than_installed() {
+        assert_eq!(version_is_newer("v0.1.11", "0.1.12"), Some(false));
+        assert_eq!(version_is_newer("0.1.12", "0.1.12"), Some(false));
+        assert_eq!(version_is_newer("0.1.13", "0.1.12"), Some(true));
+        assert_eq!(version_is_newer("unknown", "0.1.12"), None);
+    }
+
+    #[test]
     fn activity_requires_full_idle_window_and_never_applies_over_a_handler() {
         assert!(!idle_activity(1, IDLE_DELAY, false));
         assert!(!idle_activity(
@@ -1156,7 +1358,7 @@ mod tests {
         assert!(idle_activity(0, IDLE_DELAY, false));
     }
     #[test]
-    fn explicit_update_bypasses_elapsed_time_but_not_active_handlers() {
+    fn explicit_update_claims_transition_even_with_active_handlers() {
         assert!(ready_activity(0, Duration::ZERO, false, true));
         assert!(!ready_activity(0, Duration::ZERO, false, false));
         assert!(!ready_activity(1, Duration::ZERO, false, true));
@@ -1166,12 +1368,26 @@ mod tests {
             UpdateController::new(dir.path().to_owned(), dir.path().join("config.json")).unwrap(),
         );
         let handler = controller.activity();
-        assert!(!controller.claim_apply(true));
+        assert!(controller.claim_apply(true));
+        controller.release_apply();
         drop(handler);
         assert!(!controller.claim_apply(false));
         assert!(controller.claim_apply(true));
         assert!(controller.applying());
         assert!(!controller.claim_apply(true));
+    }
+
+    #[test]
+    fn new_voice_activity_is_rejected_after_update_gate_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let controller = Arc::new(
+            UpdateController::new(dir.path().to_owned(), dir.path().join("config.json")).unwrap(),
+        );
+        assert!(controller.try_activity().is_some());
+        assert!(controller.claim_apply(true));
+        assert!(controller.try_activity().is_none());
+        controller.release_apply();
+        assert!(controller.try_activity().is_some());
     }
 
     #[test]
@@ -1471,6 +1687,39 @@ mod tests {
         };
         assert_eq!(
             manual_update_action(&failed),
+            ManualUpdateAction::Confirm(pinned_release(7))
+        );
+    }
+
+    #[test]
+    fn newer_latest_release_takes_precedence_over_failed_pinned_target() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let failed = UpdateSnapshot {
+            status: UpdateStatus::Failed,
+            pending: Some(pinned_release(7)),
+            latest_release: Some(release_notice(8, Some(&digest))),
+            ..UpdateSnapshot::default()
+        };
+        let action = manual_update_action(&failed);
+        let ManualUpdateAction::Confirm(target) = &action else {
+            panic!("expected latest release confirmation")
+        };
+        assert_eq!(target.release_id, 8);
+        assert_eq!(target.version, "8.0.0");
+        let (text, buttons) = manual_update_response(&action, Language::English, "latest");
+        assert!(text.starts_with("**Discodex 8.0.0**"));
+        assert!(text.contains("Update now?"));
+        let components = serde_json::to_value(buttons).unwrap();
+        assert_eq!(components[0]["components"].as_array().unwrap().len(), 2);
+
+        let retry_same = UpdateSnapshot {
+            status: UpdateStatus::Failed,
+            pending: Some(pinned_release(7)),
+            latest_release: Some(release_notice(7, Some(&digest))),
+            ..UpdateSnapshot::default()
+        };
+        assert_eq!(
+            manual_update_action(&retry_same),
             ManualUpdateAction::Confirm(pinned_release(7))
         );
     }
