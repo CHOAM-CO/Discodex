@@ -1,6 +1,6 @@
 [package]
 name = "discodex"
-version = "1.0.2"
+version = "1.1.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
@@ -29,6 +29,9 @@ unicode-width = "0.2"
 percent-encoding = "2.3.2"
 url = "2.5.8"
 codex-uds = { path = "third_party/codex/codex-rs/uds" }
+codex-utils-pty = { path = "third_party/codex/codex-rs/utils/pty" }
+crossterm = { version = "0.28", default-features = false, features = ["events", "windows"] }
+vt100 = "0.16.2"
 futures-util = "0.3"
 flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -49,6 +52,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 rtc = "=0.20.5"
 webrtc = "=0.20.5"
+
+[dev-dependencies]
+wiremock = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.30", features = ["process", "signal"] }

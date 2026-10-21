@@ -27,6 +27,8 @@ Discodex 将一个 Discord 应用配置连接到一个持久对话。文字和�
 | 异步问题与通知 | 可通过 Discord 按钮或自由文本回答 native 问题，响应关联原问题 ID 和 thread。异步通知发送到主页频道，不会结束活动 turn。 |
 | 事件处理与日志 | 主控制事件由受监督的消费者处理，并保存配置文件级日志，便于排查无控制台启动的 Windows GUI worker。更新使用预编译版本。 |
 
+配对用户和允许列表中的用户可直接发送私信，无须提及机器人，也不受所选服务器或频道接收策略限制。拒绝列表和忽略自身消息的规则仍优先；`Everyone` 还允许其他私信发送者。普通自动输出、问题、批准请求和进度仍发在主页频道。回复实时收到的私信时，智能体通过 `discord_send_message` 的 `dm_id` 选择输入中的 `source.dm_id`，发回原私信。
+
 ## 快速开始
 
 从[最新发行版](https://github.com/CHOAM-CO/Discodex/releases/latest)下载 `discodex-installers.zip`，解压并在该目录运行。安装脚本下载对应平台的 worker 和匹配的 Codex 运行时，无需 Rust、Cargo 或 Git。可以选择现有 Codex 数据目录共享账户、记忆和历史（检测到时推荐），或选择 Discodex 独立目录；共享设置不会被覆盖。
@@ -53,7 +55,9 @@ Windows PowerShell：
 
 历史兼容性由独立的 `encrypted_content` 与 `agent_messages` 控制。发送时保留可读上下文，保存的原始历史不变；详见[历史兼容性](docs/design.zh-CN.md#提供商切换与加密历史)。
 
-Antigravity 设置在下次模型选择或 AGY 会话启动时生效；原生进程功能开关需要重启 worker。在设置中启用 **Antigravity** 后，从已安装 CLI 的 `agy models` 读取准确的模型 ID 和名称，显示在两处选择器中；手动填写的 ID 用于补充列表。推理强度来自 CLI 的 `--help`，不按模型名称猜测或映射。列表读取失败会在设置中显示，明确指定的不受支持强度也会原样传给 CLI，由其返回错误。Discodex 使用单独安装的 AGY CLI 及其现有订阅登录，不使用 SDK。重叠的内置工具由 AGY 执行，额外的 Discord 和任务工具通过 MCP 连接；子智能体管理由 Codex 分支负责。每次响应启动新 CLI 并传入原生对话和可见工具结果，不恢复 AGY 私有状态。不支持 AGY 语音。
+启用**高级设置 → Antigravity**，即可从官方预编译版本准备由当前配置管理的独立 AGY CLI。需要时自动安装并启动原生登录流程，可随时取消或退出；浏览器授权由用户完成。安装器和 Discord 设置均可选择共享现有 AGY 设置或使用 Discodex 独立设置，操作系统账户密钥环仍遵循 AGY 原生行为。卸载 Discodex 会删除其管理的 AGY 程序，保留外部 AGY 安装和共享设置。
+
+模型 ID 和名称来自 `agy models`，可用手动 ID 补充；推理强度选项来自 CLI `--help`。读取错误会显示，明确指定的不支持强度也原样交给 CLI。使用订阅登录的 AGY CLI，不使用 SDK。重叠的内置工具由 AGY 执行，其他 Discord 和任务工具通过 MCP 连接，子智能体由 Codex 分支管理。每次响应在新的 CLI 执行中接收原生对话和可见工具结果，不恢复 AGY 私有状态。设置在下一次模型选择或执行时生效。即使主任务选择 AGY 或本地、自定义模型，语音仍使用所选 Codex 账户的 Realtime 连接。
 
 ## 更新
 

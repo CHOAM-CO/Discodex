@@ -588,6 +588,8 @@ impl Native {
             .arg("mcp_servers.discodex_voice.tools.voice_join.approval_mode=\"approve\"")
             .arg("--config")
             .arg("features.realtime_conversation=true")
+            .arg("-c")
+            .arg("experimental_realtime_model_provider=\"openai\"")
             .arg("--config")
             .arg(format!(
                 "experimental_realtime_ws_backend_prompt={}",
@@ -1237,8 +1239,13 @@ impl Native {
             &configured_agy_models,
         );
         if preferences.antigravity_enabled {
-            let executable = Path::new(preferences.antigravity_path.as_deref().unwrap_or("agy"));
-            match crate::agy::discover_catalog(executable).await {
+            let discovery = async {
+                let runtime =
+                    crate::agy::Runtime::for_preferences(&self.inner.config, &preferences)?;
+                crate::agy::discover_catalog(&runtime).await
+            }
+            .await;
+            match discovery {
                 Ok(discovered) => {
                     crate::model_catalog::add_antigravity_catalog(&mut catalog, &discovered)
                 }

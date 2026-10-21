@@ -1,10 +1,12 @@
 pub mod agy;
 pub mod agy_mcp;
+pub mod agy_setup;
 pub mod attachments;
 mod bundled_skill;
 pub mod commands;
 pub mod config;
 pub mod discord;
+mod discord_agy_setup;
 pub mod discord_tools;
 mod discord_updates;
 pub mod i18n;

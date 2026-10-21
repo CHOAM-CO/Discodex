@@ -5,6 +5,7 @@
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -345,23 +346,118 @@ pub fn parse_efforts(help: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn cli_output(executable: &Path, args: &[&str]) -> Result<std::process::Output> {
-    let mut command = Command::new(executable);
+/// One managed CLI and settings scope, shared by setup, discovery, and turns.
+/// AGY's native keyring remains owned by AGY even with separate settings.
+#[derive(Clone, Debug)]
+pub struct Runtime {
+    pub executable: PathBuf,
+    pub arguments: Vec<String>,
+    pub environment: HashMap<String, String>,
+}
+
+fn profile_data_root(state_dir: &Path) -> Result<PathBuf> {
+    let state_dir =
+        std::path::absolute(state_dir).context("resolve AGY profile state directory")?;
+    Ok(state_dir
+        .parent()
+        .context("AGY profile state directory has no parent")?
+        .to_owned())
+}
+
+pub fn managed_root(state_dir: &Path) -> Result<PathBuf> {
+    Ok(profile_data_root(state_dir)?.join("runtime").join("agy"))
+}
+
+pub fn managed_executable(state_dir: &Path) -> Result<PathBuf> {
+    Ok(managed_root(state_dir)?.join(if cfg!(windows) { "agy.exe" } else { "agy" }))
+}
+
+impl Runtime {
+    pub fn for_config(config: &crate::config::Config, share_settings: bool) -> Result<Self> {
+        let mut environment: HashMap<String, String> = std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .collect();
+        // The managed package is updated only through Discodex's verified
+        // manifest installer, so disable the CLI's self-replacing updater.
+        environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
+        Self::with_environment(
+            &config.state_dir,
+            share_settings,
+            cfg!(windows),
+            environment,
+        )
+    }
+
+    pub fn for_preferences(
+        config: &crate::config::Config,
+        preferences: &crate::native::NativeFeaturePreferences,
+    ) -> Result<Self> {
+        Self::for_config(
+            config,
+            preferences
+                .antigravity_share_settings
+                .context("choose whether to share existing AGY settings in Discodex settings")?,
+        )
+    }
+
+    fn with_environment(
+        state_dir: &Path,
+        share_settings: bool,
+        windows: bool,
+        mut environment: HashMap<String, String>,
+    ) -> Result<Self> {
+        environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
+        let executable = managed_root(state_dir)?.join(if windows { "agy.exe" } else { "agy" });
+        let arguments = if share_settings {
+            Vec::new()
+        } else {
+            let settings_root = profile_data_root(state_dir)?.join("agy-settings");
+            vec![
+                format!("--gemini_dir={}", settings_root.display()),
+                "--app_data_dir=antigravity-cli".to_owned(),
+            ]
+        };
+        Ok(Self {
+            executable,
+            arguments,
+            environment,
+        })
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command
+            .args(&self.arguments)
+            .env_clear()
+            .envs(&self.environment);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+    }
+}
+
+fn cli_command(runtime: &Runtime, args: &[&str]) -> Command {
+    let mut command = runtime.command();
     command.args(args);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
     command
-        .output()
-        .await
-        .with_context(|| format!("run AGY CLI command {}", args.join(" ")))
+}
+
+async fn cli_output(runtime: &Runtime, args: &[&str]) -> Result<std::process::Output> {
+    cli_command(runtime, args).output().await.with_context(|| {
+        format!(
+            "run AGY CLI at {} with command {}",
+            runtime.executable.display(),
+            args.join(" ")
+        )
+    })
 }
 
 /// Discover the installed CLI's available model IDs and supported effort
 /// alternatives. Both commands are metadata-only; no model prompt is sent.
-pub async fn discover_catalog(executable: &Path) -> Result<Catalog> {
+pub async fn discover_catalog(runtime: &Runtime) -> Result<Catalog> {
     let (models_output, help_output) = tokio::join!(
-        cli_output(executable, &["models"]),
-        cli_output(executable, &["--help"]),
+        cli_output(runtime, &["models"]),
+        cli_output(runtime, &["--help"]),
     );
     let models_output = models_output?;
     let help_output = help_output?;
@@ -393,13 +489,13 @@ pub async fn discover_catalog(executable: &Path) -> Result<Catalog> {
 }
 
 fn session_command(
-    executable: &Path,
+    runtime: &Runtime,
     cwd: &Path,
     model: Option<&str>,
     effort: Option<&str>,
     mcp_context: Option<&McpSessionContext>,
 ) -> Command {
-    let mut command = Command::new(executable);
+    let mut command = runtime.command();
     command
         .current_dir(cwd)
         .arg("--input-format")
@@ -410,8 +506,6 @@ fn session_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
     command
         .env_remove(crate::agy_mcp::NATIVE_ENDPOINT_ENV)
         .env_remove(crate::agy_mcp::NATIVE_RUN_ENV);
@@ -438,27 +532,29 @@ impl Session {
     /// Start one process for a conversation. `cwd` selects the CLI workspace;
     /// AGY resolves its existing cached login and MCP configuration itself.
     pub async fn spawn(
-        executable: &Path,
+        runtime: &Runtime,
         cwd: &Path,
         model: Option<&str>,
         effort: Option<&str>,
     ) -> Result<Self> {
-        Self::spawn_with_context(executable, cwd, model, effort, None).await
+        Self::spawn_with_context(runtime, cwd, model, effort, None).await
     }
 
     /// Start AGY with an optional per-process Discodex native MCP binding.
     /// The MCP project config remains stable; these values are inherited by
     /// the CLI's MCP child and cannot race with another AGY session.
     pub async fn spawn_with_context(
-        executable: &Path,
+        runtime: &Runtime,
         cwd: &Path,
         model: Option<&str>,
         effort: Option<&str>,
         mcp_context: Option<&McpSessionContext>,
     ) -> Result<Self> {
-        let mut child = session_command(executable, cwd, model, effort, mcp_context)
+        let mut child = session_command(runtime, cwd, model, effort, mcp_context)
             .spawn()
-            .with_context(|| format!("start Antigravity CLI at {}", executable.display()))?;
+            .with_context(|| {
+                format!("start Antigravity CLI at {}", runtime.executable.display())
+            })?;
         #[cfg(unix)]
         let owned_children = OwnedChildren {
             process_group: child.id().map(|pid| pid as i32),
@@ -659,8 +755,154 @@ mod tests {
     use std::ffi::OsStr;
 
     #[test]
+    fn managed_runtime_uses_each_profile_binary_without_searching_global_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut environment = HashMap::from([
+            ("PATH".to_owned(), "global tools".to_owned()),
+            ("HOME".to_owned(), "shared home".to_owned()),
+        ]);
+        environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
+        for profile in ["example-one", "example-two"] {
+            let data_root = directory.path().join(profile);
+            for windows in [false, true] {
+                let runtime = Runtime::with_environment(
+                    &data_root.join("state"),
+                    true,
+                    windows,
+                    environment.clone(),
+                )
+                .unwrap();
+                assert_eq!(
+                    runtime.executable,
+                    data_root
+                        .join("runtime/agy")
+                        .join(if windows { "agy.exe" } else { "agy" })
+                );
+                assert!(runtime.arguments.is_empty());
+                assert_eq!(runtime.environment, environment);
+            }
+        }
+    }
+
+    #[test]
+    fn separate_settings_use_native_flags_and_preserve_home_and_environment() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut environment = HashMap::from([
+            ("HOME".to_owned(), "original home".to_owned()),
+            ("USERPROFILE".to_owned(), "original user profile".to_owned()),
+            ("PATH".to_owned(), "original path".to_owned()),
+        ]);
+        environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
+        for windows in [false, true] {
+            let runtime = Runtime::with_environment(
+                &directory.path().join("state"),
+                false,
+                windows,
+                environment.clone(),
+            )
+            .unwrap();
+            assert_eq!(
+                runtime.arguments,
+                [
+                    format!(
+                        "--gemini_dir={}",
+                        directory.path().join("agy-settings").display()
+                    ),
+                    "--app_data_dir=antigravity-cli".to_owned(),
+                ]
+            );
+            assert_eq!(runtime.environment, environment);
+            for args in [&["models"][..], &["--help"][..]] {
+                let command = cli_command(&runtime, args);
+                let expected = runtime
+                    .arguments
+                    .iter()
+                    .map(String::as_str)
+                    .chain(args.iter().copied())
+                    .map(OsStr::new)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    command.as_std().get_program(),
+                    runtime.executable.as_os_str()
+                );
+                assert_eq!(command.as_std().get_args().collect::<Vec<_>>(), expected);
+                assert_eq!(
+                    command.as_std().get_envs().collect::<BTreeMap<_, _>>(),
+                    environment
+                        .iter()
+                        .map(|(key, value)| (OsStr::new(key), Some(OsStr::new(value))))
+                        .collect()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn preference_runtime_requires_settings_choice_and_ignores_legacy_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let config: crate::config::Config = serde_json::from_value(json!({
+            "profile":"example", "name":"Example", "tokenEnv":"EXAMPLE_TOKEN",
+            "guildId":1, "homeChannelId":2, "transcriptChannelId":3,
+            "codexPath":"example-core", "projectDir":directory.path().join("project"),
+            "stateDir":directory.path().join("state"),
+        }))
+        .unwrap();
+        let mut preferences = crate::native::NativeFeaturePreferences {
+            antigravity_enabled: true,
+            antigravity_path: Some("global-tools/custom-agy".to_owned()),
+            ..Default::default()
+        };
+        assert!(
+            Runtime::for_preferences(&config, &preferences)
+                .unwrap_err()
+                .to_string()
+                .contains("choose whether to share")
+        );
+        for share_settings in [false, true] {
+            preferences.antigravity_share_settings = Some(share_settings);
+            let runtime = Runtime::for_preferences(&config, &preferences).unwrap();
+            assert_eq!(
+                runtime.executable,
+                managed_executable(&config.state_dir).unwrap()
+            );
+            assert_eq!(runtime.arguments.is_empty(), share_settings);
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_spawn_failure_identifies_the_executable_and_command() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing-agy");
+        let runtime = Runtime {
+            executable: missing.clone(),
+            arguments: Vec::new(),
+            environment: HashMap::new(),
+        };
+        let error = cli_output(&runtime, &["models"]).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("run AGY CLI at {} with command models", missing.display())
+        );
+        assert_eq!(
+            error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+            Some(std::io::ErrorKind::NotFound)
+        );
+    }
+
+    #[test]
     fn session_command_preserves_executable_arguments_and_native_binding() {
         let executable = Path::new("example tools").join("agy-cli");
+        let runtime = Runtime {
+            executable: executable.clone(),
+            arguments: vec![
+                "--gemini_dir=example settings".to_owned(),
+                "--app_data_dir=antigravity-cli".to_owned(),
+            ],
+            environment: HashMap::from([("HOME".to_owned(), "shared home".to_owned())]),
+        };
         let cwd = Path::new("example workspace");
         let context = McpSessionContext {
             endpoint: "example-native-endpoint".into(),
@@ -672,7 +914,7 @@ mod tests {
             },
         };
         let command = session_command(
-            &executable,
+            &runtime,
             cwd,
             Some("exact model id"),
             Some("precise-effort"),
@@ -684,6 +926,8 @@ mod tests {
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [
+                "--gemini_dir=example settings",
+                "--app_data_dir=antigravity-cli",
                 "--input-format",
                 "stream-json",
                 "--output-format",
@@ -698,6 +942,7 @@ mod tests {
         assert_eq!(
             command.get_envs().collect::<BTreeMap<_, _>>(),
             BTreeMap::from([
+                (OsStr::new("HOME"), Some(OsStr::new("shared home"))),
                 (
                     OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV),
                     Some(OsStr::new(&context.endpoint))
@@ -712,10 +957,24 @@ mod tests {
 
     #[test]
     fn unbound_session_command_removes_inherited_native_binding() {
+        let runtime = Runtime {
+            executable: "example-runtime/agy".into(),
+            arguments: Vec::new(),
+            environment: HashMap::from([
+                (
+                    crate::agy_mcp::NATIVE_ENDPOINT_ENV.to_owned(),
+                    "inherited endpoint".to_owned(),
+                ),
+                (
+                    crate::agy_mcp::NATIVE_RUN_ENV.to_owned(),
+                    "inherited run".to_owned(),
+                ),
+            ]),
+        };
         for (model, effort) in [(None, None), (Some("  "), Some(""))] {
-            let command = session_command(Path::new("agy"), Path::new("."), model, effort, None);
+            let command = session_command(&runtime, Path::new("."), model, effort, None);
             let command = command.as_std();
-            assert_eq!(command.get_program(), OsStr::new("agy"));
+            assert_eq!(command.get_program(), runtime.executable.as_os_str());
             assert_eq!(
                 command.get_args().collect::<Vec<_>>(),
                 [
@@ -728,10 +987,7 @@ mod tests {
             );
             assert_eq!(
                 command.get_envs().collect::<BTreeMap<_, _>>(),
-                BTreeMap::from([
-                    (OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV), None),
-                    (OsStr::new(crate::agy_mcp::NATIVE_RUN_ENV), None),
-                ])
+                BTreeMap::new()
             );
         }
     }

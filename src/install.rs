@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use crate::config::{Config, InputMode};
 use crate::i18n::Language;
 use crate::message_access::{MessageAccess, MessagePolicy};
+use crate::native_features::{NativeFeaturePreferences, NativeFeatureStore};
 
 mod runtime;
 pub mod updates;
@@ -43,6 +44,10 @@ struct InstallationList {
     native_path: Option<PathBuf>,
     #[serde(default)]
     codex_home: Option<PathBuf>,
+    /// A newly chosen installer action, consumed after applying it. Reinstalls
+    /// otherwise preserve the current Discord settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    antigravity: Option<AntigravityInstallChoice>,
     discord_app: String,
     guild_id: u64,
     home_channel_id: u64,
@@ -59,6 +64,24 @@ struct InstallationList {
     model: Option<String>,
     requested_permission_profile: String,
     created_at: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum AntigravityInstallChoice {
+    Disabled,
+    SharedSettings,
+    SeparateSettings,
+}
+
+impl AntigravityInstallChoice {
+    fn share_settings(self) -> Option<bool> {
+        match self {
+            Self::Disabled => None,
+            Self::SharedSettings => Some(true),
+            Self::SeparateSettings => Some(false),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -258,6 +281,7 @@ fn print_plan_for_language(language: Language) -> Result<()> {
     let native_source = NativeSource::ManagedCore;
     let native_path = None;
     let codex_home = Some(choose_codex_home(&roots, language)?);
+    let antigravity = Some(choose_antigravity_install(language)?);
     let discord_app = ask_text(
         language,
         "Discord application profile (existing app)",
@@ -330,6 +354,7 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         native_source,
         native_path,
         codex_home,
+        antigravity,
         discord_app,
         guild_id,
         home_channel_id,
@@ -1456,6 +1481,7 @@ fn install_at(
     run_async(crate::commands::register_commands(&config)).context(
         "Discord /discodex command registration failed; saved setup files remain for retry",
     )?;
+    configure_antigravity_install(&config, list.antigravity)?;
     run_async(configure_native_profile(&mut config, &config_path)).context(
         "Codex account or Full Access profile check failed; saved setup files remain for retry",
     )?;
@@ -1470,6 +1496,7 @@ fn install_at(
     installed_list.native_source = NativeSource::ManagedCore;
     installed_list.native_path = None;
     installed_list.codex_home = Some(selected_codex_home);
+    installed_list.antigravity = None;
     write_json_private(&list_path, &installed_list)?;
     if let Some(previous) = &previous_ownership {
         retire_previous_runtime(previous, &managed_runtime);
@@ -1652,6 +1679,7 @@ pub fn uninstall() -> Result<()> {
         ownership.runtime_owned = false;
         write_json_private(&ownership_path, &ownership)?;
     }
+    remove_owned_antigravity(&ownership.state_dir)?;
 
     #[cfg(windows)]
     if let Some(executable) = &ownership.worker_executable {
@@ -3172,6 +3200,390 @@ fn choose_codex_home(roots: &Roots, language: Language) -> Result<PathBuf> {
             ),
         }
     }
+}
+
+fn choose_antigravity_install(language: Language) -> Result<AntigravityInstallChoice> {
+    println!("{}", language.text(
+        "Antigravity: 1) Install a Discodex-managed CLI; 2) Skip (you can enable it later in Discord). Enter q to exit setup.",
+        "Antigravity: 1) Discodex 전용 CLI 설치; 2) 건너뛰기 (나중에 Discord에서 활성화 가능). q를 입력하면 설치를 종료합니다.",
+        "Antigravity：1) 安装由 Discodex 管理的 CLI；2) 跳过（以后可在 Discord 中启用）。输入 q 退出安装。",
+        "Antigravity：1) Discodex 管理の CLI をインストール; 2) スキップ（後で Discord から有効化できます）。q でセットアップを終了します。"
+    ));
+    loop {
+        match ask_text(
+            language,
+            "Antigravity",
+            "Antigravity",
+            "Antigravity",
+            "Antigravity",
+            "2",
+        )?
+        .as_str()
+        {
+            "1" => return choose_antigravity_settings(language),
+            "2" => return Ok(AntigravityInstallChoice::Disabled),
+            "q" | "Q" => return Err(crate::agy_setup::SetupCancelled.into()),
+            _ => println!(
+                "{}",
+                language.text(
+                    "Choose 1, 2, or q.",
+                    "1, 2 또는 q를 선택하세요.",
+                    "请选择 1、2 或 q。",
+                    "1、2、q のいずれかを選んでください。"
+                )
+            ),
+        }
+    }
+}
+
+fn choose_antigravity_settings(language: Language) -> Result<AntigravityInstallChoice> {
+    println!("{}", language.text(
+        "Antigravity settings: 1) Share existing settings; 2) Separate Discodex settings. The CLI still uses the operating system's account keyring. Shared settings are preserved on uninstall. Enter q to exit.",
+        "Antigravity 설정: 1) 기존 설정 공유; 2) Discodex 전용 설정. 로그인 계정은 CLI의 운영체제 키링을 사용합니다. 공유 설정은 삭제할 때 보존합니다. q를 입력하면 종료합니다.",
+        "Antigravity 设置：1) 共享现有设置；2) Discodex 独立设置。CLI 仍使用操作系统账户密钥环。卸载时保留共享设置。输入 q 退出。",
+        "Antigravity 設定：1) 既存の設定を共有; 2) Discodex 専用の設定。CLI は引き続き OS のアカウントキーチェーンを使用します。共有設定はアンインストール時も保持します。q で終了します。"
+    ));
+    loop {
+        let answer = ask_text(language, "Settings", "설정", "设置", "設定", "2")?;
+        match antigravity_settings_choice(&answer) {
+            Some(choice) => return Ok(choice),
+            None if answer.eq_ignore_ascii_case("q") => {
+                return Err(crate::agy_setup::SetupCancelled.into());
+            }
+            None => println!(
+                "{}",
+                language.text(
+                    "Choose 1, 2, or q.",
+                    "1, 2 또는 q를 선택하세요.",
+                    "请选择 1、2 或 q。",
+                    "1、2、q のいずれかを選んでください。"
+                )
+            ),
+        }
+    }
+}
+
+fn antigravity_settings_choice(answer: &str) -> Option<AntigravityInstallChoice> {
+    match answer {
+        "1" => Some(AntigravityInstallChoice::SharedSettings),
+        "2" => Some(AntigravityInstallChoice::SeparateSettings),
+        _ => None,
+    }
+}
+
+fn configure_antigravity_install(
+    config: &Config,
+    requested: Option<AntigravityInstallChoice>,
+) -> Result<()> {
+    let store = NativeFeatureStore::new(&config.state_dir);
+    let choice = match requested {
+        Some(choice) => choice,
+        None => return Ok(()),
+    };
+    let Some(share_settings) = choice.share_settings() else {
+        let mut preferences = store.read()?;
+        preferences.antigravity_enabled = false;
+        store.apply(&preferences)?;
+        return Ok(());
+    };
+    let runtime = crate::agy::Runtime::for_config(config, share_settings)?;
+    run_async(prepare_antigravity_at_console(
+        crate::agy_setup::SetupConfig {
+            executable: runtime.executable,
+            cwd: config.project_dir.clone(),
+            environment: runtime.environment,
+            arguments: runtime.arguments,
+        },
+        config.language,
+    ))?;
+    // Installation and sign-in can take time. Preserve any other settings saved
+    // while the user completes the native authentication flow.
+    let mut preferences = store.read()?;
+    apply_antigravity_ready(&mut preferences, share_settings);
+    store.apply(&preferences)?;
+    println!(
+        "{}",
+        config.language.text(
+            "Antigravity is installed, signed in, and enabled.",
+            "Antigravity 설치와 로그인을 확인했고 활성화했습니다.",
+            "已确认 Antigravity 安装和登录成功，并已启用。",
+            "Antigravity のインストールとログインを確認し、有効化しました。"
+        )
+    );
+    Ok(())
+}
+
+fn apply_antigravity_ready(preferences: &mut NativeFeaturePreferences, share_settings: bool) {
+    preferences.antigravity_enabled = true;
+    preferences.antigravity_share_settings = Some(share_settings);
+}
+
+struct SetupTerminal;
+
+impl SetupTerminal {
+    fn open() -> Result<Self> {
+        crossterm::terminal::enable_raw_mode()
+            .context("enable terminal input for Antigravity setup")?;
+        Ok(Self)
+    }
+}
+
+impl Drop for SetupTerminal {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SetupTerminalInput {
+    Wait,
+    Send(String),
+    Cancel,
+}
+
+fn antigravity_terminal_input(
+    event: crossterm::event::Event,
+    text: &mut String,
+    accepts_code: bool,
+    accepts_navigation: bool,
+) -> SetupTerminalInput {
+    use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+    let Event::Key(key) = event else {
+        return SetupTerminalInput::Wait;
+    };
+    if key.kind == KeyEventKind::Release {
+        return SetupTerminalInput::Wait;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match key.code {
+            KeyCode::Char('c' | 'd') => SetupTerminalInput::Cancel,
+            KeyCode::Char('u') => {
+                text.clear();
+                SetupTerminalInput::Wait
+            }
+            _ => SetupTerminalInput::Wait,
+        };
+    }
+    match key.code {
+        KeyCode::Enter if accepts_code || accepts_navigation => {
+            let mut input = std::mem::take(text);
+            input.push('\r');
+            SetupTerminalInput::Send(input)
+        }
+        KeyCode::Char(character) if accepts_code => {
+            // Submit complete lines so the CLI adapter can redact authentication
+            // codes even when native terminal echo arrives in separate chunks.
+            text.push(character);
+            SetupTerminalInput::Wait
+        }
+        KeyCode::Backspace => {
+            text.pop();
+            SetupTerminalInput::Wait
+        }
+        KeyCode::Esc if accepts_navigation => {
+            text.clear();
+            SetupTerminalInput::Send("\u{1b}".into())
+        }
+        KeyCode::Up if accepts_navigation => SetupTerminalInput::Send("\u{1b}[A".into()),
+        KeyCode::Down if accepts_navigation => SetupTerminalInput::Send("\u{1b}[B".into()),
+        KeyCode::Left if accepts_navigation => SetupTerminalInput::Send("\u{1b}[D".into()),
+        KeyCode::Right if accepts_navigation => SetupTerminalInput::Send("\u{1b}[C".into()),
+        KeyCode::Tab if accepts_navigation => SetupTerminalInput::Send("\t".into()),
+        _ => SetupTerminalInput::Wait,
+    }
+}
+
+async fn prepare_antigravity_at_console(
+    config: crate::agy_setup::SetupConfig,
+    language: Language,
+) -> Result<crate::agy_setup::SetupReady> {
+    use crate::agy_setup::{InputDisposition, SetupCancelled, SetupInput, SetupProgress};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::sync::{mpsc, watch};
+
+    println!("{}", language.text(
+        "Preparing Antigravity. Ctrl+C or Ctrl+D cancels and exits at any stage. Use arrow keys and Enter for CLI choices; type an answer or login code, then press Enter. Typed text is hidden.",
+        "Antigravity를 준비합니다. 어느 단계에서든 Ctrl+C 또는 Ctrl+D로 취소하고 나갈 수 있습니다. CLI 선택은 방향키와 Enter를 사용하고, 답변이나 로그인 코드는 입력 후 Enter를 누르세요. 입력 내용은 숨겨집니다.",
+        "正在准备 Antigravity。任何阶段都可按 Ctrl+C 或 Ctrl+D 取消并退出。使用方向键和 Enter 选择 CLI 选项；输入回答或登录代码后按 Enter。输入内容不显示。",
+        "Antigravity を準備します。各段階で Ctrl+C または Ctrl+D を押すと中止して終了できます。CLI の選択は矢印キーと Enter を使い、回答やログインコードは入力後に Enter を押してください。入力内容は非表示です。"
+    ));
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let terminal = interactive.then(SetupTerminal::open).transpose()?;
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let stop_reader = Arc::new(AtomicBool::new(false));
+    let code_input = Arc::new(AtomicBool::new(false));
+    let navigation_input = Arc::new(AtomicBool::new(false));
+    let reader = if interactive {
+        let stop = stop_reader.clone();
+        let cancel = cancel_tx.clone();
+        let codes = code_input.clone();
+        let navigation = navigation_input.clone();
+        Some(std::thread::spawn(move || -> io::Result<()> {
+            let result = (|| {
+                let mut text = String::new();
+                let mut outgoing = std::collections::VecDeque::new();
+                let mut acknowledgements: Vec<tokio::sync::oneshot::Receiver<InputDisposition>> =
+                    Vec::new();
+                while !stop.load(Ordering::Acquire) {
+                    while let Some(input) = outgoing.pop_front() {
+                        match input_tx.try_send(input) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(input)) => {
+                                outgoing.push_front(input);
+                                break;
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
+                        }
+                    }
+                    acknowledgements.retain_mut(|received| match received.try_recv() {
+                        Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
+                        Ok(InputDisposition::NotAccepting) => {
+                            print!("{}\r\n", language.text(
+                                "The CLI prompt changed. Follow the current prompt and try again.",
+                                "CLI 입력 단계가 바뀌었습니다. 현재 안내에 따라 다시 입력하세요.",
+                                "CLI 提示已更改。请按照当前提示重新输入。",
+                                "CLI の入力段階が変わりました。現在の案内に従って再入力してください。"
+                            ));
+                            let _ = io::stdout().flush();
+                            false
+                        }
+                        _ => false,
+                    });
+                    if !crossterm::event::poll(std::time::Duration::from_millis(100))? {
+                        continue;
+                    }
+                    match antigravity_terminal_input(
+                        crossterm::event::read()?,
+                        &mut text,
+                        codes.load(Ordering::Acquire),
+                        navigation.load(Ordering::Acquire),
+                    ) {
+                        SetupTerminalInput::Wait => {}
+                        SetupTerminalInput::Send(input) => {
+                            let (acknowledgement, received) = tokio::sync::oneshot::channel();
+                            outgoing.push_back(SetupInput {
+                                data: input,
+                                acknowledgement,
+                            });
+                            acknowledgements.push(received);
+                        }
+                        SetupTerminalInput::Cancel => {
+                            let _ = cancel.send(true);
+                            break;
+                        }
+                    }
+                }
+                Ok(())
+            })();
+            if result.is_err() {
+                let _ = cancel.send(true);
+            }
+            result
+        }))
+    } else {
+        drop(input_tx);
+        None
+    };
+    let mut setup = Box::pin(crate::agy_setup::prepare(
+        config, events_tx, input_rx, cancel_rx,
+    ));
+    let mut input_unavailable = false;
+    let mut signal_error = None;
+    let mut signal_received = false;
+    let result = loop {
+        tokio::select! {
+            result = &mut setup => break result,
+            signal = tokio::signal::ctrl_c(), if !signal_received => {
+                signal_error = signal.err();
+                signal_received = true;
+                let _ = cancel_tx.send(true);
+            }
+            Some(event) = events_rx.recv() => {
+                let (accepts_code, accepts_navigation) = match &event {
+                    SetupProgress::Authentication { accepts_code, accepts_navigation, .. } => (*accepts_code, *accepts_navigation),
+                    _ => (false, false),
+                };
+                code_input.store(accepts_code, Ordering::Release);
+                navigation_input.store(accepts_navigation, Ordering::Release);
+                let message = match event {
+                    SetupProgress::Checking => language.text("Checking managed Antigravity…", "전용 Antigravity를 확인합니다…", "正在检查托管的 Antigravity…", "管理対象の Antigravity を確認しています…").to_owned(),
+                    SetupProgress::Installing => language.text("Downloading official Antigravity release…", "공식 Antigravity 릴리스를 다운로드합니다…", "正在下载 Antigravity 官方版本…", "Antigravity の公式リリースをダウンロードしています…").to_owned(),
+                    SetupProgress::CheckingAccount => language.text("Checking Antigravity sign-in…", "Antigravity 로그인을 확인합니다…", "正在检查 Antigravity 登录状态…", "Antigravity のログインを確認しています…").to_owned(),
+                    SetupProgress::Verifying => language.text("Verifying the Antigravity model catalog…", "Antigravity 모델 목록을 확인합니다…", "正在验证 Antigravity 模型列表…", "Antigravity のモデル一覧を確認しています…").to_owned(),
+                    SetupProgress::Authentication { output, .. } => {
+                        if !interactive {
+                            input_unavailable = true;
+                            let _ = cancel_tx.send(true);
+                        }
+                        output
+                    }
+                };
+                print!("{}\r\n", message.replace('\n', "\r\n"));
+                let _ = io::stdout().flush();
+            }
+        }
+    };
+    stop_reader.store(true, Ordering::Release);
+    // Stop setup before restoring the terminal; the input reader never blocks
+    // on a child write or acknowledgement, so cancellation remains available.
+    drop(setup);
+    if let Some(reader) = reader {
+        reader
+            .join()
+            .map_err(|_| anyhow!("Antigravity terminal input failed"))??;
+    }
+    drop(terminal);
+    if let Some(error) = signal_error {
+        return Err(error).context("listen for setup cancellation");
+    }
+    if *cancel_tx.borrow() && result.is_ok() {
+        return Err(SetupCancelled.into());
+    }
+    if input_unavailable {
+        bail!("{}", language.text(
+            "Antigravity sign-in needs an interactive terminal. Run the installer in a terminal or enable Antigravity from Discord settings.",
+            "Antigravity 로그인에 대화형 터미널이 필요합니다. 터미널에서 설치 프로그램을 실행하거나 Discord 설정에서 Antigravity를 활성화하세요.",
+            "Antigravity 登录需要交互式终端。请在终端中运行安装程序，或从 Discord 设置启用 Antigravity。",
+            "Antigravity のログインには対話型端末が必要です。端末でインストーラーを実行するか、Discord の設定から Antigravity を有効化してください。"
+        ));
+    }
+    if result
+        .as_ref()
+        .is_err_and(|error| error.is::<SetupCancelled>())
+    {
+        println!(
+            "{}",
+            language.text(
+                "Antigravity setup cancelled.",
+                "Antigravity 설정을 취소했습니다.",
+                "已取消 Antigravity 设置。",
+                "Antigravity のセットアップを中止しました。"
+            )
+        );
+    }
+    result
+}
+
+fn remove_owned_antigravity(state_dir: &Path) -> Result<()> {
+    let executable = crate::agy::managed_executable(state_dir)?;
+    let directory = executable
+        .parent()
+        .context("managed Antigravity path has no parent")?;
+    let marker = directory.join(crate::agy_setup::OWNERSHIP_FILE);
+    if !marker.exists() {
+        return Ok(());
+    }
+    ensure!(
+        crate::agy_setup::is_owned_install(&executable),
+        "Antigravity ownership record is invalid; its files were preserved"
+    );
+    fs::remove_dir_all(directory).context("remove Discodex-managed Antigravity installation")?;
+    Ok(())
 }
 
 fn resolve_codex_home(
@@ -5133,6 +5545,194 @@ mod tests {
     use super::*;
 
     #[test]
+    fn antigravity_installer_choices_select_sharing_without_enabling_early() {
+        assert_eq!(
+            antigravity_settings_choice("1"),
+            Some(AntigravityInstallChoice::SharedSettings)
+        );
+        assert_eq!(
+            antigravity_settings_choice("2"),
+            Some(AntigravityInstallChoice::SeparateSettings)
+        );
+        assert_eq!(antigravity_settings_choice("invalid"), None);
+        let mut preferences = NativeFeaturePreferences {
+            subagent_model: Some("example-child-model".into()),
+            approval_policy: serde_json::json!("on-request"),
+            ..NativeFeaturePreferences::default()
+        };
+        assert!(!preferences.antigravity_enabled);
+        apply_antigravity_ready(&mut preferences, false);
+        assert!(preferences.antigravity_enabled);
+        assert_eq!(preferences.antigravity_share_settings, Some(false));
+        assert_eq!(
+            preferences.subagent_model.as_deref(),
+            Some("example-child-model")
+        );
+        assert_eq!(preferences.approval_policy, serde_json::json!("on-request"));
+        apply_antigravity_ready(&mut preferences, true);
+        assert_eq!(preferences.antigravity_share_settings, Some(true));
+    }
+
+    #[test]
+    fn unattended_install_skip_preserves_legacy_antigravity_preferences() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let state_dir = directory.path().join("state");
+        let store = NativeFeatureStore::new(&state_dir);
+        let preferences = NativeFeaturePreferences {
+            antigravity_enabled: true,
+            antigravity_share_settings: None,
+            antigravity_models: vec!["example-model".into()],
+            ..NativeFeaturePreferences::default()
+        };
+        store.apply(&preferences)?;
+        let config = crate::config::Config {
+            profile: "example".into(),
+            name: "Example".into(),
+            token_env: "DISCODEX_TEST_TOKEN".into(),
+            guild_id: 1,
+            home_channel_id: 2,
+            transcript_channel_id: 3,
+            codex_path: directory.path().join("codex"),
+            project_dir: directory.path().into(),
+            state_dir,
+            credentials_file: None,
+            operator_ids: Vec::new(),
+            message_access: None,
+            voice_channel_ids: Vec::new(),
+            worker_path: None,
+            codex_home: None,
+            model: None,
+            effort: None,
+            service_tier: None,
+            memory_enabled: None,
+            permissions: None,
+            voice: None,
+            input_mode: crate::config::InputMode::default(),
+            language: crate::i18n::Language::English,
+        };
+
+        configure_antigravity_install(&config, None)?;
+
+        assert_eq!(store.read()?, preferences);
+        Ok(())
+    }
+
+    #[test]
+    fn antigravity_terminal_cancellation_is_available_in_every_stage() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        for (code, navigation) in [(false, false), (true, false), (false, true)] {
+            for key in ['c', 'd'] {
+                let event = Event::Key(KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL));
+                assert_eq!(
+                    antigravity_terminal_input(event, &mut String::new(), code, navigation),
+                    SetupTerminalInput::Cancel
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_terminal_submits_codes_as_complete_lines_and_native_navigation() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        let mut text = String::new();
+        assert_eq!(
+            antigravity_terminal_input(key(KeyCode::Char('a')), &mut text, false, false),
+            SetupTerminalInput::Wait
+        );
+        assert!(text.is_empty());
+        for character in "example-code".chars() {
+            assert_eq!(
+                antigravity_terminal_input(key(KeyCode::Char(character)), &mut text, true, false),
+                SetupTerminalInput::Wait
+            );
+        }
+        assert_eq!(
+            antigravity_terminal_input(key(KeyCode::Enter), &mut text, true, false),
+            SetupTerminalInput::Send("example-code\r".into())
+        );
+        assert!(text.is_empty());
+        assert_eq!(
+            antigravity_terminal_input(key(KeyCode::Down), &mut text, false, true),
+            SetupTerminalInput::Send("\u{1b}[B".into())
+        );
+        assert_eq!(
+            antigravity_terminal_input(key(KeyCode::Enter), &mut text, false, true),
+            SetupTerminalInput::Send("\r".into())
+        );
+        assert_eq!(
+            antigravity_terminal_input(key(KeyCode::Enter), &mut text, false, false),
+            SetupTerminalInput::Wait
+        );
+    }
+
+    fn owned_agy_fixture(state_dir: &Path, with_binary: bool) -> PathBuf {
+        let executable = crate::agy::managed_executable(state_dir).unwrap();
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(
+            executable
+                .parent()
+                .unwrap()
+                .join(crate::agy_setup::OWNERSHIP_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                "owner": "discodex", "component": "antigravity-cli",
+                "executable": executable.file_name().unwrap().to_str().unwrap()
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        if with_binary {
+            fs::write(&executable, b"managed executable").unwrap();
+        }
+        executable
+    }
+
+    #[test]
+    fn antigravity_uninstall_removes_only_owned_package_and_retains_settings() {
+        let profile = tempfile::tempdir().unwrap();
+        let state_dir = profile.path().join("state");
+        let executable = owned_agy_fixture(&state_dir, true);
+        let settings = profile.path().join("agy-settings");
+        fs::create_dir(&settings).unwrap();
+        fs::write(settings.join("settings.json"), b"private settings").unwrap();
+        let shared = tempfile::tempdir().unwrap();
+        fs::write(shared.path().join("settings.json"), b"shared settings").unwrap();
+        remove_owned_antigravity(&state_dir).unwrap();
+        assert!(!executable.parent().unwrap().exists());
+        assert_eq!(
+            fs::read(settings.join("settings.json")).unwrap(),
+            b"private settings"
+        );
+        assert_eq!(
+            fs::read(shared.path().join("settings.json")).unwrap(),
+            b"shared settings"
+        );
+    }
+
+    #[test]
+    fn antigravity_uninstall_handles_partial_install_and_preserves_unowned_directory() {
+        let profile = tempfile::tempdir().unwrap();
+        let state_dir = profile.path().join("state");
+        let executable = owned_agy_fixture(&state_dir, false);
+        remove_owned_antigravity(&state_dir).unwrap();
+        assert!(!executable.parent().unwrap().exists());
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"unowned executable").unwrap();
+        remove_owned_antigravity(&state_dir).unwrap();
+        assert_eq!(fs::read(&executable).unwrap(), b"unowned executable");
+        fs::write(
+            executable
+                .parent()
+                .unwrap()
+                .join(crate::agy_setup::OWNERSHIP_FILE),
+            b"invalid record",
+        )
+        .unwrap();
+        assert!(remove_owned_antigravity(&state_dir).is_err());
+        assert_eq!(fs::read(&executable).unwrap(), b"unowned executable");
+    }
+
+    #[test]
     fn mac_update_failure_before_replacement_keeps_owned_bytes_unchanged() {
         use UpdateRecoveryStep::*;
 
@@ -5610,6 +6210,7 @@ mod tests {
             native_source: NativeSource::ExistingCli,
             native_path: Some("/selected/codex".into()),
             codex_home: None,
+            antigravity: None,
             discord_app: "existing-app".into(),
             guild_id: 11,
             home_channel_id: 12,

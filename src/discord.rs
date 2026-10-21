@@ -587,6 +587,7 @@ pub(crate) struct BridgeState {
     pub approval_results: Mutex<ApprovalResults>,
     task_plan_displays: Mutex<HashMap<(u64, String, String), TaskPlanDisplay>>,
     pub settings_menus: Mutex<HashMap<String, commands::SettingsMenuState>>,
+    pub agy_setup: crate::discord_agy_setup::Controller,
     pub plugin_menus: Mutex<HashMap<String, commands::PluginMenuState>>,
     pub async_questions: Mutex<crate::async_questions::AsyncQuestionStore>,
     pub settings_change_lock: Mutex<()>,
@@ -1095,6 +1096,7 @@ pub async fn run(
         approval_results: Mutex::new(ApprovalResults::default()),
         task_plan_displays: Mutex::new(HashMap::new()),
         settings_menus: Mutex::new(HashMap::new()),
+        agy_setup: crate::discord_agy_setup::Controller::default(),
         plugin_menus: Mutex::new(HashMap::new()),
         async_questions: Mutex::new(crate::async_questions::AsyncQuestionStore::load(
             config.state_dir.join("async-questions.json"),
@@ -1449,7 +1451,7 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
     let source = if home_channel {
         serde_json::json!({"author": author_name})
     } else if msg.guild_id.is_none() {
-        serde_json::json!({"channel": "DM", "author": author_name})
+        serde_json::json!({"channel": "DM", "dm_id": msg.channel_id.get().to_string(), "author": author_name})
     } else {
         let channel_name = msg
             .channel_id
@@ -4254,6 +4256,34 @@ mod tests {
         assert_eq!(
             super::add_author_mention_metadata(serde_json::json!({"author":"Agent"}), 123456),
             serde_json::json!({"author":"Agent", "authorMention":"<@123456>"})
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_message_input_carries_the_conversation_id_for_tool_replies() {
+        let mut message = serenity::all::Message::default();
+        message.channel_id = ChannelId::new(42);
+        message.author.id = serenity::all::UserId::new(7);
+        message.author.name = "sender".to_owned();
+        message.author.global_name = Some("Display Name".to_owned());
+        message.content = "private question".to_owned();
+        let http = serenity::http::HttpBuilder::new("test-token")
+            .proxy("http://127.0.0.1:9")
+            .build();
+        let input = super::message_input(&message, false, &http).await;
+        let input: serde_json::Value = serde_json::from_str(&input).unwrap();
+        assert_eq!(
+            input,
+            serde_json::json!({
+                "source": {"channel":"DM", "dm_id":"42", "author":"Display Name", "authorMention":"<@7>"},
+                "body":"private question"
+            })
+        );
+        let home = super::message_input(&message, true, &http).await;
+        let home: serde_json::Value = serde_json::from_str(&home).unwrap();
+        assert_eq!(
+            home["source"],
+            serde_json::json!({"author":"Display Name", "authorMention":"<@7>"})
         );
     }
     #[test]

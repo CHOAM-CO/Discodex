@@ -363,8 +363,9 @@ async fn run(
         endpoint: native.voice_tool_endpoint(),
         binding: binding.clone(),
     };
+    let runtime = crate::agy::Runtime::for_preferences(&native.inner.config, &preferences)?;
     let mut session = crate::agy::Session::spawn_with_context(
-        Path::new(preferences.antigravity_path.as_deref().unwrap_or("agy")),
+        &runtime,
         cwd,
         Some(required_string(params, "model")?),
         params.get("effort").and_then(Value::as_str),
