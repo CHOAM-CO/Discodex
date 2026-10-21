@@ -38,6 +38,10 @@ A model selection stores the executor, provider and model together. The fork acc
 
 ## Provider changes and encrypted history
 
+Compatible `/models` catalogs can supply each model's context capacity through `context_window`, `context_length`, `max_model_len`, or `meta.n_ctx`. Native discovery, authentication, and provider-specific caches remain in use.
+
+Before sampling with a smaller Codex model, the core compares the context budget and, when needed, compacts with the previous model and provider. The source runtime is retained through resume and context forks. Cross-provider compaction produces a readable summary; it does not assume that providers can replay each other's encrypted checkpoints. Failed compaction preserves the conversation and prevents a request to the destination model. This applies to Codex provider transitions; Antigravity executor compaction is not implemented.
+
 The same compatibility boundary applies when switching the main provider and when a child forks conversation context into a different provider. Persisted source history and parent snapshots remain unchanged. At request construction, the fork checks `model_providers.<id>.capabilities.encrypted_content` and creates only the supported outbound view. This optional override defaults to the native OpenAI or Azure Responses classification; other providers default to unsupported.
 
 Conversion operates on typed native response items: encrypted reasoning/message payloads, compaction, tool-result content and agent-message content. Readable summaries, text and image siblings, call IDs and ordinary tool results remain associated. Opaque-only parts become an explicit notice that prior content is unavailable and may need to be retrieved or regenerated. The system does not decrypt them or claim the whole context was read. A literal string or ordinary tool JSON key named `encrypted_content` is not recursively removed. These native encrypted payloads are provider-specific replay data, not a generic password-redaction mechanism.

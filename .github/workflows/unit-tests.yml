@@ -70,6 +70,9 @@ jobs:
           cargo test --locked -p codex-protocol --lib
           cargo test --locked -p codex-history --lib
           cargo test --locked -p codex-model-provider --lib capabilities::tests
+          cargo test --locked -p codex-model-provider --lib models_endpoint::tests
+          cargo test --locked -p codex-thread-store --lib local::model_context::tests
+          cargo test --locked -p codex-thread-store --lib local::rollout_lineage::tests
           cargo test --locked -p codex-rollout --lib recorder_preserves_executor_for_both_history_modes
           cargo test --locked -p codex-app-server-protocol --lib
       - name: Test native selection, child lifecycle and external execution
@@ -83,6 +86,10 @@ jobs:
             provider_switch_converts_forked_history_only_for_the_target_request \
             agent::role::tests \
             tools::handlers::multi_agents_spec::tests \
+            discodex \
+            previous_provider_client_uses_source_route_and_separate_connection_state \
+            session::turn::tests \
+            session::rollout_reconstruction_tests \
             external_executor::tests
           do
             cargo test --locked -p codex-core --lib "$test_filter" -- --test-threads=1
