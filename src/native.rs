@@ -469,6 +469,7 @@ impl Native {
 
     async fn connect_internal(config: &Config, bridge_events_enabled: bool) -> Result<Self> {
         let codex_path = resolve_codex_path(&config.codex_path)?;
+        crate::bundled_skill::sync_for_profile(config);
         tokio::fs::create_dir_all(&config.state_dir)
             .await
             .with_context(|| format!("create state directory {}", config.state_dir.display()))?;

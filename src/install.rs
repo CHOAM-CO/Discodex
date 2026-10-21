@@ -2295,6 +2295,7 @@ fn activate_runtime(
     runtime: &runtime::Prepared,
 ) -> Result<()> {
     apply_runtime_selection(owner, config, runtime);
+    crate::bundled_skill::sync_for_profile(config);
     write_json_private(&owner.config_file, config)?;
     write_json_private(
         &owner

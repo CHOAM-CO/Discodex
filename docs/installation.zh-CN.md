@@ -65,6 +65,8 @@ Discodex 1.0 使用 `third_party/codex` 固定的预编译 Codex 分支，不再
 
 本指南描述 1.0 源码。下载版本以公开 Release 标签为准；平台构建与用户验证结果另行报告。
 
+配置项目包含默认的 `.agents/skills/discodex/` 技能。简短的 `SKILL.md` 使用配置语言，指向同一构建的四语言安装与设计文档，让智能体按需读取设置、更新或诊断所需的参考内容。安装、更新激活和新的原生 app-server 连接准备阶段会同步这些帮助文件。已有的用户同名技能保持不变；受管理技能中被用户修改的文件逐个保留。帮助同步失败时仅报告警告，不阻止机器人连接。基本提示词和共享 `CODEX_HOME` 保持不变。
+
 ## 自定义与本地 Codex provider
 
 请在所选 Codex 进程实际使用的同一个 `CODEX_HOME/config.toml` 中配置 provider 和模型。Codex 内置 `ollama`、`lmstudio` provider，也支持自定义 Responses API provider。Provider 认证由 Codex 处理。`env_key` 指定的凭据必须能在 worker 服务环境中读取；请勿将密钥写入 Discodex 配置文件。使用 native 非 OpenAI provider 本身不要求 ChatGPT 账号或 OpenAI API key。
@@ -87,9 +89,15 @@ name = "Example provider"
 base_url = "https://provider.example/v1"
 env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
+# 仅在提供商提供输入 token 计数 API 时启用：
+# input_tokens_endpoint = "/responses/input_tokens"
 ```
 
-请将占位符模型名称和 endpoint 替换为 provider 支持的值。实时 `model/list` catalog 只由当前 active provider 提供。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。Discodex 模型选项使用 active native catalog 和 worker 有效配置中的模型，包括默认、subagent、安装及当前 thread 模型。未激活的 profile 文件不会自动枚举。
+请将占位符模型名称和 endpoint 替换为 provider 支持的值。实时 `model/list` catalog 只由当前 active provider 提供。原生发现支持 Codex 的 `{ "models": [...] }` 和兼容的 `{ "data": [...] }` 目录。兼容条目提供模型 ID，并可通过 `context_window`、`context_length`、`max_model_len` 或 `meta.n_ctx` 提供上下文容量；未声明的能力使用原生模型默认值。这不保证每个提供商都提供可发现的目录。Discodex 也使用 worker 有效配置中的默认、subagent、安装及当前 thread 模型。未激活的 profile 文件不会自动枚举。
+
+要启用输入 token 计数，请取消提供商表中 `input_tokens_endpoint` 的注释，并填写提供商给出的端点。路径会附加到 `base_url` 后，以上 `/responses/input_tokens` 对应 `https://provider.example/v1/responses/input_tokens`；也可用绝对 URL 指定其他端点。请求复用现有提供商的认证和传输。
+
+提供商需实现 [OpenAI 输入 token 计数协议](https://developers.openai.com/api/docs/guides/token-counting)，针对生成所用的相同模型输入、指令和工具返回 `{ "object": "response.input_tokens", "input_tokens": 123 }`。分词由提供商负责。省略此设置时保留原生用量估算，不会根据提供商或模型名称推断 API 支持。
 
 实时 `model/list` 结果来自当前 active native catalog。Discodex 也会显示在 native 配置的 `[profiles.NAME]` 表中同时设置 `model` 和 `model_provider` 而明确注册的模型。仅定义 provider 不会注册模型，独立的 `*.config.toml` profile 文件也不会自动加载或扫描。例如：
 
@@ -105,7 +113,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-当前官方 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；同一 provider 内的更改可立即应用，跨提供商或执行器的更改需要在当前回复或语音结束后重新选择，不会排入队列。只有 native 元数据明确提供的能力和推理强度选项才会显示。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
+当前 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；同一 provider 内的更改可立即应用，跨提供商或执行器的更改需要在当前回复或语音结束后重新选择，不会排入队列。能力和推理强度选项遵循原生元数据；兼容目录所用的默认值不代表已验证提供商的实际能力。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
 
 主模型和默认子模型的选择同时保存执行器、提供商与模型；子会话可使用其他已注册提供商而不切换父会话。`[model_providers.<id>.capabilities]` 下的 `encrypted_content` 和 `agent_messages` 是独立的可选布尔值。省略时沿用原生默认分类：OpenAI 与 Azure Responses 默认支持加密历史重放，只有原生 OpenAI 分类默认支持 `AgentMessage`。显式值应符合提供商的实际协议支持。即使 `encrypted_content = true`，不支持原生 agent-message 格式时，其不透明正文也会在普通 assistant 消息中标明不可用。原始历史保持不变；详见[历史兼容性](design.zh-CN.md#提供商切换与加密历史)。
 

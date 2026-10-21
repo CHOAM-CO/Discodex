@@ -25,6 +25,7 @@ This page describes the 1.0 source tree. Downloadable binaries follow the publis
 | Voice and transcripts | Talk in an allowed voice channel. Confirmed transcripts are kept in a per-call Discord thread. |
 | Questions and approvals | Answer Codex questions and approval requests in Discord forms and buttons; selections return to the matching request. |
 | Profile and memory | Set a profile name and, with `memoryEnabled: true`, use official native memory features and dedicated memory tools. |
+| Bundled Discodex skill | Provides a guide in the installation language with setup, settings, and troubleshooting references for the installed build; updates refresh managed files. |
 | Message routing and mentions | Choose which senders are authorized with Everyone, RegisteredServer, RegisteredChannels, or Paired, plus independent allow and block lists. Routing also applies the home-channel, mention, registered-channel/thread, and admitted-DM rules. Normal replies can mention the message author, including for home-channel messages. |
 | Voice inbox | Get a short preview of messages received during a call; unread messages are handled after the call, with attachments checked before an item is marked read. |
 | Discord context and files | Read messages, channels, and users; pass images and files into the conversation; send a separate message when explicitly requested. |
