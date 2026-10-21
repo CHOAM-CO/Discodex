@@ -69,6 +69,7 @@ jobs:
         run: |
           cargo test --locked -p codex-protocol --lib
           cargo test --locked -p codex-history --lib
+          cargo test --locked -p codex-api --lib api_bridge::tests
           cargo test --locked -p codex-model-provider --lib capabilities::tests
           cargo test --locked -p codex-model-provider --lib models_endpoint::tests
           cargo test --locked -p codex-thread-store --lib local::model_context::tests
