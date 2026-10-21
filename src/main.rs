@@ -23,7 +23,15 @@ async fn main() -> Result<()> {
     // The MCP child uses stdout as its JSON-RPC transport. Dispatch before
     // initializing the normal application logger so no startup text can leak there.
     if command == "harness-tools" {
-        return discodex::harness::run(&voice_tools_endpoint(&rest)?).await;
+        let endpoint = voice_tools_endpoint(&rest)?;
+        if rest.iter().any(|arg| arg == "--native") {
+            let binding = std::env::var(discodex::agy_mcp::NATIVE_RUN_ENV)
+                .context("native MCP server requires a per-process Discodex response binding")?;
+            let binding =
+                serde_json::from_str(&binding).context("parse native MCP response binding")?;
+            return discodex::harness::run_native(&endpoint, binding).await;
+        }
+        return discodex::harness::run(&endpoint).await;
     }
     if command == "voice-tools" {
         let endpoint = voice_tools_endpoint(&rest)?;
@@ -116,12 +124,18 @@ async fn main() -> Result<()> {
                 }))?
             );
         }
-        "install" => discodex::install::install()?,
-        "migrate" => discodex::install::migrate_installation(&config_path(&rest)?)?,
-        "update" => discodex::install::update(&rest)?,
-        "update-helper" => discodex::install::updates::run_helper(&rest)?,
-        "uninstall" => discodex::install::uninstall()?,
-        "install-plan" => discodex::install::print_plan()?,
+        // Installers use synchronous HTTP and service APIs. Leave the async
+        // context before constructing or dropping their blocking clients.
+        "install" => tokio::task::block_in_place(discodex::install::install)?,
+        "migrate" => tokio::task::block_in_place(|| {
+            discodex::install::migrate_installation(&config_path(&rest)?)
+        })?,
+        "update" => tokio::task::block_in_place(|| discodex::install::update(&rest))?,
+        "update-helper" => {
+            tokio::task::block_in_place(|| discodex::install::updates::run_helper(&rest))?
+        }
+        "uninstall" => tokio::task::block_in_place(discodex::install::uninstall)?,
+        "install-plan" => tokio::task::block_in_place(discodex::install::print_plan)?,
         #[cfg(target_os = "macos")]
         "mac-permissions" => discodex::install::open_mac_permissions(&rest)?,
         #[cfg(target_os = "macos")]
@@ -129,7 +143,7 @@ async fn main() -> Result<()> {
         #[cfg(target_os = "macos")]
         "mac-sign-in-login-session" => discodex::mac_signing::sign_in_login_session(&rest)?,
         #[cfg(target_os = "macos")]
-        "mac-update" => discodex::install::update_mac(&rest)?,
+        "mac-update" => tokio::task::block_in_place(|| discodex::install::update_mac(&rest))?,
         "help" | "--help" | "-h" => print_help(),
         other => bail!("unknown command `{other}`; run `discodex help`"),
     }
@@ -213,13 +227,15 @@ fn config_path(args: &[String]) -> Result<PathBuf> {
 }
 
 fn voice_tools_endpoint(args: &[String]) -> Result<PathBuf> {
-    let index = args
-        .iter()
-        .position(|arg| arg == "--endpoint")
-        .context("voice-tools requires --endpoint <filesystem-path>")?;
-    args.get(index + 1)
+    if let Some(index) = args.iter().position(|arg| arg == "--endpoint") {
+        return args
+            .get(index + 1)
+            .map(PathBuf::from)
+            .context("voice-tools --endpoint requires a filesystem path");
+    }
+    std::env::var_os(discodex::agy_mcp::NATIVE_ENDPOINT_ENV)
         .map(PathBuf::from)
-        .context("voice-tools --endpoint requires a filesystem path")
+        .context("native MCP server requires a per-process Discodex endpoint binding")
 }
 
 fn voice_tools_language(args: &[String]) -> Result<discodex::i18n::Language> {

@@ -28,11 +28,13 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     steps:
-      - uses: actions/checkout@v4
       - name: Enable Git long paths on Windows
         if: runner.os == 'Windows'
         shell: powershell
         run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.target }}
@@ -42,3 +44,46 @@ jobs:
       - name: Run unit tests
         shell: bash
         run: cargo test --locked --all-targets --target '${{ matrix.target }}'
+
+  codex-fork:
+    name: Codex fork regression tests
+    runs-on: ubuntu-22.04
+    env:
+      RUSTUP_TOOLCHAIN: '1.95.0'
+      RUST_MIN_STACK: '16777216'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+    defaults:
+      run:
+        working-directory: third_party/codex/codex-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libcap-dev libssl-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/codex/codex-rs -> target
+      - name: Test provider history and protocol contracts
+        run: |
+          cargo test --locked -p codex-protocol --lib
+          cargo test --locked -p codex-history --lib
+          cargo test --locked -p codex-model-provider --lib capabilities::tests
+          cargo test --locked -p codex-rollout --lib recorder_preserves_executor_for_both_history_modes
+          cargo test --locked -p codex-app-server-protocol --lib
+      - name: Test native selection, child lifecycle and external execution
+        run: |
+          for test_filter in \
+            agent::child_config::tests \
+            mixed_provider_fork_preserves_target_across_send_interrupt_and_reload \
+            resume_agent_from_paginated_rollout_loads_model_context \
+            ensure_v2_agent_loaded_reloads_registered_unloaded_agent \
+            ensure_v2_child_loaded_preserves_evicted_parent_authority \
+            provider_switch_converts_forked_history_only_for_the_target_request \
+            agent::role::tests \
+            tools::handlers::multi_agents_spec::tests \
+            external_executor::tests
+          do
+            cargo test --locked -p codex-core --lib "$test_filter" -- --test-threads=1
+          done

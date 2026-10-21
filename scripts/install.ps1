@@ -70,6 +70,8 @@ try {
 
     Copy-Item -LiteralPath $binaryPath -Destination $staged
     [System.IO.File]::Move($staged, $installed)
+    # The prebuilt installer selects an existing or separate Codex data home.
+    # It fetches the matching runtime; no build toolchain is needed on this host.
     & $installed install
     if ($LASTEXITCODE -ne 0) { throw ($messages.Install -f $LASTEXITCODE) }
 } finally {

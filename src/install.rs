@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -10,11 +10,9 @@ use std::process::{Command, Stdio};
 use std::os::windows::process::CommandExt;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use flate2::read::GzDecoder;
-use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
 use sha2::{Digest, Sha256};
-use tar::Archive;
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -26,9 +24,9 @@ use crate::config::{Config, InputMode};
 use crate::i18n::Language;
 use crate::message_access::{MessageAccess, MessagePolicy};
 
+mod runtime;
 pub mod updates;
 
-const RELEASES_API: &str = "https://api.github.com/repos/openai/codex/releases";
 const APP_NAME: &str = "discodex";
 const SERVICE_NAME: &str = "discodex";
 const LEGACY_APP_NAME: &str = "codex-worker";
@@ -43,6 +41,8 @@ struct InstallationList {
     profile: String,
     native_source: NativeSource,
     native_path: Option<PathBuf>,
+    #[serde(default)]
+    codex_home: Option<PathBuf>,
     discord_app: String,
     guild_id: u64,
     home_channel_id: u64,
@@ -67,6 +67,7 @@ enum NativeSource {
     DesktopApp,
     ExistingCli,
     OfficialCore,
+    ManagedCore,
 }
 
 fn merge_install_config(
@@ -196,73 +197,6 @@ struct Ownership {
     mac_signing_requirement: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct Release {
-    tag_name: String,
-    assets: Vec<ReleaseAsset>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseAsset {
-    name: String,
-    browser_download_url: String,
-    digest: Option<String>,
-}
-
-#[derive(Debug)]
-struct Candidate {
-    label: String,
-    path: PathBuf,
-    source: NativeSource,
-}
-
-#[cfg(windows)]
-fn same_windows_desktop_app_package(
-    previous_source: &str,
-    current_source: &NativeSource,
-    previous_path: &Path,
-    current_path: &Path,
-) -> bool {
-    previous_source == "desktop-app"
-        && current_source == &NativeSource::DesktopApp
-        && windows_openai_codex_package_family(previous_path)
-            .zip(windows_openai_codex_package_family(current_path))
-            .is_some_and(|(previous, current)| previous == current)
-}
-
-#[cfg(windows)]
-fn windows_openai_codex_package_family(path: &Path) -> Option<String> {
-    if !path
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("codex.exe"))
-    {
-        return None;
-    }
-    let components: Vec<_> = path
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    components.windows(2).find_map(|pair| {
-        if !pair[0].eq_ignore_ascii_case("WindowsApps") {
-            return None;
-        }
-        let identity: Vec<_> = pair[1].split('_').collect();
-        if identity.len() == 5
-            && identity[0].eq_ignore_ascii_case("OpenAI.Codex")
-            && !identity[1].is_empty()
-            && !identity[4].is_empty()
-        {
-            Some(format!(
-                "{}_{}",
-                identity[0].to_ascii_lowercase(),
-                identity[4]
-            ))
-        } else {
-            None
-        }
-    })
-}
-
 #[cfg(windows)]
 fn windows_task_may_be_replaced(state: &str, previous_record_owns_task: bool) -> bool {
     match state {
@@ -321,8 +255,9 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         "Discord プロファイル名",
         "default",
     )?;
-    let candidates = discover_native_candidates()?;
-    let (native_source, native_path) = choose_native(&candidates, language)?;
+    let native_source = NativeSource::ManagedCore;
+    let native_path = None;
+    let codex_home = Some(choose_codex_home(&roots, language)?);
     let discord_app = ask_text(
         language,
         "Discord application profile (existing app)",
@@ -394,6 +329,7 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         profile,
         native_source,
         native_path,
+        codex_home,
         discord_app,
         guild_id,
         home_channel_id,
@@ -1279,75 +1215,20 @@ fn install_at(
     let credentials_path = roots.config.join("discord-token");
     let state_dir = roots.data.join("state");
     create_private_dir(&state_dir)?;
-    let bundled_dir = roots.data.join("official-codex");
-    let bundled_dir = if list.native_source == NativeSource::OfficialCore {
-        fs::create_dir_all(&bundled_dir)
-            .with_context(|| format!("create {}", bundled_dir.display()))?;
-        set_private_dir(&bundled_dir)?;
-        bundled_dir
-            .canonicalize()
-            .with_context(|| format!("resolve owned Codex directory {}", bundled_dir.display()))?
-    } else {
-        bundled_dir
-    };
     let ownership_path = roots.config.join("ownership.json");
-
-    let mut codex_path = match (&list.native_source, &list.native_path) {
-        (NativeSource::DesktopApp | NativeSource::ExistingCli, Some(path)) => {
-            crate::native::resolve_codex_path(path)?
-                .canonicalize()
-                .with_context(|| format!("resolve selected Codex executable {}", path.display()))?
-        }
-        (NativeSource::OfficialCore, _) => bundled_dir.join(codex_executable_name()),
-        (_, None) => bail!(
-            "the saved installation list has no selected native executable; run `discodex install-plan` again"
-        ),
-    };
-
-    let is_owned_core = list.native_source == NativeSource::OfficialCore;
-    let expected_source = match &list.native_source {
-        NativeSource::DesktopApp => "desktop-app",
-        NativeSource::ExistingCli => "existing-cli",
-        NativeSource::OfficialCore => "official-core-owned",
-    };
     let previous_ownership = if ownership_path.exists() {
         let previous: Ownership = read_json(&ownership_path)?;
-        let same_codex_path = previous.codex_path == codex_path || {
-            #[cfg(windows)]
-            {
-                same_windows_desktop_app_package(
-                    &previous.codex_source,
-                    &list.native_source,
-                    &previous.codex_path,
-                    &codex_path,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                false
-            }
-        };
-        let same_profile_paths = same_profile_installation_paths(
-            &previous,
-            &config_path,
-            &credentials_path,
-            &list_path,
-            &state_dir,
-            &list.project_dir,
+        ensure!(
+            same_profile_installation_paths(
+                &previous,
+                &config_path,
+                &credentials_path,
+                &list_path,
+                &state_dir,
+                &list.project_dir,
+            ),
+            "ownership record belongs to another profile; existing files were preserved"
         );
-        let same_install =
-            same_profile_paths && previous.codex_source == expected_source && same_codex_path;
-        let partial_reselection = is_partial_install_reselection_allowed(
-            same_profile_paths,
-            previous.service_kind.as_deref(),
-            previous.service_file.is_some(),
-        );
-        if !same_install && !partial_reselection {
-            bail!(
-                "an ownership record already exists for a different profile/core path at {}; uninstall it before changing installation identity",
-                ownership_path.display()
-            )
-        }
         Some(previous)
     } else {
         None
@@ -1389,19 +1270,19 @@ fn install_at(
         mac_worker_path_unchanged(previous_worker_path, worker_executable.as_deref());
     #[cfg(not(target_os = "macos"))]
     let _ = previous_worker_path;
+    // The selected release is installed before any profile/service changes.
+    let managed_runtime = runtime::prepare(&roots.data)?;
+    let codex_path = managed_runtime.executable.clone();
+    let codex_version = Some(managed_runtime.manifest.codex_commit.clone());
     let mut ownership = Ownership {
         format_version: 1,
         profile: Some(list.profile.clone()),
-        runtime_owned: false,
+        runtime_owned: true,
         config_file: config_path.clone(),
         credentials_file: credentials_path.clone(),
         install_list_file: list_path.clone(),
-        runtime_dir: if is_owned_core {
-            bundled_dir.clone()
-        } else {
-            roots.data.join("codex-runtime")
-        },
-        runtime_executable: is_owned_core.then(|| codex_path.clone()),
+        runtime_dir: managed_runtime.directory.clone(),
+        runtime_executable: Some(codex_path.clone()),
         worker_executable: worker_executable.clone(),
         service_file: previous_ownership
             .as_ref()
@@ -1416,61 +1297,19 @@ fn install_at(
         windows_task_pending_run_level: previous_ownership
             .as_ref()
             .and_then(|previous| previous.windows_task_pending_run_level),
-        codex_source: expected_source.into(),
+        codex_source: "discodex-core-owned".into(),
         codex_path: codex_path.clone(),
-        codex_version: previous_ownership
-            .as_ref()
-            .and_then(|previous| previous.codex_version.clone()),
+        codex_version: codex_version.clone(),
         state_dir: state_dir.clone(),
         project_dir: list.project_dir.clone(),
         mac_signing_requirement: previous_ownership
             .as_ref()
             .and_then(|previous| previous.mac_signing_requirement.clone()),
     };
-    let mut codex_version = None;
-    if is_owned_core {
-        let previous_owns_core = previous_ownership
-            .as_ref()
-            .is_some_and(|previous| previous_owns_completed_core(previous, &codex_path));
-        if previous_owns_core {
-            let existing_version = previous_ownership
-                .as_ref()
-                .and_then(|previous| previous.codex_version.clone())
-                .or_else(|| executable_version(&codex_path).ok());
-            let recorded_release_tag = existing_version
-                .as_deref()
-                .and_then(official_codex_release_tag);
-            ensure_official_core_pair(&bundled_dir, recorded_release_tag.as_deref())?;
-            codex_version = recorded_release_tag.or(existing_version);
-        } else {
-            if codex_path.exists() {
-                bail!(
-                    "an unowned Codex executable already exists at {}; it was left unchanged",
-                    codex_path.display()
-                )
-            }
-            let (path, tag) = download_official_codex(&bundled_dir)?;
-            codex_path = path
-                .canonicalize()
-                .context("resolve downloaded official Codex core")?;
-            codex_version = Some(tag);
-        }
-        ownership.codex_path = codex_path.clone();
-        ownership.runtime_executable = Some(codex_path.clone());
-        ownership.codex_version = codex_version.clone();
-        ownership.runtime_owned = true;
-        write_json_private(&ownership_path, &ownership)?;
-    } else {
-        codex_version = executable_version(&codex_path).ok();
-    }
-    ownership.codex_version = codex_version.clone();
-    if !codex_path.is_file() {
-        bail!(
-            "selected Codex executable is missing: {}",
-            codex_path.display()
-        );
-    }
-    let selected_env_home = env::var_os("CODEX_HOME").map(PathBuf::from);
+    let selected_env_home = list
+        .codex_home
+        .clone()
+        .or_else(|| env::var_os("CODEX_HOME").map(PathBuf::from));
     let previous_home = previous_config
         .as_ref()
         .and_then(|config| config.codex_home.as_deref());
@@ -1490,13 +1329,6 @@ fn install_at(
         selected_env_home.as_deref(),
         &list.project_dir,
         default_home.as_deref(),
-    )?;
-    let partial_runtime_dir = partial_owned_core_runtime_for_cleanup(
-        previous_ownership.as_ref(),
-        &roots.data,
-        list.native_source == NativeSource::OfficialCore,
-        previous_config.as_ref(),
-        &[&selected_codex_home, &codex_path],
     )?;
     let saved_token = if credentials_path.exists() {
         let metadata = fs::symlink_metadata(&credentials_path)
@@ -1553,9 +1385,6 @@ fn install_at(
         access.save(&state_dir.join("message-access.json"))?;
         let path = state_dir.join("message-access.json");
         set_private_file(&path)?;
-    }
-    if let Some(runtime_dir) = &partial_runtime_dir {
-        remove_owned_core_runtime(runtime_dir)?;
     }
 
     println!("Config saved at {}", config_path.display());
@@ -1636,10 +1465,14 @@ fn install_at(
         .map(|report| report.run_id);
     install_user_service(&config_path, &mut ownership, previous_ownership.as_ref())?;
     write_json_private(&ownership_path, &ownership)?;
-    if list.message_access_plan_pending {
-        let mut installed_list = list.clone();
-        installed_list.message_access_plan_pending = false;
-        write_json_private(&list_path, &installed_list)?;
+    let mut installed_list = list.clone();
+    installed_list.message_access_plan_pending = false;
+    installed_list.native_source = NativeSource::ManagedCore;
+    installed_list.native_path = None;
+    installed_list.codex_home = Some(selected_codex_home);
+    write_json_private(&list_path, &installed_list)?;
+    if let Some(previous) = &previous_ownership {
+        retire_previous_runtime(previous, &managed_runtime);
     }
     println!("{}", language.text(
         "Codex provider authentication settings were checked; the permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
@@ -1797,29 +1630,33 @@ pub fn uninstall() -> Result<()> {
         }
     }
 
-    let config =
-        if ownership.codex_source == "official-core-owned" && ownership.config_file.exists() {
-            Some(Config::load(&ownership.config_file).context(
+    let config = if matches!(
+        ownership.codex_source.as_str(),
+        "official-core-owned" | "discodex-core-owned"
+    ) && ownership.config_file.exists()
+    {
+        Some(Config::load(&ownership.config_file).context(
             "read profile settings before uninstall; configuration and ownership were preserved",
         )?)
-        } else {
-            None
-        };
+    } else {
+        None
+    };
     let mut ownership = ownership;
     let runtime_dir = prepare_owned_core_uninstall(&mut ownership, &roots.data, config.as_ref())?;
     uninstall_user_service(&mut ownership, &ownership_path)?;
     remove_registered_commands(&ownership.config_file, &ownership.credentials_file, &ownership.state_dir)
         .context("could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry")?;
 
+    if let Some(runtime_dir) = &runtime_dir {
+        remove_owned_core_runtime(runtime_dir)?;
+        ownership.runtime_owned = false;
+        write_json_private(&ownership_path, &ownership)?;
+    }
+
     #[cfg(windows)]
     if let Some(executable) = &ownership.worker_executable {
         if is_current_executable(executable) {
-            defer_windows_self_cleanup(
-                &ownership,
-                &ownership_path,
-                runtime_dir.as_deref(),
-                config.as_ref(),
-            )?;
+            defer_windows_self_cleanup(&ownership, &ownership_path, None, config.as_ref())?;
             println!(
                 "Windows accepted the owned-file cleanup request. The helper will wait for this process to exit, then remove the recorded files and report the actual result."
             );
@@ -1827,9 +1664,6 @@ pub fn uninstall() -> Result<()> {
         }
     }
 
-    if let Some(runtime_dir) = &runtime_dir {
-        remove_owned_core_runtime(runtime_dir)?;
-    }
     if let Some(executable) = &ownership.worker_executable {
         remove_if_file(executable)?;
     }
@@ -2146,6 +1980,21 @@ fn parse_update_args(args: &[String]) -> Result<UpdateArgs> {
 }
 
 pub fn update(args: &[String]) -> Result<()> {
+    // Let the incoming executable select its own runtime, including when a user
+    // invokes `update --source` through the currently installed executable.
+    #[cfg(target_os = "macos")]
+    let source = parse_mac_update_args(args)?.source;
+    #[cfg(not(target_os = "macos"))]
+    let source = parse_update_args(args)?.source;
+    if source.canonicalize()? != env::current_exe()?.canonicalize()? {
+        let status = Command::new(&source)
+            .arg("update")
+            .args(args)
+            .status()
+            .context("run the incoming worker's update installer")?;
+        ensure!(status.success(), "incoming worker update failed: {status}");
+        return Ok(());
+    }
     #[cfg(target_os = "macos")]
     {
         update_mac(args)
@@ -2198,7 +2047,8 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         .config
         .canonicalize()
         .context("resolve selected config")?;
-    let owner = resolve_profile_ownership(&config_path)?;
+    let mut owner = resolve_profile_ownership(&config_path)?;
+    let previous_owner = owner.clone();
     ensure!(
         owner.config_file.canonicalize()? == config_path,
         "selected config differs from ownership record"
@@ -2206,7 +2056,8 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
     let data_root = owner
         .state_dir
         .parent()
-        .context("owned state directory has no data root")?;
+        .context("owned state directory has no data root")?
+        .to_owned();
     ensure!(
         owner.state_dir == data_root.join("state"),
         "owned state directory layout is invalid"
@@ -2221,7 +2072,7 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         installed.file_name() == Some(worker_executable_name().as_os_str()),
         "owned executable does not use the Discodex worker filename"
     );
-    let config = Config::load(&config_path)?;
+    let mut config = Config::load(&config_path)?;
     ensure!(
         config.state_dir == owner.state_dir
             && config.credentials_file.as_deref() == Some(owner.credentials_file.as_path()),
@@ -2231,6 +2082,8 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
     let service = validate_owned_linux_update_service(&owner, &installed, &config_path)?;
     #[cfg(windows)]
     let service = validate_owned_windows_update_service(&owner, &installed, &config_path)?;
+    let profile_snapshot = ProfileRuntimeSnapshot::read(&owner)?;
+    let runtime = runtime::prepare(&data_root)?;
     let previous = fs::read(&installed).context("snapshot owned worker")?;
     let permissions = fs::metadata(&installed)?.permissions();
     let parent = installed
@@ -2259,6 +2112,7 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
             fs::metadata(&installed)?.len() > 0,
             "updated worker is empty"
         );
+        activate_runtime(&mut owner, &mut config, &runtime)?;
         #[cfg(target_os = "linux")]
         {
             if service.was_active {
@@ -2289,61 +2143,88 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         Ok(())
     })();
     if let Err(error) = result {
-        let mut rollback = Vec::new();
         #[cfg(target_os = "linux")]
-        if stopped {
-            let _ = run_checked("systemctl", &["--user", "stop", &service.unit]);
-        }
+        let stop_before_restore = replaced && stopped;
         #[cfg(windows)]
-        let mut windows_task_stopped = false;
-        #[cfg(windows)]
-        if stopped || replaced {
-            match set_windows_update_task(&service.task_name, false, false).and_then(|()| {
-                let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
-                ensure!(
-                    !enabled && !active,
-                    "Windows task is still enabled or running"
-                );
-                Ok(())
-            }) {
-                Ok(()) => windows_task_stopped = true,
-                Err(stop_error) => rollback.push(format!(
-                    "could not stop updated task before restoring worker: {stop_error:#}"
-                )),
+        let stop_before_restore = replaced;
+        let rollback = recover_update(stop_before_restore, replaced, stopped || replaced, |step| {
+            match step {
+                UpdateRecoveryStep::EnsureServiceStopped => {
+                    #[cfg(target_os = "linux")]
+                    run_checked("systemctl", &["--user", "stop", &service.unit])
+                        .context("could not stop updated service before restoring worker")?;
+                    #[cfg(windows)]
+                    {
+                        set_windows_update_task(&service.task_name, false, false)
+                            .context("could not stop updated task before restoring worker")?;
+                        let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+                        ensure!(
+                            !enabled && !active,
+                            "Windows task is still enabled or running"
+                        );
+                    }
+                }
+                UpdateRecoveryStep::RestoreWorker => {
+                    restore_worker_bytes(&installed, &previous, permissions.clone())
+                        .context("binary restore failed")?;
+                }
+                UpdateRecoveryStep::RestoreProfile => {
+                    profile_snapshot
+                        .restore(replaced)
+                        .context("profile runtime restore failed")?;
+                }
+                UpdateRecoveryStep::RestoreService => {
+                    #[cfg(target_os = "linux")]
+                    {
+                        if service.was_active {
+                            run_checked("systemctl", &["--user", "start", &service.unit])
+                                .context("previous service restart failed")?;
+                        }
+                        ensure!(
+                            (systemctl_user_state("is-active", &service.unit)? == "active")
+                                == service.was_active,
+                            "previous systemd unit did not return to its prior active state"
+                        );
+                        let enabled = systemctl_user_state("is-enabled", &service.unit)?;
+                        ensure!(
+                            matches!(enabled.as_str(), "enabled" | "enabled-runtime")
+                                == service.was_enabled,
+                            "previous systemd unit did not retain its prior enabled state"
+                        );
+                    }
+                    #[cfg(windows)]
+                    {
+                        set_windows_update_task(
+                            &service.task_name,
+                            service.was_enabled,
+                            service.was_active,
+                        )
+                        .context("previous task state restore failed")?;
+                        let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+                        ensure!(
+                            enabled == service.was_enabled && active == service.was_active,
+                            "previous scheduled task did not return to its prior enabled/running state"
+                        );
+                    }
+                }
+                UpdateRecoveryStep::DiscardPreparedRuntime => {
+                    runtime.discard().context("staged runtime cleanup failed")?
+                }
             }
-        }
-        #[cfg(windows)]
-        let may_restore_worker = windows_task_stopped;
-        #[cfg(not(windows))]
-        let may_restore_worker = true;
-        if replaced && may_restore_worker {
-            if let Err(e) = restore_worker_bytes(&installed, &previous, permissions) {
-                rollback.push(format!("binary restore failed: {e:#}"));
-            }
-        }
-        #[cfg(target_os = "linux")]
-        if service.was_active {
-            if let Err(e) = run_checked("systemctl", &["--user", "start", &service.unit]) {
-                rollback.push(format!("service restart failed: {e:#}"));
-            }
-        }
-        #[cfg(windows)]
-        if windows_task_stopped {
-            if let Err(e) =
-                set_windows_update_task(&service.task_name, service.was_enabled, service.was_active)
-            {
-                rollback.push(format!("task state restore failed: {e:#}"));
-            }
-        }
-        if rollback.is_empty() {
-            return Err(error)
-                .context("update failed; previous worker and service state were restored");
-        }
-        return Err(anyhow!(
-            "update failed ({error:#}); rollback incomplete: {}",
-            rollback.join("; ")
-        ));
+            Ok(())
+        });
+        return match rollback {
+            Ok(()) => Err(error).context(if replaced {
+                "update failed; previous worker and service state were restored"
+            } else {
+                "update failed before replacement; existing worker and profile were unchanged"
+            }),
+            Err(restore) => Err(anyhow!(
+                "update failed ({error:#}); rollback incomplete ({restore:#})"
+            )),
+        };
     }
+    retire_previous_runtime(&previous_owner, &runtime);
     println!(
         "{}",
         config
@@ -2357,6 +2238,97 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
             .replace("{}", &installed.display().to_string())
     );
     Ok(())
+}
+
+struct ProfileRuntimeSnapshot {
+    config_path: PathBuf,
+    config: Vec<u8>,
+    ownership_path: PathBuf,
+    ownership: Vec<u8>,
+}
+
+impl ProfileRuntimeSnapshot {
+    fn read(owner: &Ownership) -> Result<Self> {
+        let ownership_path = owner
+            .config_file
+            .parent()
+            .context("profile has no directory")?
+            .join("ownership.json");
+        Ok(Self {
+            config_path: owner.config_file.clone(),
+            config: fs::read(&owner.config_file)?,
+            ownership: fs::read(&ownership_path)?,
+            ownership_path,
+        })
+    }
+
+    fn restore(&self, replaced: bool) -> Result<()> {
+        for (path, bytes) in self.restore_inputs(replaced).into_iter().flatten() {
+            write_bytes_private(path, bytes)?;
+        }
+        Ok(())
+    }
+
+    fn restore_inputs(&self, replaced: bool) -> Option<[(&Path, &[u8]); 2]> {
+        replaced.then_some([
+            (&self.config_path, &self.config),
+            (&self.ownership_path, &self.ownership),
+        ])
+    }
+}
+
+fn write_bytes_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut staged =
+        tempfile::NamedTempFile::new_in(path.parent().context("profile has no directory")?)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+    set_private_file(staged.path())?;
+    staged
+        .persist(path)
+        .map_err(|error| anyhow!("replace profile state: {}", error.error))?;
+    Ok(())
+}
+
+fn activate_runtime(
+    owner: &mut Ownership,
+    config: &mut Config,
+    runtime: &runtime::Prepared,
+) -> Result<()> {
+    apply_runtime_selection(owner, config, runtime);
+    write_json_private(&owner.config_file, config)?;
+    write_json_private(
+        &owner
+            .config_file
+            .parent()
+            .context("profile has no directory")?
+            .join("ownership.json"),
+        owner,
+    )
+}
+
+fn apply_runtime_selection(
+    owner: &mut Ownership,
+    config: &mut Config,
+    runtime: &runtime::Prepared,
+) {
+    config.codex_path = runtime.executable.clone();
+    owner.codex_path = runtime.executable.clone();
+    owner.runtime_executable = Some(runtime.executable.clone());
+    owner.runtime_dir = runtime.directory.clone();
+    owner.runtime_owned = true;
+    owner.codex_source = "discodex-core-owned".into();
+    owner.codex_version = Some(runtime.manifest.codex_commit.clone());
+}
+
+fn retire_previous_runtime(previous: &Ownership, current: &runtime::Prepared) {
+    if previous.codex_source == "discodex-core-owned"
+        && previous.runtime_owned
+        && previous.runtime_dir != current.directory
+        && previous.runtime_dir.parent() == current.directory.parent()
+        && let Err(error) = runtime::remove_owned(&previous.runtime_dir)
+    {
+        eprintln!("Updated runtime is active; previous package was preserved: {error:#}");
+    }
 }
 
 fn stage_update_binary(source: &Path, parent: &Path) -> Result<tempfile::NamedTempFile> {
@@ -2642,7 +2614,8 @@ pub fn update_mac(args: &[String]) -> Result<()> {
     if owner.service_kind.as_deref() != Some("launchd-user") {
         bail!("ownership record does not identify an owned macOS LaunchAgent");
     }
-    let language = Config::load(&config_path)?.language;
+    let mut profile_config = Config::load(&config_path)?;
+    let language = profile_config.language;
     let (label, plist) = launchd_identity(&config_path)?;
     if owner.service_file.as_deref() != Some(plist.as_path()) {
         bail!("recorded LaunchAgent path does not match this owned profile");
@@ -2711,7 +2684,12 @@ pub fn update_mac(args: &[String]) -> Result<()> {
     }
     verify_binary(staged.path(), &requirement).context("verify staged executable")?;
 
+    let previous_owner = owner.clone();
+    let profile_snapshot = ProfileRuntimeSnapshot::read(&owner)?;
+    let runtime = runtime::prepare(&data_root)?;
+
     let mut booted_out = false;
+    let mut replaced = false;
     let update = (|| -> Result<()> {
         if was_loaded {
             run_checked(
@@ -2724,10 +2702,11 @@ pub fn update_mac(args: &[String]) -> Result<()> {
         staged
             .persist(&installed)
             .map_err(|e| anyhow!("atomically replace executable: {}", e.error))?;
+        replaced = true;
         set_executable(&installed)?;
         verify_binary(&installed, &requirement).context("verify replaced executable")?;
         owner.mac_signing_requirement = Some(requirement.clone());
-        write_json_private(&owner_path, &owner).context("save pinned signing identity")?;
+        activate_runtime(&mut owner, &mut profile_config, &runtime)?;
         if migrate {
             request_mac_fda_guidance(&owner_path, language)?;
         }
@@ -2749,41 +2728,110 @@ pub fn update_mac(args: &[String]) -> Result<()> {
         Ok(())
     })();
     if let Err(error) = update {
-        let rollback = (|| -> Result<()> {
-            if was_loaded && booted_out && launchd_is_loaded(&label, &installed, &config_path)? {
-                run_checked(
-                    "launchctl",
-                    &["bootout", &format!("{}/{}", launchd_domain()?, label)],
-                )?;
-                wait_for_launchd_unloaded(&label, &installed, &config_path)?;
-            }
-            atomic_restore(&installed, &old_bytes, &old_permissions)?;
-            atomic_restore(&owner_path, &old_owner_bytes, &old_owner_permissions)
-                .context("restore ownership record")?;
-            if was_loaded && booted_out {
-                let domain = launchd_domain()?;
-                run_checked(
-                    "launchctl",
-                    &[
-                        "bootstrap",
-                        &domain,
-                        plist.to_str().context("LaunchAgent path is not UTF-8")?,
-                    ],
-                )?;
-                run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
-                if !launchd_is_loaded(&label, &installed, &config_path)? {
-                    bail!("previous LaunchAgent did not return to loaded state");
+        let loaded = if booted_out {
+            launchd_is_loaded(&label, &installed, &config_path)
+        } else {
+            Ok(false)
+        };
+        let service_needs_restore = booted_out && loaded.as_ref().is_ok_and(|loaded| !loaded);
+        let rollback = loaded.and_then(|loaded| {
+            recover_mac_update(booted_out, replaced, loaded, |step| {
+                match step {
+                    UpdateRecoveryStep::EnsureServiceStopped => {
+                        run_checked(
+                            "launchctl",
+                            &["bootout", &format!("{}/{}", launchd_domain()?, label)],
+                        )?;
+                        wait_for_launchd_unloaded(&label, &installed, &config_path)?;
+                    }
+                    UpdateRecoveryStep::RestoreWorker => {
+                        atomic_restore(&installed, &old_bytes, &old_permissions)?;
+                    }
+                    UpdateRecoveryStep::RestoreProfile => {
+                        atomic_restore(&owner_path, &old_owner_bytes, &old_owner_permissions)
+                            .context("restore ownership record")?;
+                        profile_snapshot
+                            .restore(replaced)
+                            .context("restore previous profile runtime")?;
+                    }
+                    UpdateRecoveryStep::DiscardPreparedRuntime => {
+                        runtime.discard().context("staged runtime cleanup failed")?
+                    }
+                    UpdateRecoveryStep::RestoreService => {
+                        let domain = launchd_domain()?;
+                        run_checked(
+                            "launchctl",
+                            &[
+                                "bootstrap",
+                                &domain,
+                                plist.to_str().context("LaunchAgent path is not UTF-8")?,
+                            ],
+                        )?;
+                        run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+                        if !launchd_is_loaded(&label, &installed, &config_path)? {
+                            bail!("previous LaunchAgent did not return to loaded state");
+                        }
+                    }
                 }
-            }
-            Ok(())
-        })();
+                Ok(())
+            })
+        });
         return match rollback {
-            Ok(()) => Err(error).context("update failed; previous executable, ownership record, and loaded state were restored"),
+            Ok(()) if replaced => Err(error).context("update failed; previous executable, ownership record, and loaded state were restored"),
+            Ok(()) if service_needs_restore => Err(error).context("update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored"),
+            Ok(()) => Err(error).context("update failed before replacement; existing executable, profile, and service were unchanged"),
             Err(restore) => Err(anyhow!("update failed ({error:#}); rollback failed ({restore:#})")),
         };
     }
-    println!("Updated owned macOS worker at {}.", installed.display());
+    retire_previous_runtime(&previous_owner, &runtime);
+    println!(
+        "Updated owned macOS worker and runtime at {}.",
+        installed.display()
+    );
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateRecoveryStep {
+    EnsureServiceStopped,
+    RestoreWorker,
+    RestoreProfile,
+    DiscardPreparedRuntime,
+    RestoreService,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn recover_mac_update(
+    booted_out: bool,
+    replaced: bool,
+    service_loaded: bool,
+    recover: impl FnMut(UpdateRecoveryStep) -> Result<()>,
+) -> Result<()> {
+    recover_update(
+        booted_out && replaced && service_loaded,
+        replaced,
+        booted_out && (replaced || !service_loaded),
+        recover,
+    )
+}
+
+fn recover_update(
+    stop_service: bool,
+    replaced: bool,
+    restore_service: bool,
+    mut recover: impl FnMut(UpdateRecoveryStep) -> Result<()>,
+) -> Result<()> {
+    if stop_service {
+        recover(UpdateRecoveryStep::EnsureServiceStopped)?;
+    }
+    if replaced {
+        recover(UpdateRecoveryStep::RestoreWorker)?;
+        recover(UpdateRecoveryStep::RestoreProfile)?;
+    }
+    if restore_service {
+        recover(UpdateRecoveryStep::RestoreService)?;
+    }
+    recover(UpdateRecoveryStep::DiscardPreparedRuntime)
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -3071,6 +3119,60 @@ fn default_codex_home() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".codex"))
 }
 
+fn choose_codex_home(roots: &Roots, language: Language) -> Result<PathBuf> {
+    let config_path = roots.config.join("config.json");
+    if config_path.is_file()
+        && let Some(home) = Config::load(&config_path)?.codex_home
+    {
+        return Ok(home);
+    }
+    let existing = env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or(default_codex_home()?);
+    let separate = roots.data.join("codex-home");
+    println!("{}", language.text(
+        "Codex data: 1) Existing home (share account, memory and history); 2) Separate Discodex home. Shared settings are preserved.",
+        "Codex 데이터: 1) 기존 홈 공유 (계정·메모리·기록); 2) Discodex 전용 홈. 공유 설정은 보존합니다.",
+        "Codex 数据：1) 共享现有目录（账户、记忆和历史）；2) Discodex 独立目录。保留共享设置。",
+        "Codex データ：1) 既存ホームを共有（アカウント・メモリ・履歴）；2) Discodex 専用ホーム。共有設定は保持します。"
+    ));
+    println!("1) {}\n2) {}", existing.display(), separate.display());
+    let default = if existing.is_dir() { "1" } else { "2" };
+    loop {
+        match ask_text(
+            language,
+            "Data home",
+            "데이터 홈",
+            "数据目录",
+            "データホーム",
+            default,
+        )?
+        .as_str()
+        {
+            "1" => {
+                return Ok(PathBuf::from(ask_text(
+                    language,
+                    "Existing Codex home",
+                    "기존 Codex 홈",
+                    "现有 Codex 目录",
+                    "既存 Codex ホーム",
+                    &existing.display().to_string(),
+                )?));
+            }
+            "2" => return Ok(separate),
+            _ => println!(
+                "{}",
+                language.text(
+                    "Choose 1 or 2.",
+                    "1 또는 2를 선택하세요.",
+                    "请选择 1 或 2。",
+                    "1 または 2 を選んでください。"
+                )
+            ),
+        }
+    }
+}
+
 fn resolve_codex_home(
     previous: Option<&Path>,
     selected_env: Option<&Path>,
@@ -3115,14 +3217,6 @@ fn validate_existing_profile_identity(
     Ok(())
 }
 
-fn is_partial_install_reselection_allowed(
-    same_profile_paths: bool,
-    service_kind: Option<&str>,
-    service_file_present: bool,
-) -> bool {
-    same_profile_paths && service_kind.is_none() && !service_file_present
-}
-
 fn previous_owns_completed_core(previous: &Ownership, codex_path: &Path) -> bool {
     previous.codex_source == "official-core-owned"
         && previous.runtime_executable.as_deref() == Some(codex_path)
@@ -3145,27 +3239,6 @@ fn same_profile_installation_paths(
         && previous.project_dir == project_dir
 }
 
-fn partial_owned_core_runtime_for_cleanup(
-    previous: Option<&Ownership>,
-    data_root: &Path,
-    selecting_official_core: bool,
-    config: Option<&Config>,
-    retained_native_paths: &[&Path],
-) -> Result<Option<PathBuf>> {
-    let Some(previous) = previous else {
-        return Ok(None);
-    };
-    if previous.service_kind.is_some()
-        || previous.service_file.is_some()
-        || !previous.runtime_owned
-        || previous.codex_source != "official-core-owned"
-        || selecting_official_core
-    {
-        return Ok(None);
-    }
-    owned_core_runtime_for_cleanup(previous, data_root, config, retained_native_paths)
-}
-
 fn prepare_owned_core_uninstall(
     ownership: &mut Ownership,
     data_root: &Path,
@@ -3185,6 +3258,48 @@ fn owned_core_runtime_for_cleanup(
     config: Option<&Config>,
     retained_native_paths: &[&Path],
 ) -> Result<Option<PathBuf>> {
+    if ownership.codex_source == "discodex-core-owned" {
+        if !ownership.runtime_owned {
+            return Ok(None);
+        }
+        let expected_root = data_root.canonicalize()?.join("runtime");
+        ensure!(
+            ownership.runtime_dir.parent() == Some(expected_root.as_path()),
+            "managed runtime is outside this profile's runtime directory"
+        );
+        if !ownership.runtime_dir.exists() {
+            return Ok(None);
+        }
+        let expected_executable = ownership
+            .runtime_dir
+            .join("bin")
+            .join(codex_executable_name());
+        ensure!(
+            ownership.runtime_executable.as_ref() == Some(&expected_executable)
+                && ownership.codex_path == expected_executable,
+            "managed runtime ownership points to a different package"
+        );
+        let mut preserved = vec![&ownership.project_dir, &ownership.state_dir];
+        if let Some(config) = config {
+            preserved.extend([&config.project_dir, &config.state_dir]);
+            preserved.extend(config.codex_home.as_ref());
+        }
+        for path in preserved
+            .into_iter()
+            .map(PathBuf::as_path)
+            .chain(retained_native_paths.iter().copied())
+        {
+            ensure!(
+                !path
+                    .canonicalize()
+                    .unwrap_or_else(|_| path.to_owned())
+                    .starts_with(&ownership.runtime_dir),
+                "user data overlaps the managed runtime; preserving files"
+            );
+        }
+        runtime::verify_owned(&ownership.runtime_dir)?;
+        return Ok(Some(ownership.runtime_dir.clone()));
+    }
     if ownership.codex_source != "official-core-owned" {
         return Ok(None);
     }
@@ -3268,6 +3383,9 @@ fn inspect_owned_core_runtime_contents(runtime_dir: &Path) -> Result<()> {
 }
 
 fn remove_owned_core_runtime(runtime_dir: &Path) -> Result<()> {
+    if runtime_dir.join("discodex-runtime.json").is_file() {
+        return runtime::remove_owned(runtime_dir);
+    }
     inspect_owned_core_runtime_contents(runtime_dir)?;
     remove_if_file(&runtime_dir.join(codex_executable_name()))?;
     remove_if_file(&runtime_dir.join(code_mode_host_executable_name()))?;
@@ -3325,287 +3443,6 @@ fn is_owned_worker_executable(executable: &Path, data_root: &Path) -> bool {
     canonical_executable.starts_with(owned_bin_dir)
 }
 
-fn choose_native(
-    candidates: &[Candidate],
-    language: Language,
-) -> Result<(NativeSource, Option<PathBuf>)> {
-    let app_candidates: Vec<_> = candidates
-        .iter()
-        .filter(|item| item.source == NativeSource::DesktopApp)
-        .collect();
-    let cli_candidates: Vec<_> = candidates
-        .iter()
-        .filter(|item| item.source == NativeSource::ExistingCli)
-        .collect();
-    println!(
-        "{}",
-        language.text(
-            "Choose the official Codex core for this profile:",
-            "이 프로필에서 사용할 공식 Codex 코어를 선택하세요:",
-            "为此配置选择官方 Codex 核心：",
-            "このプロファイルで使う公式 Codex コアを選択してください："
-        )
-    );
-    println!(
-        "  1) Installed Codex app core ({} discovered)",
-        app_candidates.len()
-    );
-    println!(
-        "  2) Existing Codex CLI ({} discovered)",
-        cli_candidates.len()
-    );
-    println!(
-        "  3) Download the official Codex release into this install's private runtime directory"
-    );
-    loop {
-        let selected = ask_text(language, "Selection", "선택", "选择", "選択", "3")?;
-        let options = match selected.as_str() {
-            "1" => &app_candidates,
-            "2" => &cli_candidates,
-            "3" => return Ok((NativeSource::OfficialCore, None)),
-            _ => {
-                println!(
-                    "{}",
-                    language.text(
-                        "Choose 1, 2, or 3.",
-                        "1, 2 또는 3을 선택하세요.",
-                        "请选择 1、2 或 3。",
-                        "1、2、3 から選んでください。"
-                    )
-                );
-                continue;
-            }
-        };
-        if options.is_empty() {
-            println!(
-                "No executable was discovered for that choice. Select a discovered source or download the official core."
-            );
-            continue;
-        }
-        for (index, candidate) in options.iter().enumerate() {
-            println!(
-                "  {}) {} — {}",
-                index + 1,
-                candidate.label,
-                candidate.path.display()
-            );
-        }
-        let index: usize = ask_text(
-            language,
-            "Executable number",
-            "실행 파일 번호",
-            "可执行文件编号",
-            "実行ファイル番号",
-            "1",
-        )?
-        .parse()
-        .context("executable selection must be a number")?;
-        if let Some(candidate) = options.get(index.saturating_sub(1)) {
-            return Ok((candidate.source.clone(), Some(candidate.path.clone())));
-        }
-        println!(
-            "{}",
-            language.text(
-                "That executable number is not in the list.",
-                "목록에 없는 실행 파일 번호입니다.",
-                "该可执行文件编号不在列表中。",
-                "その番号の実行ファイルは一覧にありません。"
-            )
-        );
-    }
-}
-
-fn discover_native_candidates() -> Result<Vec<Candidate>> {
-    let mut found = Vec::new();
-    #[cfg(target_os = "linux")]
-    {
-        let resource_root = Path::new("/usr/lib/chatgpt/resources");
-        if resource_root.is_dir() {
-            match fs::read_dir(resource_root) {
-                Ok(entries) => {
-                    for item in entries {
-                        let item = match item {
-                            Ok(item) => item,
-                            Err(error) => {
-                                eprintln!("Skipping unreadable ChatGPT resource entry: {error}");
-                                continue;
-                            }
-                        };
-                        let path = item.path();
-                        let file_name = item.file_name().to_string_lossy().to_ascii_lowercase();
-                        if file_name.starts_with("codex") {
-                            add_candidate_paths_best_effort(
-                                &mut found,
-                                &path,
-                                NativeSource::DesktopApp,
-                                "Installed ChatGPT app core",
-                            );
-                        }
-                    }
-                }
-                Err(error) => eprintln!(
-                    "Skipping unreadable ChatGPT resource directory {}: {error}",
-                    resource_root.display()
-                ),
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let mut codex_bundles = vec![PathBuf::from("/Applications/Codex.app")];
-        let mut chatgpt_bundles = vec![PathBuf::from("/Applications/ChatGPT.app")];
-        if let Some(home) = env::var_os("HOME") {
-            let applications = PathBuf::from(home).join("Applications");
-            codex_bundles.push(applications.join("Codex.app"));
-            chatgpt_bundles.push(applications.join("ChatGPT.app"));
-        }
-        if let Ok(output) = command_without_console("mdfind")
-            .args(["-name", "Codex.app"])
-            .output()
-        {
-            if output.status.success() {
-                codex_bundles.extend(
-                    String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .map(PathBuf::from),
-                );
-            }
-        }
-        if let Ok(output) = command_without_console("mdfind")
-            .args(["-name", "ChatGPT.app"])
-            .output()
-        {
-            if output.status.success() {
-                chatgpt_bundles.extend(
-                    String::from_utf8_lossy(&output.stdout)
-                        .lines()
-                        .map(PathBuf::from),
-                );
-            }
-        }
-        for bundle in codex_bundles {
-            add_candidate_paths_best_effort(
-                &mut found,
-                &bundle.join("Contents/Resources"),
-                NativeSource::DesktopApp,
-                "Installed Codex app core",
-            );
-        }
-        for bundle in chatgpt_bundles {
-            add_candidate_paths_best_effort(
-                &mut found,
-                &bundle.join("Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
-                NativeSource::DesktopApp,
-                "Installed ChatGPT app core",
-            );
-        }
-    }
-    #[cfg(windows)]
-    {
-        let ps = "$pkg=Get-AppxPackage -Name OpenAI.Codex | Select-Object -First 1; if ($pkg) { $p=$pkg.InstallLocation; $candidate=Join-Path $p 'app/resources/codex.exe'; if (Test-Path -LiteralPath $candidate -PathType Leaf) { (Resolve-Path -LiteralPath $candidate).Path; exit 0 }; $manifestPath=Join-Path $p 'AppxManifest.xml'; if (Test-Path -LiteralPath $manifestPath) { [xml]$manifest=Get-Content -LiteralPath $manifestPath; foreach ($app in $manifest.Package.Applications.Application) { if ($app.Executable) { $entry=Join-Path $p $app.Executable; if ((Test-Path -LiteralPath $entry -PathType Leaf) -and ([IO.Path]::GetFileName($entry) -ieq 'codex.exe')) { (Resolve-Path -LiteralPath $entry).Path } } } } }";
-        let output = command_without_console("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", ps])
-            .output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                for line in String::from_utf8_lossy(&output.stdout).lines() {
-                    let path = PathBuf::from(line.trim());
-                    if path.is_file() {
-                        found.push(Candidate {
-                            label: "Installed ChatGPT app core".into(),
-                            path,
-                            source: NativeSource::DesktopApp,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    for path in find_on_path(codex_executable_name()) {
-        found.push(Candidate {
-            label: "Existing Codex CLI".into(),
-            path,
-            source: NativeSource::ExistingCli,
-        });
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    found.retain(|candidate| seen.insert(candidate.path.clone()));
-    Ok(found)
-}
-
-fn add_candidate_paths(
-    found: &mut Vec<Candidate>,
-    root: &Path,
-    source: NativeSource,
-    label: &str,
-) -> Result<()> {
-    if root.is_file()
-        && root
-            .file_name()
-            .is_some_and(|name| name == codex_executable_name())
-    {
-        found.push(Candidate {
-            label: label.into(),
-            path: root.to_owned(),
-            source,
-        });
-    } else if root.is_dir() {
-        let entries = fs::read_dir(root)
-            .with_context(|| format!("read candidate directory {}", root.display()))?;
-        for item in entries {
-            let item = match item {
-                Ok(item) => item,
-                Err(error) => {
-                    eprintln!(
-                        "Skipping unreadable native candidate entry in {}: {error}",
-                        root.display()
-                    );
-                    continue;
-                }
-            };
-            let path = item.path();
-            if path.is_file()
-                && path
-                    .file_name()
-                    .is_some_and(|name| name == codex_executable_name())
-            {
-                found.push(Candidate {
-                    label: label.into(),
-                    path,
-                    source: source.clone(),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn add_candidate_paths_best_effort(
-    found: &mut Vec<Candidate>,
-    root: &Path,
-    source: NativeSource,
-    label: &str,
-) -> bool {
-    match add_candidate_paths(found, root, source, label) {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!(
-                "Skipping unreadable native candidate {}: {error}",
-                root.display()
-            );
-            false
-        }
-    }
-}
-
-fn find_on_path(file_name: OsString) -> Vec<PathBuf> {
-    env::split_paths(&env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join(&file_name))
-        .filter(|path| path.is_file())
-        .collect()
-}
-
 fn codex_executable_name() -> OsString {
     #[cfg(windows)]
     {
@@ -3614,255 +3451,6 @@ fn codex_executable_name() -> OsString {
     #[cfg(not(windows))]
     {
         OsString::from("codex")
-    }
-}
-
-fn download_official_codex(runtime_dir: &Path) -> Result<(PathBuf, String)> {
-    let host_path = runtime_dir.join(code_mode_host_executable_name());
-    if host_path.exists() {
-        bail!(
-            "an unowned code-mode host already exists at {}; it was left unchanged",
-            host_path.display()
-        )
-    }
-    let client = Client::builder()
-        .user_agent(concat!("discodex/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("create HTTPS client for official release metadata")?;
-    let release = fetch_official_release(&client, None)?;
-    let (codex_asset_name, host_asset_name) = official_asset_names()?;
-    install_release_components(
-        &client,
-        &release,
-        runtime_dir,
-        &codex_asset_name,
-        &host_asset_name,
-        true,
-        true,
-    )?;
-    let codex_path = runtime_dir.join(codex_executable_name());
-    Ok((codex_path, release.tag_name))
-}
-
-fn ensure_official_core_pair(runtime_dir: &Path, codex_release_tag: Option<&str>) -> Result<()> {
-    let core_path = runtime_dir.join(codex_executable_name());
-    let host_path = runtime_dir.join(code_mode_host_executable_name());
-    let core_missing = !core_path.is_file();
-    let host_missing = !host_path.is_file();
-    if !core_missing && !host_missing {
-        return Ok(());
-    }
-    let tag = codex_release_tag.context(
-        "the owned Codex install has no recorded release tag, so its matching core and code-mode host cannot be selected",
-    )?;
-    let client = Client::builder()
-        .user_agent(concat!("discodex/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .context("create HTTPS client for official release metadata")?;
-    let release = fetch_official_release(&client, Some(tag))?;
-    if release.tag_name != tag {
-        bail!(
-            "official Codex release lookup returned {} for recorded tag {tag}",
-            release.tag_name
-        );
-    }
-    let (codex_asset_name, host_asset_name) = official_asset_names()?;
-    install_release_components(
-        &client,
-        &release,
-        runtime_dir,
-        &codex_asset_name,
-        &host_asset_name,
-        core_missing,
-        host_missing,
-    )?;
-    Ok(())
-}
-
-fn install_release_components(
-    client: &Client,
-    release: &Release,
-    runtime_dir: &Path,
-    codex_asset_name: &str,
-    host_asset_name: &str,
-    install_core: bool,
-    install_host: bool,
-) -> Result<()> {
-    let mut downloads = Vec::new();
-    if install_core {
-        let asset = release_asset(release, codex_asset_name)?;
-        downloads.push((
-            download_verified_asset(client, runtime_dir, asset)?,
-            codex_asset_name,
-            "codex",
-        ));
-    }
-    if install_host {
-        let asset = release_asset(release, host_asset_name)?;
-        downloads.push((
-            download_verified_asset(client, runtime_dir, asset)?,
-            host_asset_name,
-            "codex-code-mode-host",
-        ));
-    }
-    for (archive, asset_name, executable_stem) in downloads {
-        install_official_asset(&archive, runtime_dir, asset_name, executable_stem)?;
-    }
-    Ok(())
-}
-
-fn official_codex_release_tag(version: &str) -> Option<String> {
-    let version = version.trim();
-    let tag = if let Some(tag) = version.strip_prefix("rust-v") {
-        tag
-    } else {
-        version.strip_prefix("codex-cli ")?
-    };
-    let mut parts = tag.split('.');
-    for _ in 0..3 {
-        let part = parts.next()?;
-        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
-            return None;
-        }
-    }
-    if parts.next().is_some() {
-        return None;
-    }
-    Some(if version.starts_with("rust-v") {
-        version.to_owned()
-    } else {
-        format!("rust-v{tag}")
-    })
-}
-
-fn fetch_official_release(client: &Client, tag: Option<&str>) -> Result<Release> {
-    let mut url =
-        reqwest::Url::parse(RELEASES_API).context("parse official Codex releases endpoint")?;
-    if let Some(tag) = tag {
-        url.path_segments_mut()
-            .map_err(|_| anyhow!("official Codex releases endpoint cannot accept a tag"))?
-            .extend(["tags", tag]);
-    } else {
-        url.path_segments_mut()
-            .map_err(|_| anyhow!("official Codex releases endpoint cannot accept latest"))?
-            .push("latest");
-    }
-    client
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .context("request the official OpenAI Codex release metadata")?
-        .error_for_status()
-        .context("official OpenAI Codex release metadata request failed")?
-        .json()
-        .context("parse official OpenAI Codex release metadata")
-}
-
-fn release_asset<'a>(release: &'a Release, asset_name: &str) -> Result<&'a ReleaseAsset> {
-    release
-        .assets
-        .iter()
-        .find(|asset| asset.name == asset_name)
-        .ok_or_else(|| {
-            anyhow!(
-                "official Codex release {} does not contain the required asset {asset_name}; no substitute was installed",
-                release.tag_name
-            )
-        })
-}
-
-fn download_verified_asset(
-    client: &Client,
-    runtime_dir: &Path,
-    asset: &ReleaseAsset,
-) -> Result<PathBuf> {
-    let digest = asset
-        .digest
-        .as_deref()
-        .and_then(|value| value.strip_prefix("sha256:"))
-        .ok_or_else(|| {
-            anyhow!(
-                "official Codex release metadata did not provide a SHA-256 digest for {}",
-                asset.name
-            )
-        })?;
-    let download_path = runtime_dir.join(&asset.name);
-    let mut response = client
-        .get(&asset.browser_download_url)
-        .send()
-        .with_context(|| format!("download official Codex asset {}", asset.name))?
-        .error_for_status()
-        .context("official Codex download failed")?;
-    let mut output = File::create(&download_path)
-        .with_context(|| format!("create {}", download_path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = response
-            .read(&mut buffer)
-            .context("read official Codex download")?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-        output
-            .write_all(&buffer[..count])
-            .context("write official Codex release asset")?;
-    }
-    output
-        .sync_all()
-        .context("flush official Codex release asset")?;
-    drop(output);
-    let actual = format!("{:x}", hasher.finalize());
-    if !actual.eq_ignore_ascii_case(digest) {
-        remove_if_file(&download_path)?;
-        bail!(
-            "official Codex asset {} SHA-256 mismatch (metadata {}, downloaded {})",
-            asset.name,
-            digest,
-            actual
-        );
-    }
-    Ok(download_path)
-}
-
-fn install_official_asset(
-    download_path: &Path,
-    runtime_dir: &Path,
-    asset_name: &str,
-    executable_stem: &str,
-) -> Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        let executable = runtime_dir.join(executable_stem);
-        extract_linux_official_executable(download_path, &executable, asset_name)?;
-        remove_if_file(download_path)?;
-        set_executable(&executable)?;
-        Ok(executable)
-    }
-    #[cfg(windows)]
-    {
-        let executable = runtime_dir.join(format!("{executable_stem}.exe"));
-        fs::rename(download_path, &executable).with_context(|| {
-            format!(
-                "install verified official executable at {}",
-                executable.display()
-            )
-        })?;
-        Ok(executable)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let executable = runtime_dir.join(executable_stem);
-        extract_macos_official_executable(download_path, &executable, asset_name)?;
-        remove_if_file(download_path)?;
-        set_executable(&executable)?;
-        Ok(executable)
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    {
-        let _ = (download_path, runtime_dir, asset_name, executable_stem);
-        bail!("official core downloads are currently supported on Linux, macOS, and Windows")
     }
 }
 
@@ -3875,187 +3463,6 @@ fn code_mode_host_executable_name() -> &'static str {
     {
         "codex-code-mode-host"
     }
-}
-
-fn official_asset_names() -> Result<(String, String)> {
-    let arch = match env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => bail!(
-            "official Codex core does not have a configured installer asset for architecture {other}"
-        ),
-    };
-    #[cfg(target_os = "linux")]
-    {
-        Ok((
-            format!("codex-{arch}-unknown-linux-musl.tar.gz"),
-            format!("codex-code-mode-host-{arch}-unknown-linux-musl.tar.gz"),
-        ))
-    }
-    #[cfg(windows)]
-    {
-        Ok((
-            format!("codex-{arch}-pc-windows-msvc.exe"),
-            format!("codex-code-mode-host-{arch}-pc-windows-msvc.exe"),
-        ))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Ok((
-            format!("codex-{arch}-apple-darwin.tar.gz"),
-            format!("codex-code-mode-host-{arch}-apple-darwin.tar.gz"),
-        ))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    {
-        bail!("official core downloads are currently supported on Linux, macOS, and Windows")
-    }
-}
-
-fn extract_linux_official_executable(
-    archive_path: &Path,
-    executable: &Path,
-    asset_name: &str,
-) -> Result<()> {
-    let expected = asset_name
-        .strip_suffix(".tar.gz")
-        .context("unexpected official Linux executable archive name")?;
-    let file =
-        File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = Archive::new(decoder);
-    let mut entries = archive
-        .entries()
-        .context("read official executable tar archive")?;
-    let mut extracted = false;
-    while let Some(entry) = entries.next() {
-        let mut entry = entry.context("read official executable tar entry")?;
-        let path = entry
-            .path()
-            .context("read official Codex archive path")?
-            .into_owned();
-        let safe_relative = path
-            .components()
-            .all(|part| matches!(part, Component::Normal(_)));
-        let file_name_matches = path.file_name().is_some_and(|name| name == expected);
-        if !safe_relative
-            || !file_name_matches
-            || !entry.header().entry_type().is_file()
-            || extracted
-        {
-            bail!(
-                "official executable archive contains an unexpected or unsafe entry: {}",
-                path.display()
-            );
-        }
-        let parent = executable
-            .parent()
-            .context("runtime executable has no parent")?;
-        let temp = parent.join(".codex.extracting");
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .with_context(|| format!("create {}", temp.display()))?;
-        io::copy(&mut entry, &mut output)
-            .with_context(|| format!("extract verified member {}", path.display()))?;
-        output
-            .sync_all()
-            .context("flush extracted official executable")?;
-        fs::rename(&temp, executable)
-            .with_context(|| format!("place official executable at {}", executable.display()))?;
-        remove_if_file(&temp)?;
-        extracted = true;
-    }
-    if !extracted {
-        bail!("official archive did not contain the expected executable {expected}");
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn extract_macos_official_executable(
-    archive_path: &Path,
-    executable: &Path,
-    asset_name: &str,
-) -> Result<()> {
-    let expected = asset_name
-        .strip_suffix(".tar.gz")
-        .context("unexpected official macOS executable archive name")?;
-    let file =
-        File::open(archive_path).with_context(|| format!("open {}", archive_path.display()))?;
-    let decoder = GzDecoder::new(file);
-    let mut archive = Archive::new(decoder);
-    let mut entries = archive
-        .entries()
-        .context("read official macOS executable archive")?;
-    let parent = executable
-        .parent()
-        .context("runtime executable has no parent")?;
-    let temp = parent.join(".codex.extracting");
-    let mut created_temp = false;
-    let extraction = (|| -> Result<()> {
-        let mut extracted = false;
-        while let Some(entry) = entries.next() {
-            let mut entry = entry.context("read official macOS executable entry")?;
-            let path = entry
-                .path()
-                .context("read official Codex archive path")?
-                .into_owned();
-            let safe_relative = path
-                .components()
-                .all(|part| matches!(part, Component::Normal(_)));
-            if !safe_relative
-                || path.file_name().is_none_or(|name| name != expected)
-                || !entry.header().entry_type().is_file()
-                || extracted
-            {
-                bail!(
-                    "official macOS archive contains an unexpected or unsafe entry: {}",
-                    path.display()
-                );
-            }
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp)
-                .with_context(|| format!("create {}", temp.display()))?;
-            created_temp = true;
-            io::copy(&mut entry, &mut output)
-                .with_context(|| format!("extract verified member {}", path.display()))?;
-            output
-                .sync_all()
-                .context("flush extracted official macOS executable")?;
-            extracted = true;
-        }
-        if !extracted {
-            bail!("official archive did not contain the expected executable {expected}");
-        }
-        fs::hard_link(&temp, executable)
-            .with_context(|| format!("place official executable at {}", executable.display()))?;
-        remove_if_file(&temp)?;
-        created_temp = false;
-        Ok(())
-    })();
-    if extraction.is_err() && created_temp {
-        let _ = remove_if_file(&temp);
-    }
-    extraction
-}
-
-fn executable_version(path: &Path) -> Result<String> {
-    let output = command_without_console(path)
-        .arg("--version")
-        .output()
-        .with_context(|| format!("run {} --version", path.display()))?;
-    if !output.status.success() {
-        bail!("{} --version exited with {}", path.display(), output.status);
-    }
-    let version = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if version.is_empty() {
-        bail!("{} --version returned no version", path.display());
-    }
-    Ok(version)
 }
 
 fn install_user_service(
@@ -5725,6 +5132,148 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mac_update_failure_before_replacement_keeps_owned_bytes_unchanged() {
+        use UpdateRecoveryStep::*;
+
+        for (booted_out, still_loaded, expected_steps) in [
+            (false, true, vec![DiscardPreparedRuntime]),
+            (true, true, vec![DiscardPreparedRuntime]),
+            (true, false, vec![RestoreService, DiscardPreparedRuntime]),
+        ] {
+            let original = (
+                b"installed worker".to_vec(),
+                b"existing profile and session reference".to_vec(),
+                b"existing ownership".to_vec(),
+            );
+            let mut current = original.clone();
+            let mut service_loaded = still_loaded;
+            let mut prepared_runtime = true;
+            let mut steps = Vec::new();
+            recover_mac_update(booted_out, false, still_loaded, |step| {
+                steps.push(step);
+                match step {
+                    EnsureServiceStopped => service_loaded = false,
+                    RestoreWorker | RestoreProfile => {
+                        // A restore here would overwrite the existing installation.
+                        current = (Vec::new(), Vec::new(), Vec::new());
+                    }
+                    DiscardPreparedRuntime => prepared_runtime = false,
+                    RestoreService => service_loaded = true,
+                }
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(steps, expected_steps);
+            assert_eq!(current, original);
+            assert!(service_loaded);
+            assert!(!prepared_runtime);
+        }
+    }
+
+    #[test]
+    fn mac_update_recovery_preserves_stop_failure_without_later_writes() {
+        use UpdateRecoveryStep::*;
+
+        let mut steps = Vec::new();
+        let error = recover_mac_update(true, true, true, |step| {
+            steps.push(step);
+            if step == EnsureServiceStopped {
+                bail!("owned service could not stop");
+            }
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "owned service could not stop");
+        assert_eq!(steps, vec![EnsureServiceStopped]);
+    }
+
+    #[test]
+    fn update_recovery_stops_at_failed_dependencies_and_cleans_up_after_restoring_service() {
+        use UpdateRecoveryStep::*;
+
+        let all_steps = [
+            EnsureServiceStopped,
+            RestoreWorker,
+            RestoreProfile,
+            RestoreService,
+            DiscardPreparedRuntime,
+        ];
+        for mac in [false, true] {
+            for (failure, cause, expected_state, expected_count) in [
+                (
+                    Some(EnsureServiceStopped),
+                    "service stop rejected",
+                    ("new worker", "new profile", true, true),
+                    1,
+                ),
+                (
+                    Some(RestoreWorker),
+                    "worker snapshot write failed",
+                    ("new worker", "new profile", false, true),
+                    2,
+                ),
+                (
+                    Some(RestoreProfile),
+                    "profile snapshot write failed",
+                    ("old worker", "new profile", false, true),
+                    3,
+                ),
+                (
+                    Some(RestoreService),
+                    "previous service did not become active",
+                    ("old worker", "old profile", false, true),
+                    4,
+                ),
+                (
+                    Some(DiscardPreparedRuntime),
+                    "unused runtime cleanup failed",
+                    ("old worker", "old profile", true, true),
+                    5,
+                ),
+                (None, "", ("old worker", "old profile", true, false), 5),
+            ] {
+                let mut state = ("new worker", "new profile", true, true);
+                let mut steps = Vec::new();
+                let recover = |step| {
+                    steps.push(step);
+                    if Some(step) == failure {
+                        bail!("{cause}");
+                    }
+                    match step {
+                        EnsureServiceStopped => state.2 = false,
+                        RestoreWorker => state.0 = "old worker",
+                        RestoreProfile => state.1 = "old profile",
+                        RestoreService => {
+                            assert_eq!((state.0, state.1), ("old worker", "old profile"));
+                            state.2 = true;
+                        }
+                        DiscardPreparedRuntime => {
+                            assert_eq!(
+                                (state.0, state.1, state.2),
+                                ("old worker", "old profile", true)
+                            );
+                            state.3 = false;
+                        }
+                    }
+                    Ok(())
+                };
+                let result = if mac {
+                    recover_mac_update(true, true, true, recover)
+                } else {
+                    recover_update(true, true, true, recover)
+                };
+                if failure.is_some() {
+                    assert_eq!(result.unwrap_err().to_string(), cause);
+                } else {
+                    result.unwrap();
+                }
+                assert_eq!(steps, all_steps[..expected_count]);
+                assert_eq!(state, expected_state);
+            }
+        }
+    }
+
+    #[test]
     fn project_directory_is_created_and_canonicalized() {
         let root = tempfile::tempdir().expect("temporary parent directory");
         let selected = root.path().join("new").join("nested").join("project");
@@ -5904,118 +5453,6 @@ mod tests {
     }
 
     #[test]
-    fn official_cli_version_resolves_to_its_release_tag() {
-        assert_eq!(
-            official_codex_release_tag("rust-v0.160.1"),
-            Some("rust-v0.160.1".into())
-        );
-        assert_eq!(
-            official_codex_release_tag("codex-cli 0.160.1"),
-            Some("rust-v0.160.1".into())
-        );
-        assert_eq!(official_codex_release_tag("codex-cli 0..1"), None);
-        assert_eq!(official_codex_release_tag("codex-cli dev"), None);
-    }
-
-    #[test]
-    fn official_core_pair_repair_requires_recorded_tag_and_preserves_components() {
-        let root = tempfile::tempdir().expect("temporary official runtime");
-        let runtime = root.path().join("official-codex");
-        fs::create_dir(&runtime).expect("create official runtime");
-        let core = runtime.join(codex_executable_name());
-        let host = runtime.join(code_mode_host_executable_name());
-        let core_bytes = b"core fixture";
-        let host_bytes = b"host fixture";
-        fs::write(&core, core_bytes).expect("write core fixture");
-        fs::write(&host, host_bytes).expect("write host fixture");
-
-        ensure_official_core_pair(&runtime, None).expect("complete pair should be a no-op");
-        assert_eq!(fs::read(&core).unwrap(), core_bytes);
-        assert_eq!(fs::read(&host).unwrap(), host_bytes);
-
-        fs::remove_file(&core).expect("remove core fixture");
-        let missing_core = ensure_official_core_pair(&runtime, None)
-            .expect_err("missing core without a recorded tag must stop before download");
-        assert!(
-            missing_core
-                .to_string()
-                .contains("owned Codex install has no recorded release tag")
-        );
-        assert_eq!(fs::read(&host).unwrap(), host_bytes);
-
-        fs::write(&core, core_bytes).expect("restore core fixture");
-        fs::remove_file(&host).expect("remove host fixture");
-        let missing_host = ensure_official_core_pair(&runtime, None)
-            .expect_err("missing host without a recorded tag must stop before download");
-        assert!(
-            missing_host
-                .to_string()
-                .contains("owned Codex install has no recorded release tag")
-        );
-        assert_eq!(fs::read(&core).unwrap(), core_bytes);
-
-        fs::remove_file(&core).expect("remove remaining core fixture");
-        let missing_pair = ensure_official_core_pair(&runtime, None)
-            .expect_err("missing pair without a recorded tag must stop before download");
-        assert!(
-            missing_pair
-                .to_string()
-                .contains("owned Codex install has no recorded release tag")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn unreadable_candidate_directory_does_not_block_valid_candidate() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let root = tempfile::tempdir().expect("temporary candidate root");
-        let unreadable = root.path().join("unreadable");
-        let valid = root.path().join("valid");
-        fs::create_dir(&unreadable).expect("create unreadable candidate directory");
-        fs::create_dir(&valid).expect("create valid candidate directory");
-        let executable = valid.join(codex_executable_name());
-        fs::write(&executable, b"codex fixture").expect("write valid candidate");
-
-        let original_permissions = fs::metadata(&unreadable)
-            .expect("read unreadable candidate permissions")
-            .permissions();
-        let mut denied_permissions = original_permissions.clone();
-        denied_permissions.set_mode(0o000);
-        fs::set_permissions(&unreadable, denied_permissions)
-            .expect("make candidate directory unreadable");
-
-        let observation = {
-            let mut found = Vec::new();
-            let unreadable_result = add_candidate_paths_best_effort(
-                &mut found,
-                &unreadable,
-                NativeSource::DesktopApp,
-                "Unreadable candidate",
-            );
-            let valid_result = add_candidate_paths_best_effort(
-                &mut found,
-                &valid,
-                NativeSource::ExistingCli,
-                "Valid candidate",
-            );
-            (unreadable_result, valid_result, found)
-        };
-
-        fs::set_permissions(&unreadable, original_permissions)
-            .expect("restore candidate directory permissions");
-
-        assert!(!observation.0, "unreadable candidate should be skipped");
-        assert!(observation.1, "valid candidate should still be discovered");
-        assert!(
-            observation
-                .2
-                .iter()
-                .any(|candidate| candidate.path == executable)
-        );
-    }
-
-    #[test]
     fn windows_task_level_preserves_legacy_and_elevated_ownership() {
         let legacy = serde_json::json!({
             "formatVersion": 1, "configFile": "/profile/config.json",
@@ -6130,61 +5567,6 @@ mod tests {
         assert!(windows_task_executable_path(Path::new(r"\\server\share\worker.exe")).is_err());
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn store_version_change_preserves_only_the_selected_openai_codex_app_source() {
-        let previous = Path::new(
-            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.4958.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
-        );
-        let updated = Path::new(
-            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.7945.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
-        );
-        let cli = Path::new(r"C:\Users\test\AppData\Local\Programs\Codex\codex.exe");
-        let other_store_app = Path::new(
-            r"C:\Program Files\WindowsApps\OpenAI.Other_1.0.0.0_x64__2p2nqsd0c76g0\app\resources\codex.exe",
-        );
-        let different_publisher = Path::new(
-            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.930.7945.0_x64__otherpublisher\app\resources\codex.exe",
-        );
-
-        assert!(same_windows_desktop_app_package(
-            "desktop-app",
-            &NativeSource::DesktopApp,
-            previous,
-            updated,
-        ));
-        assert!(!same_windows_desktop_app_package(
-            "existing-cli",
-            &NativeSource::DesktopApp,
-            previous,
-            updated,
-        ));
-        assert!(!same_windows_desktop_app_package(
-            "desktop-app",
-            &NativeSource::ExistingCli,
-            previous,
-            updated,
-        ));
-        assert!(!same_windows_desktop_app_package(
-            "desktop-app",
-            &NativeSource::DesktopApp,
-            previous,
-            cli,
-        ));
-        assert!(!same_windows_desktop_app_package(
-            "desktop-app",
-            &NativeSource::DesktopApp,
-            previous,
-            other_store_app,
-        ));
-        assert!(!same_windows_desktop_app_package(
-            "desktop-app",
-            &NativeSource::DesktopApp,
-            previous,
-            different_publisher,
-        ));
-    }
-
     #[test]
     fn reinstall_keeps_profile_preferences_and_allowed_permission_selection() {
         let native_home_dir = tempfile::tempdir().expect("temporary native home");
@@ -6226,6 +5608,7 @@ mod tests {
             profile: "alpha".into(),
             native_source: NativeSource::ExistingCli,
             native_path: Some("/selected/codex".into()),
+            codex_home: None,
             discord_app: "existing-app".into(),
             guild_id: 11,
             home_channel_id: 12,
@@ -6388,6 +5771,25 @@ mod tests {
             .unwrap(),
             project.path().join("legacy-home")
         );
+        let shared = project.path().join("discovered-shared-home");
+        let separate = project.path().join("profile/separate-home");
+        assert_eq!(
+            resolve_codex_home(None, Some(&separate), project.path(), Some(&shared)).unwrap(),
+            separate
+        );
+        for saved in [&shared, &separate] {
+            assert_eq!(
+                resolve_codex_home(
+                    Some(saved),
+                    Some(&explicit),
+                    project.path(),
+                    Some(&default_home)
+                )
+                .unwrap(),
+                *saved
+            );
+        }
+        assert!(resolve_codex_home(None, None, project.path(), None).is_err());
     }
 
     #[test]
@@ -6400,17 +5802,6 @@ mod tests {
             validate_existing_profile_identity(true, "alpha", Some("alpha"), Some("alpha")).is_ok()
         );
         assert!(validate_existing_profile_identity(true, "alpha", None, None).is_err());
-    }
-
-    #[test]
-    fn partial_native_selection_failure_allows_explicit_reselection_before_service_registration() {
-        assert!(is_partial_install_reselection_allowed(true, None, false));
-        assert!(!is_partial_install_reselection_allowed(
-            true,
-            Some("launchd-user"),
-            true
-        ));
-        assert!(!is_partial_install_reselection_allowed(false, None, false));
     }
 
     #[test]
@@ -6464,7 +5855,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_reselection_requires_all_common_installation_paths_to_match() {
+    fn reinstall_requires_all_common_installation_paths_to_match() {
         let previous: Ownership = serde_json::from_value(serde_json::json!({
             "formatVersion": 1,
             "configFile": "/profile/config.json",
@@ -6525,13 +5916,12 @@ mod tests {
     }
 
     #[test]
-    fn proven_partial_owned_runtime_is_removed_at_reselection_commit() {
+    fn legacy_owned_runtime_cleanup_keeps_profile_records() {
         let root = tempfile::tempdir().unwrap();
         let previous = cleanup_fixture(root.path());
-        let runtime =
-            partial_owned_core_runtime_for_cleanup(Some(&previous), root.path(), false, None, &[])
-                .unwrap()
-                .unwrap();
+        let runtime = owned_core_runtime_for_cleanup(&previous, root.path(), None, &[])
+            .unwrap()
+            .unwrap();
         assert_eq!(fs::read(&previous.codex_path).unwrap(), b"owned core");
         assert_eq!(
             fs::read(runtime.join(code_mode_host_executable_name())).unwrap(),
@@ -6659,7 +6049,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_reselection_preserves_unrecorded_file_and_selected_existing_cli() {
+    fn legacy_runtime_cleanup_preserves_unrecorded_file_and_retained_executable() {
         for protect_selected_cli in [false, true] {
             let root = tempfile::tempdir().unwrap();
             let ownership = cleanup_fixture(root.path());
@@ -6671,14 +6061,8 @@ mod tests {
                 Vec::new()
             };
             assert!(
-                partial_owned_core_runtime_for_cleanup(
-                    Some(&ownership),
-                    root.path(),
-                    false,
-                    None,
-                    &retained_paths,
-                )
-                .is_err()
+                owned_core_runtime_for_cleanup(&ownership, root.path(), None, &retained_paths,)
+                    .is_err()
             );
             assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
             if !protect_selected_cli {
@@ -6696,15 +6080,17 @@ mod tests {
     }
 
     #[test]
-    fn partial_reselection_preflight_keeps_core_when_replacement_secret_write_fails() {
+    fn legacy_runtime_cleanup_preflight_does_not_remove_core() {
         let root = tempfile::tempdir().unwrap();
         let mut ownership = cleanup_fixture(root.path());
         let blocked_secret = root.path().join("blocked-secret");
         fs::create_dir(&blocked_secret).unwrap();
         ownership.credentials_file = blocked_secret;
-        assert!(partial_owned_core_runtime_for_cleanup(
-            Some(&ownership), root.path(), false, None, &[],
-        ).unwrap().is_some());
+        assert!(
+            owned_core_runtime_for_cleanup(&ownership, root.path(), None, &[])
+                .unwrap()
+                .is_some()
+        );
         assert!(write_secret(&ownership.credentials_file, "test replacement credential").is_err());
         assert_eq!(fs::read(&ownership.codex_path).unwrap(), b"owned core");
         assert_eq!(
@@ -6804,16 +6190,7 @@ mod tests {
             "projectDir": "/profile/project"
         }))
         .unwrap();
-        assert!(
-            partial_owned_core_runtime_for_cleanup(
-                Some(&previous),
-                data_root.path(),
-                false,
-                None,
-                &[]
-            )
-            .is_err()
-        );
+        assert!(owned_core_runtime_for_cleanup(&previous, data_root.path(), None, &[]).is_err());
     }
 
     #[test]
@@ -6844,202 +6221,5 @@ mod tests {
             )
             .is_err()
         );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_extraction_accepts_the_single_expected_regular_file() {
-        use std::io::Cursor;
-        let dir = tempfile::tempdir().unwrap();
-        let archive_path = dir.path().join("codex.tar.gz");
-        let file = File::create(&archive_path).unwrap();
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut archive = tar::Builder::new(encoder);
-        let bytes = b"official executable fixture";
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o700);
-        header.set_cksum();
-        archive
-            .append_data(
-                &mut header,
-                "codex-x86_64-unknown-linux-musl",
-                Cursor::new(bytes),
-            )
-            .unwrap();
-        archive.into_inner().unwrap().finish().unwrap();
-
-        let destination = dir.path().join("codex");
-        extract_linux_official_executable(
-            &archive_path,
-            &destination,
-            "codex-x86_64-unknown-linux-musl.tar.gz",
-        )
-        .unwrap();
-        assert_eq!(fs::read(destination).unwrap(), bytes);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_extraction_installs_the_code_mode_host_archive_member() {
-        use std::io::Cursor;
-
-        let dir = tempfile::tempdir().unwrap();
-        let asset_name = "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz";
-        let archive_path = dir.path().join(asset_name);
-        let file = File::create(&archive_path).unwrap();
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut archive = tar::Builder::new(encoder);
-        let bytes = b"official code-mode host fixture";
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o700);
-        header.set_cksum();
-        archive
-            .append_data(
-                &mut header,
-                "codex-code-mode-host-x86_64-unknown-linux-musl",
-                Cursor::new(bytes),
-            )
-            .unwrap();
-        archive.into_inner().unwrap().finish().unwrap();
-
-        let destination = dir.path().join("codex-code-mode-host");
-        extract_linux_official_executable(&archive_path, &destination, asset_name).unwrap();
-
-        assert_eq!(destination.file_name().unwrap(), "codex-code-mode-host");
-        assert_eq!(fs::read(&destination).unwrap(), bytes);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_extraction_rejects_parent_traversal_member() {
-        use std::io::Cursor;
-        let dir = tempfile::tempdir().unwrap();
-        let archive_path = dir.path().join("codex.tar.gz");
-        let file = File::create(&archive_path).unwrap();
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut archive = tar::Builder::new(encoder);
-        let bytes = b"bad";
-        let mut header = tar::Header::new_gnu();
-        let member_path = b"../codex-x86_64-unknown-linux-musl";
-        header.as_mut_bytes()[..member_path.len()].copy_from_slice(member_path);
-        header.set_entry_type(tar::EntryType::Regular);
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o700);
-        header.set_cksum();
-        archive.append(&header, Cursor::new(bytes)).unwrap();
-        archive.into_inner().unwrap().finish().unwrap();
-
-        let destination = dir.path().join("codex");
-        assert!(
-            extract_linux_official_executable(
-                &archive_path,
-                &destination,
-                "codex-x86_64-unknown-linux-musl.tar.gz"
-            )
-            .is_err()
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_official_core_and_code_mode_host_use_the_platform_release_assets() {
-        let arch = match env::consts::ARCH {
-            "aarch64" => "aarch64",
-            "x86_64" => "x86_64",
-            other => panic!("unexpected Mac test architecture: {other}"),
-        };
-
-        assert_eq!(
-            official_asset_names().expect("Mac official release assets"),
-            (
-                format!("codex-{arch}-apple-darwin.tar.gz"),
-                format!("codex-code-mode-host-{arch}-apple-darwin.tar.gz")
-            )
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_official_assets_extract_expected_bytes() {
-        use std::io::Cursor;
-
-        let root = tempfile::tempdir().expect("temporary official runtime");
-        let (core_asset, host_asset) = official_asset_names().expect("Mac release asset names");
-        for (asset_name, executable_stem) in [
-            (core_asset.as_str(), "codex"),
-            (host_asset.as_str(), "codex-code-mode-host"),
-        ] {
-            let archive_path = root.path().join(asset_name);
-            let file = File::create(&archive_path).expect("create archive fixture");
-            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-            let mut archive = tar::Builder::new(encoder);
-            let expected = format!("official {executable_stem} fixture").into_bytes();
-            let mut header = tar::Header::new_gnu();
-            header.set_size(expected.len() as u64);
-            header.set_mode(0o600);
-            header.set_cksum();
-            archive
-                .append_data(
-                    &mut header,
-                    asset_name.strip_suffix(".tar.gz").expect("tar.gz asset"),
-                    Cursor::new(&expected),
-                )
-                .expect("append expected archive member");
-            archive
-                .into_inner()
-                .expect("finish tar archive")
-                .finish()
-                .expect("finish gzip archive");
-
-            let destination =
-                install_official_asset(&archive_path, root.path(), asset_name, executable_stem)
-                    .expect("extract official Mac executable");
-            assert_eq!(
-                fs::read(&destination).expect("read extracted executable"),
-                expected
-            );
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_official_asset_extraction_rejects_unsafe_archive_members() {
-        use std::io::Cursor;
-
-        let root = tempfile::tempdir().expect("temporary official runtime");
-        let (asset_name, _) = official_asset_names().expect("Mac release asset names");
-        let archive_path = root.path().join(&asset_name);
-        let file = File::create(&archive_path).expect("create archive fixture");
-        let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
-        let mut archive = tar::Builder::new(encoder);
-        let bytes = b"expected";
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o700);
-        header.set_cksum();
-        archive
-            .append_data(
-                &mut header,
-                asset_name.strip_suffix(".tar.gz").expect("tar.gz asset"),
-                Cursor::new(bytes),
-            )
-            .expect("append expected archive member");
-        let bytes = b"unsafe";
-        let mut header = tar::Header::new_gnu();
-        header.set_size(bytes.len() as u64);
-        header.set_mode(0o700);
-        header.set_cksum();
-        archive
-            .append_data(&mut header, "unexpected-member", Cursor::new(bytes))
-            .expect("append unexpected archive member");
-        archive
-            .into_inner()
-            .expect("finish tar archive")
-            .finish()
-            .expect("finish gzip archive");
-
-        assert!(install_official_asset(&archive_path, root.path(), &asset_name, "codex").is_err());
     }
 }

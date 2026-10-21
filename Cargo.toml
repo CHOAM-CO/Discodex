@@ -1,11 +1,12 @@
 [package]
 name = "discodex"
-version = "0.1.13"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
 
 [workspace]
+exclude = ["third_party/codex/codex-rs"]
 
 [lib]
 name = "discodex"
@@ -17,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 opus2 = "0.4.0"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 resvg = "0.48.1"
@@ -26,7 +28,7 @@ unicode-segmentation = "1.13"
 unicode-width = "0.2"
 percent-encoding = "2.3.2"
 url = "2.5.8"
-codex-uds = { git = "https://github.com/openai/codex", rev = "a956835d020762cb2b570053af06f643a11c0ecc" }
+codex-uds = { path = "third_party/codex/codex-rs/uds" }
 futures-util = "0.3"
 flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

@@ -29,8 +29,35 @@ pub(crate) fn catalog_has_model(c: &Value, requested: &str) -> bool {
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ModelSelection {
+    #[serde(default)]
+    pub executor: ModelExecutor,
     pub provider: String,
     pub model: String,
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum ModelExecutor {
+    #[default]
+    Codex,
+    Antigravity,
+}
+impl ModelExecutor {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
+        }
+    }
+}
+impl ModelSelection {
+    pub(crate) fn value(&self) -> String {
+        if self.executor == ModelExecutor::Codex {
+            identity(&self.provider, &self.model)
+        } else {
+            serde_json::to_string(&[self.executor.as_str(), &self.provider, &self.model])
+                .expect("model identity serializes")
+        }
+    }
 }
 fn provider(row: &Value) -> Option<&str> {
     row.get("provider")
@@ -43,9 +70,66 @@ fn identity(p: &str, m: &str) -> String {
 }
 fn row_selection(row: &Value, fallback: Option<&str>) -> Option<ModelSelection> {
     Some(ModelSelection {
+        executor: row
+            .get("executor")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .ok()?
+            .unwrap_or_default(),
         provider: provider(row).or(fallback).unwrap_or("openai").to_owned(),
         model: model_id(row)?.to_owned(),
     })
+}
+/// AGY is an opt-in executor, not an inferred provider or model-name prefix.
+/// Exact configured IDs supplement the installed CLI's catalog.
+pub(crate) fn add_antigravity_models(catalog: &mut Value, enabled: bool, models: &[String]) {
+    if !enabled {
+        return;
+    }
+    let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for model in models {
+        let selection = ModelSelection {
+            executor: ModelExecutor::Antigravity,
+            provider: "antigravity".into(),
+            model: model.clone(),
+        };
+        if !rows
+            .iter()
+            .any(|row| selection_value(row) == Some(selection.value().as_str()))
+        {
+            rows.push(json!({"id":model,"model":model,"displayName":model,
+                "executor":"antigravity","provider":"antigravity","modelProvider":"antigravity",
+                "selectionValue":selection.value()}));
+        }
+    }
+}
+pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::agy::Catalog) {
+    let ids = discovered
+        .models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<Vec<_>>();
+    add_antigravity_models(catalog, true, &ids);
+    if let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) {
+        for row in rows
+            .iter_mut()
+            .filter(|row| row.get("executor").and_then(Value::as_str) == Some("antigravity"))
+        {
+            if let Some(model) = discovered
+                .models
+                .iter()
+                .find(|model| model_id(row) == Some(model.id.as_str()))
+            {
+                row["displayName"] = json!(model.label);
+            }
+            // These are CLI argument choices, not guessed model capabilities.
+            // The CLI remains responsible for validating model-specific support.
+            row["supportedReasoningEfforts"] = json!(discovered.efforts);
+        }
+    }
 }
 pub(crate) fn resolve_selection(c: &Value, requested: &str) -> Result<ModelSelection> {
     let rows = c
@@ -164,9 +248,20 @@ pub(crate) fn assemble_catalog(
         .get("model_provider")
         .and_then(Value::as_str)
         .unwrap_or("openai");
-    add(&mut rows, c.get("model").and_then(Value::as_str), root);
+    let root_executor = c.get("model_executor").and_then(Value::as_str);
+    if root_executor != Some("antigravity") {
+        add(&mut rows, c.get("model").and_then(Value::as_str), root);
+    }
     if let Some(profiles) = c.get("profiles").and_then(Value::as_object) {
         for profile in profiles.values() {
+            if profile
+                .get("model_executor")
+                .and_then(Value::as_str)
+                .or(root_executor)
+                == Some("antigravity")
+            {
+                continue;
+            }
             let p = profile
                 .get("model_provider")
                 .and_then(Value::as_str)
@@ -175,22 +270,32 @@ pub(crate) fn assemble_catalog(
         }
     }
     let subagent_p = subagent_provider.unwrap_or(active);
-    add(
-        &mut rows,
-        c.pointer("/agents/default_subagent_model")
-            .and_then(Value::as_str),
-        subagent_p,
-    );
+    if c.pointer("/agents/default_subagent_executor")
+        .and_then(Value::as_str)
+        .or(root_executor)
+        != Some("antigravity")
+    {
+        add(
+            &mut rows,
+            c.pointer("/agents/default_subagent_model")
+                .and_then(Value::as_str),
+            c.pointer("/agents/default_subagent_model_provider")
+                .and_then(Value::as_str)
+                .unwrap_or(subagent_p),
+        );
+    }
     add(&mut rows, installation, active);
     let thread_p = thread
         .get("modelProvider")
         .and_then(Value::as_str)
         .unwrap_or(active);
-    add(
-        &mut rows,
-        thread.get("model").and_then(Value::as_str),
-        thread_p,
-    );
+    if thread.get("modelExecutor").and_then(Value::as_str) != Some("antigravity") {
+        add(
+            &mut rows,
+            thread.get("model").and_then(Value::as_str),
+            thread_p,
+        );
+    }
     Ok(json!({"data":rows,"nextCursor":null,"provider":thread_p,"catalogProvider":active}))
 }
 pub(crate) async fn read_pages<F, Fut>(mut request: F) -> Result<Vec<Value>>
@@ -226,6 +331,65 @@ pub(crate) fn needs_chatgpt_login(a: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cli_catalog_adds_exact_names_and_efforts_without_replacing_configured_choices() {
+        let mut catalog = json!({"data":[]});
+        add_antigravity_models(&mut catalog, true, &["manual".into(), "listed".into()]);
+        add_antigravity_catalog(
+            &mut catalog,
+            &crate::agy::Catalog {
+                models: vec![crate::agy::ModelOption {
+                    id: "listed".into(),
+                    label: "CLI model".into(),
+                }],
+                efforts: vec!["medium".into(), "high".into()],
+            },
+        );
+        assert_eq!(catalog["data"].as_array().unwrap().len(), 2);
+        assert_eq!(catalog["data"][0]["model"], "manual");
+        assert_eq!(catalog["data"][1]["displayName"], "CLI model");
+        for row in catalog["data"].as_array().unwrap() {
+            assert_eq!(row["supportedReasoningEfforts"], json!(["medium", "high"]));
+            assert_eq!(row["executor"], "antigravity");
+        }
+    }
+    #[test]
+    fn agy_catalog_is_opt_in_and_keeps_executor_identity_distinct() {
+        let mut catalog = json!({"provider":"openai","data":[{"model":"same","provider":"openai","selectionValue":"[\"openai\",\"same\"]"}]});
+        add_antigravity_models(&mut catalog, false, &["same".into()]);
+        assert_eq!(model_choices(&catalog).len(), 1);
+        add_antigravity_models(&mut catalog, true, &["same".into(), "same".into()]);
+        assert_eq!(model_choices(&catalog).len(), 2);
+        let selected =
+            resolve_selection(&catalog, "[\"antigravity\",\"antigravity\",\"same\"]").unwrap();
+        assert_eq!(selected.executor, ModelExecutor::Antigravity);
+        assert_eq!(selected.model, "same");
+        assert_eq!(
+            resolve_selection(&catalog, "[\"openai\",\"same\"]")
+                .unwrap()
+                .executor,
+            ModelExecutor::Codex
+        );
+    }
+
+    #[test]
+    fn legacy_selection_defaults_to_codex_and_external_thread_is_not_a_native_model() {
+        let selection: ModelSelection =
+            serde_json::from_value(json!({"provider":"example","model":"example-model"})).unwrap();
+        assert_eq!(selection.executor, ModelExecutor::Codex);
+        let catalog = assemble_catalog(vec![], &json!({"config":{}}),
+            &json!({"model":"external-only","modelProvider":"openai","modelExecutor":"antigravity"}),None,None).unwrap();
+        assert!(!catalog_has_model(&catalog, "external-only"));
+    }
+    #[test]
+    fn external_configuration_does_not_fabricate_native_provider_model_rows() {
+        let config = json!({"model_executor":"antigravity", "model":"external-main",
+            "profiles":{"external":{"model":"external-profile"},"native":{"model_executor":"codex","model":"native-profile"}},
+            "agents":{"default_subagent_model":"external-child","default_subagent_executor":"antigravity"}});
+        let catalog = assemble_catalog(vec![], &config, &Value::Null, None, None).unwrap();
+        assert_eq!(catalog["data"].as_array().unwrap().len(), 1);
+        assert_eq!(catalog["data"][0]["model"], "native-profile");
+    }
     #[test]
     fn identities_and_legacy_aliases() {
         let r = json!({"id":"key","model":"slug","slug":"old"});
@@ -281,6 +445,7 @@ mod tests {
         assert_eq!(
             resolve_selection(&c, "same").unwrap(),
             ModelSelection {
+                executor: crate::model_catalog::ModelExecutor::Codex,
                 provider: "ollama".into(),
                 model: "same".into()
             }
@@ -288,6 +453,7 @@ mod tests {
         assert_eq!(
             resolve_selection(&c, &choices[0].0).unwrap(),
             ModelSelection {
+                executor: crate::model_catalog::ModelExecutor::Codex,
                 provider: "openai".into(),
                 model: "same".into()
             }
@@ -304,6 +470,7 @@ mod tests {
         assert_eq!(
             resolve_selection(&c, "slug").unwrap(),
             ModelSelection {
+                executor: crate::model_catalog::ModelExecutor::Codex,
                 provider: "legacy".into(),
                 model: "slug".into()
             }
@@ -412,6 +579,7 @@ mod tests {
     #[test]
     fn model_selection_round_trips_for_persistence() {
         let selection = ModelSelection {
+            executor: crate::model_catalog::ModelExecutor::Codex,
             provider: "local-provider".into(),
             model: "local-model".into(),
         };
@@ -448,6 +616,7 @@ mod tests {
         assert_eq!(
             resolve_selection(&c, "shared").unwrap(),
             ModelSelection {
+                executor: crate::model_catalog::ModelExecutor::Codex,
                 provider: "local".into(),
                 model: "shared".into()
             }

@@ -1,3 +1,5 @@
+pub mod agy;
+pub mod agy_mcp;
 pub mod attachments;
 pub mod commands;
 pub mod config;

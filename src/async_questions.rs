@@ -4,7 +4,7 @@
 //! Discord interaction ids are separate, durable random tokens so they stay useful
 //! after the Discord worker restarts and never depend on a server request id.
 
-use std::{fs, io::Write, path::Path};
+use std::{collections::HashSet, fs, io::Write, path::Path};
 
 use anyhow::{Context as _, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use serenity::{
         CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage,
         InputTextStyle, ModalInteraction,
     },
-    builder::{CreateInputText, CreateModal, EditInteractionResponse},
+    builder::{CreateInputText, CreateModal, EditInteractionResponse, EditMessage},
     http::Http,
 };
 
@@ -52,6 +52,9 @@ pub struct AsyncQuestion {
     pub presentation_sent: bool,
     #[serde(default)]
     pub presentation_message_ids: Vec<Option<u64>>,
+    /// Delivery state currently rendered on every recorded public page.
+    #[serde(default)]
+    pub presentation_delivery: Option<QuestionDelivery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_target: Option<StoredReplyTarget>,
     #[serde(default)]
@@ -60,6 +63,8 @@ pub struct AsyncQuestion {
     pub delivery: QuestionDelivery,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_attempt: Option<FailedAnswer>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -68,6 +73,7 @@ pub enum QuestionDelivery {
     #[default]
     Pending,
     Ready,
+    Queued,
     AwaitingConfirmation,
     Sent,
 }
@@ -76,6 +82,9 @@ pub enum QuestionDelivery {
 pub struct AsyncQuestionStore {
     #[serde(default)]
     pub requests: Vec<AsyncQuestionRequest>,
+    /// A running submission must not be recovered as missing before admission.
+    #[serde(skip)]
+    active_submissions: HashSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,12 +97,31 @@ pub struct PendingQuestion {
     pub interaction_id: String,
     pub presentation_sent: bool,
     pub presentation_message_ids: Vec<Option<u64>>,
+    pub presentation_delivery: Option<QuestionDelivery>,
     pub reply_target: Option<StoredReplyTarget>,
     pub awaiting_notice_sent: bool,
     pub title: String,
     pub options: Option<Vec<String>>,
     pub delivery: QuestionDelivery,
     pub answer: Option<String>,
+    pub failed_attempt: Option<FailedAnswer>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailedAnswerOutcome {
+    Rejected,
+    Missing,
+    Unconfirmed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct FailedAnswer {
+    pub answer: String,
+    pub reply_target: Option<StoredReplyTarget>,
+    pub outcome: FailedAnswerOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,6 +137,7 @@ pub enum QueueObservation {
 pub enum ReconcileResult {
     Unchanged,
     MarkedSent,
+    Queued,
     AwaitingConfirmation,
     ReleasedForRetry,
 }
@@ -201,10 +230,12 @@ impl AsyncQuestionStore {
                 interaction_id: uuid::Uuid::new_v4().to_string(),
                 presentation_sent: false,
                 presentation_message_ids: Vec::new(),
+                presentation_delivery: None,
                 reply_target: None,
                 awaiting_notice_sent: false,
                 delivery: QuestionDelivery::Pending,
                 answer: None,
+                failed_attempt: None,
             });
         }
         self.requests.push(AsyncQuestionRequest {
@@ -224,8 +255,28 @@ impl AsyncQuestionStore {
         self.questions_with_delivery(QuestionDelivery::Ready)
     }
 
+    pub fn queued(&self) -> Vec<PendingQuestion> {
+        self.questions_with_delivery(QuestionDelivery::Queued)
+    }
+
     pub fn awaiting_confirmation(&self) -> Vec<PendingQuestion> {
         self.questions_with_delivery(QuestionDelivery::AwaitingConfirmation)
+    }
+
+    fn recoverable_answers(&self) -> Vec<PendingQuestion> {
+        let mut questions = self.ready();
+        questions.extend(self.queued());
+        questions.extend(self.awaiting_confirmation());
+        // Older workers used Sent for both queued and accepted answers.
+        questions.extend(
+            self.questions_with_delivery(QuestionDelivery::Sent)
+                .into_iter()
+                .filter(|question| {
+                    question.presentation_delivery.is_none() && question.reply_target.is_some()
+                }),
+        );
+        questions.retain(|question| !self.active_submissions.contains(&question.item_id));
+        questions
     }
 
     fn questions_with_delivery(&self, delivery: QuestionDelivery) -> Vec<PendingQuestion> {
@@ -246,12 +297,14 @@ impl AsyncQuestionStore {
                             interaction_id: question.interaction_id.clone(),
                             presentation_sent: question.presentation_sent,
                             presentation_message_ids: question.presentation_message_ids.clone(),
+                            presentation_delivery: question.presentation_delivery,
                             reply_target: question.reply_target.clone(),
                             awaiting_notice_sent: question.awaiting_notice_sent,
                             title: question.title.clone(),
                             options: question.options.clone(),
                             delivery: question.delivery,
                             answer: question.answer.clone(),
+                            failed_attempt: question.failed_attempt.clone(),
                         })
                     })
             })
@@ -332,18 +385,20 @@ impl AsyncQuestionStore {
                         interaction_id: question.interaction_id.clone(),
                         presentation_sent: question.presentation_sent,
                         presentation_message_ids: question.presentation_message_ids.clone(),
+                        presentation_delivery: question.presentation_delivery,
                         reply_target: question.reply_target.clone(),
                         awaiting_notice_sent: question.awaiting_notice_sent,
                         title: question.title.clone(),
                         options: question.options.clone(),
                         delivery: question.delivery,
                         answer: question.answer.clone(),
+                        failed_attempt: question.failed_attempt.clone(),
                     })
                 })
         })
     }
 
-    /// Mark a queued native reply as delivered. Repeated callbacks are harmless.
+    /// Mark confirmed native admission. This does not mean the model finished.
     pub fn mark_sent(&mut self, item_id: &str) -> Result<bool> {
         let Some(question) = self.find_item_mut(item_id) else {
             return Ok(false);
@@ -351,7 +406,13 @@ impl AsyncQuestionStore {
         if question.delivery == QuestionDelivery::Sent {
             return Ok(false);
         }
-        if question.delivery != QuestionDelivery::Ready || question.answer.is_none() {
+        if !matches!(
+            question.delivery,
+            QuestionDelivery::Ready
+                | QuestionDelivery::Queued
+                | QuestionDelivery::AwaitingConfirmation
+        ) || question.answer.is_none()
+        {
             return Ok(false);
         }
         question.delivery = QuestionDelivery::Sent;
@@ -374,22 +435,45 @@ impl AsyncQuestionStore {
         item_id: &str,
         observation: QueueObservation,
     ) -> ReconcileResult {
+        self.reconcile_delivery_with_detail(item_id, observation, None)
+    }
+
+    pub fn reconcile_delivery_with_detail(
+        &mut self,
+        item_id: &str,
+        observation: QueueObservation,
+        detail: Option<String>,
+    ) -> ReconcileResult {
         let Some(question) = self.find_item_mut(item_id) else {
             return ReconcileResult::Unchanged;
         };
-        if !matches!(
-            question.delivery,
-            QuestionDelivery::Ready | QuestionDelivery::AwaitingConfirmation
-        ) {
+        let legacy_sent =
+            question.delivery == QuestionDelivery::Sent && question.presentation_delivery.is_none();
+        if !legacy_sent
+            && !matches!(
+                question.delivery,
+                QuestionDelivery::Ready
+                    | QuestionDelivery::Queued
+                    | QuestionDelivery::AwaitingConfirmation
+            )
+        {
             return ReconcileResult::Unchanged;
         }
         match observation {
-            QueueObservation::Accepted | QueueObservation::Queued => {
-                if question.delivery == QuestionDelivery::Sent {
+            // An old accepted queue record may already have been retired. Its
+            // absence cannot justify replaying an answer marked Sent on disk.
+            QueueObservation::Missing if legacy_sent => ReconcileResult::Unchanged,
+            QueueObservation::Accepted => {
+                question.delivery = QuestionDelivery::Sent;
+                question.failed_attempt = None;
+                ReconcileResult::MarkedSent
+            }
+            QueueObservation::Queued => {
+                if question.delivery == QuestionDelivery::Queued {
                     return ReconcileResult::Unchanged;
                 }
-                question.delivery = QuestionDelivery::Sent;
-                ReconcileResult::MarkedSent
+                question.delivery = QuestionDelivery::Queued;
+                ReconcileResult::Queued
             }
             QueueObservation::Submitting | QueueObservation::Unknown => {
                 if question.delivery == QuestionDelivery::AwaitingConfirmation {
@@ -399,6 +483,18 @@ impl AsyncQuestionStore {
                 ReconcileResult::AwaitingConfirmation
             }
             QueueObservation::Rejected | QueueObservation::Missing => {
+                if let Some(answer) = question.answer.clone() {
+                    question.failed_attempt = Some(FailedAnswer {
+                        answer,
+                        reply_target: question.reply_target.clone(),
+                        outcome: if observation == QueueObservation::Rejected {
+                            FailedAnswerOutcome::Rejected
+                        } else {
+                            FailedAnswerOutcome::Missing
+                        },
+                        detail,
+                    });
+                }
                 question.delivery = QuestionDelivery::Pending;
                 question.answer = None;
                 question.reply_target = None;
@@ -431,7 +527,9 @@ impl AsyncQuestionStore {
                     .iter()
                     .enumerate()
                     .filter_map(move |(index, question)| {
-                        (!question.presentation_sent).then(|| PendingQuestion {
+                        (!question.presentation_sent
+                            || question.presentation_delivery != Some(question.delivery))
+                        .then(|| PendingQuestion {
                             call_id: request.call_id.clone(),
                             thread_id: request.thread_id.clone(),
                             turn_id: request.turn_id.clone(),
@@ -440,12 +538,14 @@ impl AsyncQuestionStore {
                             interaction_id: question.interaction_id.clone(),
                             presentation_sent: question.presentation_sent,
                             presentation_message_ids: question.presentation_message_ids.clone(),
+                            presentation_delivery: question.presentation_delivery,
                             reply_target: question.reply_target.clone(),
                             awaiting_notice_sent: question.awaiting_notice_sent,
                             title: question.title.clone(),
                             options: question.options.clone(),
                             delivery: question.delivery,
                             answer: question.answer.clone(),
+                            failed_attempt: question.failed_attempt.clone(),
                         })
                     })
             })
@@ -462,15 +562,32 @@ impl AsyncQuestionStore {
         let question = self
             .find_item_mut(item_id)
             .context("async question not found")?;
-        question.presentation_message_ids.resize(total, None);
+        // Retain surplus IDs until their Discord pages have actually been removed.
+        question
+            .presentation_message_ids
+            .resize(total.max(question.presentation_message_ids.len()), None);
         if page >= total {
             bail!("presentation page index out of range");
         }
         question.presentation_message_ids[page] = Some(message_id);
+        question.presentation_sent = question.presentation_message_ids.len() == total
+            && question
+                .presentation_message_ids
+                .iter()
+                .all(Option::is_some);
+        Ok(())
+    }
+
+    fn finish_presentation(&mut self, item_id: &str, total: usize) -> Result<()> {
+        let question = self
+            .find_item_mut(item_id)
+            .context("async question not found")?;
+        question.presentation_message_ids.truncate(total);
         question.presentation_sent = question
             .presentation_message_ids
             .iter()
             .all(Option::is_some);
+        question.presentation_delivery = Some(question.delivery);
         Ok(())
     }
 
@@ -512,12 +629,14 @@ impl AsyncQuestionStore {
                             interaction_id: question.interaction_id.clone(),
                             presentation_sent: question.presentation_sent,
                             presentation_message_ids: question.presentation_message_ids.clone(),
+                            presentation_delivery: question.presentation_delivery,
                             reply_target: question.reply_target.clone(),
                             awaiting_notice_sent: question.awaiting_notice_sent,
                             title: question.title.clone(),
                             options: question.options.clone(),
                             delivery: question.delivery,
                             answer: question.answer.clone(),
+                            failed_attempt: question.failed_attempt.clone(),
                         })
                     })
             })
@@ -531,6 +650,14 @@ impl AsyncQuestionStore {
         };
         if question.delivery != QuestionDelivery::Ready {
             return false;
+        }
+        if let Some(answer) = question.answer.clone() {
+            question.failed_attempt = Some(FailedAnswer {
+                answer,
+                reply_target: question.reply_target.clone(),
+                outcome: FailedAnswerOutcome::Unconfirmed,
+                detail: None,
+            });
         }
         question.delivery = QuestionDelivery::Pending;
         question.answer = None;
@@ -639,6 +766,36 @@ pub fn option_pages(question: &PendingQuestion) -> Vec<Vec<(usize, String)>> {
         .collect()
 }
 
+fn failed_answer_status(failed: &FailedAnswer, language: Language) -> String {
+    let status = match failed.outcome {
+        FailedAnswerOutcome::Rejected => language.text(
+            "The previous answer was not accepted by the current turn. It is saved below; choose an answer to retry.",
+            "현재 턴에서 이전 답변을 접수하지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+            "当前轮次未接受上一个答案。答案已保存在下方；请选择答案重试。",
+            "現在のターンでは前回の回答を受け付けませんでした。下に保存されています。選択肢を選んで再試行してください。",
+        ),
+        FailedAnswerOutcome::Missing => language.text(
+            "The previous answer was not confirmed because no matching native queue record was found. It is saved below; choose an answer to retry.",
+            "일치하는 Codex 대기열 기록이 없어 이전 답변을 확인하지 못했습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+            "未找到匹配的 Codex 队列记录，因此无法确认上一个答案。答案已保存在下方；请选择答案重试。",
+            "対応する Codex キュー記録が見つからず、前回の回答を確認できませんでした。下に保存されています。選択肢を選んで再試行してください。",
+        ),
+        FailedAnswerOutcome::Unconfirmed => language.text(
+            "The previous answer was not confirmed. It is saved below; choose an answer to retry.",
+            "이전 답변이 확인되지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+            "上一个答案未获确认。答案已保存在下方；请选择答案重试。",
+            "前回の回答は確認されませんでした。下に保存されています。選択肢を選んで再試行してください。",
+        ),
+    };
+    match &failed.detail {
+        Some(detail) if !detail.trim().is_empty() => format!(
+            "{status}\n\n{}: {detail}",
+            language.text("Details", "상세 정보", "详情", "詳細")
+        ),
+        _ => status.to_owned(),
+    }
+}
+
 /// Text pages preserve every character while respecting Discord's content length.
 /// `max_chars` is supplied by the caller from the Discord delivery surface.
 pub fn render_pages(
@@ -646,11 +803,21 @@ pub fn render_pages(
     language: Language,
     max_chars: usize,
 ) -> Vec<String> {
-    let mut body = format!(
+    let mut body = String::new();
+    if question.delivery == QuestionDelivery::Pending {
+        if let Some(failed) = &question.failed_attempt {
+            let status = failed_answer_status(failed, language);
+            body.push_str(&status);
+            body.push_str("\n\n");
+            body.push_str(&failed.answer);
+            body.push_str("\n\n");
+        }
+    }
+    body.push_str(&format!(
         "{}\n{}",
         language.text("Question", "질문", "问题", "質問"),
         question.title
-    );
+    ));
     if let Some(options) = question
         .options
         .as_ref()
@@ -717,6 +884,44 @@ fn presentation_messages(
     question: &PendingQuestion,
     language: Language,
 ) -> Vec<PresentationMessage> {
+    if question.delivery != QuestionDelivery::Pending {
+        if let Some(answer) = &question.answer {
+            let status = match question.delivery {
+                QuestionDelivery::Ready => language.text(
+                    "Submitting answer…",
+                    "답변을 제출하고 있습니다…",
+                    "正在提交答案…",
+                    "回答を送信しています…",
+                ),
+                QuestionDelivery::Queued => language.text(
+                    "Answer queued for Codex.",
+                    "Codex로 전달할 답변이 대기 중입니다.",
+                    "答案正在等待发送给 Codex。",
+                    "Codex への回答送信を待っています。",
+                ),
+                QuestionDelivery::AwaitingConfirmation => language.text(
+                    "Answer awaiting Codex confirmation.",
+                    "답변의 Codex 접수 확인을 기다리고 있습니다.",
+                    "答案正在等待 Codex 确认接收。",
+                    "Codex による回答の受信確認を待っています。",
+                ),
+                QuestionDelivery::Pending | QuestionDelivery::Sent => "",
+            };
+            let body = if status.is_empty() {
+                answer.clone()
+            } else {
+                format!("{status}\n\n{answer}")
+            };
+            return split_content(&body, 2_000)
+                .into_iter()
+                .map(|content| PresentationMessage {
+                    content,
+                    options: Vec::new(),
+                    freeform: false,
+                })
+                .collect();
+        }
+    }
     let mut messages: Vec<_> = render_pages(question, language, 2_000)
         .into_iter()
         .map(|content| PresentationMessage {
@@ -795,62 +1000,186 @@ async fn resume_presentations(
     state: &crate::discord::BridgeState,
     thread_id: &str,
 ) -> Result<()> {
-    let state_path = state.config.state_dir.join("async-questions.json");
     let pending = state
         .async_questions
         .lock()
         .await
         .presentation_pending_for_thread(thread_id);
-    let home_channel = ChannelId::new(state.config.home_channel_id);
     for question in pending {
-        let parts = presentation_messages(&question, state.config.language);
-        for (page, part) in parts.iter().enumerate() {
-            if question
-                .presentation_message_ids
-                .get(page)
-                .is_some_and(Option::is_some)
-            {
-                continue;
+        sync_question_presentation(http, state, &question.interaction_id).await?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PresentationUpdate {
+    Edit { page: usize, message_id: u64 },
+    Send { page: usize },
+    Delete { page: usize, message_id: u64 },
+}
+
+fn presentation_updates(question: &PendingQuestion, total: usize) -> Vec<PresentationUpdate> {
+    let mut updates = Vec::new();
+    for page in 0..total {
+        match question
+            .presentation_message_ids
+            .get(page)
+            .copied()
+            .flatten()
+        {
+            Some(message_id) if question.presentation_delivery != Some(question.delivery) => {
+                updates.push(PresentationUpdate::Edit { page, message_id });
             }
-            let mut builder = CreateMessage::new().content(part.content.clone());
-            if part.freeform {
-                let button = CreateButton::new(freeform_component_id(&question.interaction_id))
-                    .label(state.config.language.text(
-                        "Write a different answer",
-                        "다른 답변 직접 입력",
-                        "输入其他答案",
-                        "別の回答を入力",
-                    ))
-                    .style(ButtonStyle::Secondary);
-                builder = builder.components(vec![CreateActionRow::Buttons(vec![button])]);
-            } else if !part.options.is_empty() {
-                builder =
-                    builder.components(option_button_rows(&part.options, &question.interaction_id));
-            }
-            let message = home_channel
-                .send_message(http, builder)
-                .await
-                .context("publish async question page")?;
-            let mut store = state.async_questions.lock().await;
-            store.record_presentation_message(
-                &question.item_id,
-                page,
-                message.id.get(),
-                parts.len(),
-            )?;
-            store.save(&state_path)?;
+            Some(_) => {}
+            None => updates.push(PresentationUpdate::Send { page }),
         }
     }
+    for (page, message_id) in question
+        .presentation_message_ids
+        .iter()
+        .enumerate()
+        .skip(total)
+    {
+        if let Some(message_id) = message_id {
+            updates.push(PresentationUpdate::Delete {
+                page,
+                message_id: *message_id,
+            });
+        }
+    }
+    updates
+}
+
+fn presentation_components(
+    part: &PresentationMessage,
+    interaction_id: &str,
+    language: Language,
+) -> Vec<CreateActionRow> {
+    if part.freeform {
+        vec![CreateActionRow::Buttons(vec![
+            CreateButton::new(freeform_component_id(interaction_id))
+                .label(language.text(
+                    "Write a different answer",
+                    "다른 답변 직접 입력",
+                    "输入其他答案",
+                    "別の回答を入力",
+                ))
+                .style(ButtonStyle::Secondary),
+        ])]
+    } else {
+        option_button_rows(&part.options, interaction_id)
+    }
+}
+
+fn is_missing_message(error: &serenity::Error) -> bool {
+    matches!(error, serenity::Error::Http(serenity::http::HttpError::UnsuccessfulRequest(response)) if response.error.code == 10008)
+}
+
+async fn sync_question_presentation(
+    http: &Http,
+    state: &crate::discord::BridgeState,
+    interaction_id: &str,
+) -> Result<()> {
+    let state_path = state.config.state_dir.join("async-questions.json");
+    // Serialize card replacement with clicks and recovery. A stale render must not
+    // put the original choices back after a different task accepts the answer.
+    let mut store = state.async_questions.lock().await;
+    let Some(question) = store.question_for_interaction(interaction_id) else {
+        return Ok(());
+    };
+    if question.presentation_sent && question.presentation_delivery == Some(question.delivery) {
+        return Ok(());
+    }
+    let parts = presentation_messages(&question, state.config.language);
+    let channel = ChannelId::new(
+        question
+            .reply_target
+            .as_ref()
+            .map_or(state.config.home_channel_id, |target| target.channel_id),
+    );
+    for update in presentation_updates(&question, parts.len()) {
+        match update {
+            PresentationUpdate::Edit { page, message_id } => {
+                let part = &parts[page];
+                match channel
+                    .edit_message(
+                        http,
+                        message_id,
+                        EditMessage::new().content(&part.content).components(
+                            presentation_components(part, interaction_id, state.config.language),
+                        ),
+                    )
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(error) if is_missing_message(&error) => {
+                        let sent = channel
+                            .send_message(
+                                http,
+                                CreateMessage::new().content(&part.content).components(
+                                    presentation_components(
+                                        part,
+                                        interaction_id,
+                                        state.config.language,
+                                    ),
+                                ),
+                            )
+                            .await
+                            .context("replace missing async question page")?;
+                        store.record_presentation_message(
+                            &question.item_id,
+                            page,
+                            sent.id.get(),
+                            parts.len(),
+                        )?;
+                        store.save(&state_path)?;
+                    }
+                    Err(error) => return Err(error).context("update async question page"),
+                }
+            }
+            PresentationUpdate::Send { page } => {
+                let part = &parts[page];
+                let sent = channel
+                    .send_message(
+                        http,
+                        CreateMessage::new().content(&part.content).components(
+                            presentation_components(part, interaction_id, state.config.language),
+                        ),
+                    )
+                    .await
+                    .context("publish async question page")?;
+                store.record_presentation_message(
+                    &question.item_id,
+                    page,
+                    sent.id.get(),
+                    parts.len(),
+                )?;
+                store.save(&state_path)?;
+            }
+            PresentationUpdate::Delete { page, message_id } => {
+                match channel.delete_message(http, message_id).await {
+                    Ok(()) => {}
+                    Err(error) if is_missing_message(&error) => {}
+                    Err(error) => return Err(error).context("remove async question choice page"),
+                }
+                store
+                    .find_item_mut(&question.item_id)
+                    .context("async question not found")?
+                    .presentation_message_ids[page] = None;
+                store.save(&state_path)?;
+            }
+        }
+    }
+    store.finish_presentation(&question.item_id, parts.len())?;
+    store.save(&state_path)?;
     Ok(())
 }
 
 pub(crate) async fn recover(http: &Http, state: &crate::discord::BridgeState) -> Result<()> {
     let thread_id = state.native.thread_id();
-    resume_presentations(http, state, &thread_id).await?;
     let path = state.config.state_dir.join("async-questions.json");
     let store = state.async_questions.lock().await;
-    let mut ready = store.ready();
-    ready.extend(store.awaiting_confirmation());
+    let ready = store.recoverable_answers();
     drop(store);
     for q in ready {
         if q.thread_id != thread_id {
@@ -877,12 +1206,15 @@ pub(crate) async fn recover(http: &Http, state: &crate::discord::BridgeState) ->
             QueueObservation::Missing
         };
         let mut store = state.async_questions.lock().await;
-        let result = store.reconcile_delivery(&q.item_id, observation);
-        let notice = result == ReconcileResult::AwaitingConfirmation
-            || (q.delivery == QuestionDelivery::AwaitingConfirmation && !q.awaiting_notice_sent);
-        let target = store
-            .question_for_interaction(&q.interaction_id)
-            .and_then(|item| item.reply_target);
+        if store.active_submissions.contains(&q.item_id) {
+            continue;
+        }
+        store.reconcile_delivery(&q.item_id, observation);
+        let current = store.question_for_interaction(&q.interaction_id);
+        let notice = current.as_ref().is_some_and(|item| {
+            item.delivery == QuestionDelivery::AwaitingConfirmation && !item.awaiting_notice_sent
+        });
+        let target = current.and_then(|item| item.reply_target);
         store.save(&path)?;
         drop(store);
         if notice {
@@ -898,7 +1230,7 @@ pub(crate) async fn recover(http: &Http, state: &crate::discord::BridgeState) ->
             }
         }
     }
-    Ok(())
+    resume_presentations(http, state, &thread_id).await
 }
 
 fn option_button_rows(options: &[(usize, String)], interaction_id: &str) -> Vec<CreateActionRow> {
@@ -950,12 +1282,24 @@ fn target_for_card(
     }
 }
 
+fn answer_target(
+    question: &PendingQuestion,
+    clicked: &crate::discord::ReplyTarget,
+) -> crate::discord::ReplyTarget {
+    let mut target = clicked.clone();
+    // The first card remains after the option/free-text pages are removed.
+    if let Some(message_id) = question.presentation_message_ids.first().copied().flatten() {
+        target.message_id = serenity::all::MessageId::new(message_id);
+    }
+    target
+}
+
 async fn stage_answer(
     state: &crate::discord::BridgeState,
     interaction_id: &str,
     answer: String,
     target: &crate::discord::ReplyTarget,
-) -> Result<(PendingQuestion, String)> {
+) -> Result<(PendingQuestion, String, crate::discord::ReplyTarget)> {
     let path = state.config.state_dir.join("async-questions.json");
     let mut store = state.async_questions.lock().await;
     let mut staged = store.clone();
@@ -964,6 +1308,7 @@ async fn stage_answer(
         .context("this async question is no longer available")?;
     question_is_current(state, &question)?;
     let item_id = question.item_id.clone();
+    let target = answer_target(&question, target);
     staged.answer_freeform(interaction_id, answer)?;
     staged.record_reply_target(
         &item_id,
@@ -976,9 +1321,10 @@ async fn stage_answer(
     let envelope = staged
         .reply_envelope(&item_id)?
         .context("async question answer was already submitted")?;
+    staged.active_submissions.insert(item_id);
     staged.save(&path)?;
     *store = staged;
-    Ok((question, envelope))
+    Ok((question, envelope, target))
 }
 
 async fn stage_option_answer(
@@ -986,7 +1332,7 @@ async fn stage_option_answer(
     interaction_id: &str,
     option_index: usize,
     target: &crate::discord::ReplyTarget,
-) -> Result<(PendingQuestion, String)> {
+) -> Result<(PendingQuestion, String, crate::discord::ReplyTarget)> {
     let path = state.config.state_dir.join("async-questions.json");
     let mut store = state.async_questions.lock().await;
     let mut staged = store.clone();
@@ -995,6 +1341,7 @@ async fn stage_option_answer(
         .context("this async question is no longer available")?;
     question_is_current(state, &question)?;
     let item_id = question.item_id.clone();
+    let target = answer_target(&question, target);
     staged.answer_option(interaction_id, option_index)?;
     staged.record_reply_target(
         &item_id,
@@ -1007,9 +1354,10 @@ async fn stage_option_answer(
     let envelope = staged
         .reply_envelope(&item_id)?
         .context("async question answer was already submitted")?;
+    staged.active_submissions.insert(item_id);
     staged.save(&path)?;
     *store = staged;
-    Ok((question, envelope))
+    Ok((question, envelope, target))
 }
 
 async fn submit_staged_answer(
@@ -1018,43 +1366,96 @@ async fn submit_staged_answer(
     envelope: &str,
     target: crate::discord::ReplyTarget,
 ) -> Result<()> {
-    if state.native.thread_id() != question.thread_id {
-        bail!("this async question belongs to a different Codex conversation");
-    }
-    let state_path = state.config.state_dir.join("async-questions.json");
-    match crate::discord::submit_async_answer(state, envelope, target.clone(), &question.thread_id)
+    let attempt =
+        crate::discord::submit_async_answer(state, envelope, target.clone(), &question.thread_id)
+            .await;
+    let observation = state
+        .queued_inputs
+        .lock()
         .await
-    {
-        Ok(()) => {
-            let mut store = state.async_questions.lock().await;
-            store.mark_sent(&question.item_id)?;
-            store.save(&state_path)?;
-            Ok(())
+        .iter()
+        .find(|queued| {
+            queued.message_id == target.message_id.get()
+                && queued.native_thread_id == question.thread_id
+        })
+        .map(|queued| match queued.delivery {
+            crate::discord::QueueDelivery::Accepted => QueueObservation::Accepted,
+            crate::discord::QueueDelivery::Queued => QueueObservation::Queued,
+            crate::discord::QueueDelivery::Submitting => QueueObservation::Submitting,
+            crate::discord::QueueDelivery::Unknown => QueueObservation::Unknown,
+            crate::discord::QueueDelivery::Rejected => QueueObservation::Rejected,
+        })
+        .unwrap_or(QueueObservation::Missing);
+    let mut store = state.async_questions.lock().await;
+    store.active_submissions.remove(&question.item_id);
+    let failure_detail = attempt.as_ref().err().map(|error| format!("{error:#}"));
+    store.reconcile_delivery_with_detail(&question.item_id, observation, failure_detail);
+    store.save(state.config.state_dir.join("async-questions.json"))?;
+    if matches!(
+        observation,
+        QueueObservation::Accepted | QueueObservation::Queued
+    ) {
+        // A late RPC/journal error cannot undo confirmed admission or justify a resend.
+        if let Err(error) = attempt {
+            tracing::warn!(?error, "async answer recorded despite submission error");
         }
-        Err(error) => {
-            let queue_delivery = state
-                .queued_inputs
-                .lock()
-                .await
-                .iter()
-                .find(|queued| {
-                    queued.message_id == target.message_id.get()
-                        && queued.native_thread_id == question.thread_id
-                })
-                .map(|queued| queued.delivery);
-            let observation = match queue_delivery {
-                Some(crate::discord::QueueDelivery::Accepted) => QueueObservation::Accepted,
-                Some(crate::discord::QueueDelivery::Queued) => QueueObservation::Queued,
-                Some(crate::discord::QueueDelivery::Submitting) => QueueObservation::Submitting,
-                Some(crate::discord::QueueDelivery::Unknown) => QueueObservation::Unknown,
-                Some(crate::discord::QueueDelivery::Rejected) => QueueObservation::Rejected,
-                None => QueueObservation::Missing,
-            };
-            let mut store = state.async_questions.lock().await;
-            store.reconcile_delivery(&question.item_id, observation);
-            store.save(&state_path)?;
-            Err(error)
+        Ok(())
+    } else {
+        attempt.and_then(|()| bail!("async question answer has no confirmed admission"))
+    }
+}
+
+async fn refresh_answer_card(
+    http: &Http,
+    state: &crate::discord::BridgeState,
+    question: &PendingQuestion,
+) {
+    if let Err(error) = sync_question_presentation(http, state, &question.interaction_id).await {
+        // Leave the delivery marker dirty for recovery; never send the answer again
+        // merely because Discord could not edit its public presentation.
+        tracing::warn!(?error, item_id = %question.item_id, "async question card update pending recovery");
+    }
+}
+
+fn submission_feedback(question: Option<&PendingQuestion>, language: Language) -> String {
+    match question {
+        Some(question) if question.delivery == QuestionDelivery::Pending => {
+            match &question.failed_attempt {
+                Some(failed) => failed_answer_status(failed, language),
+                None => language
+                    .text(
+                        "The answer was not confirmed. The question remains available for retry.",
+                        "답변이 확인되지 않았습니다. 질문에서 다시 시도할 수 있습니다.",
+                        "答案未获确认。你可以在问题卡片上重试。",
+                        "回答は確認されませんでした。質問カードから再試行できます。",
+                    )
+                    .to_owned(),
+            }
         }
+        Some(question) if question.delivery == QuestionDelivery::Sent => language
+            .text(
+                "Answer submitted.",
+                "답변을 제출했습니다.",
+                "答案已提交。",
+                "回答を送信しました。",
+            )
+            .to_owned(),
+        Some(question) if question.delivery == QuestionDelivery::Queued => language
+            .text(
+                "Answer queued for Codex.",
+                "Codex로 전달할 답변이 대기 중입니다.",
+                "答案正在等待发送给 Codex。",
+                "Codex への回答送信を待っています。",
+            )
+            .to_owned(),
+        _ => language
+            .text(
+                "Your answer is awaiting native confirmation. It has not been sent again.",
+                "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
+                "你的答案正在等待 Codex 确认，没有重复提交。",
+                "回答は Codex の確認待ちです。再送信していません。",
+            )
+            .to_owned(),
     }
 }
 
@@ -1062,21 +1463,19 @@ async fn respond_stale_component(
     ctx: &Context,
     interaction: &ComponentInteraction,
     state: &crate::discord::BridgeState,
-    reason: &str,
+    _reason: &str,
 ) -> Result<()> {
-    let content = state.config.language.text(
-        "This question is no longer available. Please use its latest Discord card.",
-        "이 질문은 더 이상 사용할 수 없습니다. 최신 Discord 질문 카드에서 답해주세요.",
-        "此问题已不可用。请使用最新的 Discord 问题卡片。",
-        "この質問は利用できません。最新の Discord 質問カードから回答してください。",
-    );
-    let _ = reason;
     interaction
         .create_response(
             ctx,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(content)
+                    .content(state.config.language.text(
+                        "This question is no longer available. Please use its latest Discord card.",
+                        "이 질문은 더 이상 사용할 수 없습니다. 최신 Discord 질문 카드에서 답해주세요.",
+                        "此问题已不可用。请使用最新的 Discord 问题卡片。",
+                        "この質問は利用できません。最新の Discord 質問カードから回答してください。",
+                    ))
                     .ephemeral(true),
             ),
         )
@@ -1163,7 +1562,7 @@ pub(crate) async fn handle_component(
                 interaction.message.id,
                 interaction.guild_id,
             );
-            let (question, envelope) =
+            let (question, envelope, target) =
                 match stage_option_answer(state, &interaction_id, option_index, &target).await {
                     Ok(answer) => answer,
                     Err(reason) => {
@@ -1182,29 +1581,17 @@ pub(crate) async fn handle_component(
             {
                 tracing::warn!(?error, "failed to acknowledge async question selection");
             }
-            if let Err(error) = submit_staged_answer(state, &question, &envelope, target).await {
+            refresh_answer_card(&ctx.http, state, &question).await;
+            let result = submit_staged_answer(state, &question, &envelope, target).await;
+            refresh_answer_card(&ctx.http, state, &question).await;
+            if let Err(error) = result {
                 tracing::warn!(?error, "failed to submit async question answer");
                 let delivery = state
                     .async_questions
                     .lock()
                     .await
-                    .question_for_interaction(&interaction_id)
-                    .map(|q| q.delivery);
-                let text = if delivery == Some(QuestionDelivery::AwaitingConfirmation) {
-                    state.config.language.text(
-                        "Your answer is awaiting native confirmation. It has not been sent again.",
-                        "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
-                        "你的答案正在等待 Codex 确认，没有重复提交。",
-                        "回答は Codex の確認待ちです。再送信していません。",
-                    )
-                } else {
-                    state.config.language.text(
-                        "The answer could not be submitted. You can try again from the question card.",
-                        "답변을 제출하지 못했습니다. 질문 카드에서 다시 시도할 수 있습니다.",
-                        "无法提交答案。你可以在问题卡片上重试。",
-                        "回答を送信できませんでした。質問カードから再試行できます。",
-                    )
-                };
+                    .question_for_interaction(&interaction_id);
+                let text = submission_feedback(delivery.as_ref(), state.config.language);
                 let _ = interaction
                     .create_followup(
                         ctx,
@@ -1245,13 +1632,14 @@ pub(crate) async fn handle_modal(
         return respond_stale_modal(ctx, interaction, state).await;
     };
     let target = target_for_card(message.channel_id, message.id, interaction.guild_id);
-    let (question, envelope) = match stage_answer(state, interaction_id, answer, &target).await {
-        Ok(staged) => staged,
-        Err(error) => {
-            tracing::debug!(?error, "async question modal answer is stale");
-            return respond_stale_modal(ctx, interaction, state).await;
-        }
-    };
+    let (question, envelope, target) =
+        match stage_answer(state, interaction_id, answer, &target).await {
+            Ok(staged) => staged,
+            Err(error) => {
+                tracing::debug!(?error, "async question modal answer is stale");
+                return respond_stale_modal(ctx, interaction, state).await;
+            }
+        };
     if let Err(error) = interaction
         .create_response(
             ctx,
@@ -1263,49 +1651,27 @@ pub(crate) async fn handle_modal(
     {
         tracing::warn!(?error, "failed to acknowledge async question modal");
     }
-    match submit_staged_answer(state, &question, &envelope, target).await {
-        Ok(()) => {
-            interaction
-                .edit_response(
-                    ctx,
-                    EditInteractionResponse::new().content(state.config.language.text(
-                        "Answer submitted.",
-                        "답변을 제출했습니다.",
-                        "答案已提交。",
-                        "回答を送信しました。",
-                    )),
-                )
-                .await?;
-            Ok(())
-        }
-        Err(error) => {
-            let delivery = state
-                .async_questions
-                .lock()
-                .await
-                .question_for_interaction(interaction_id)
-                .map(|q| q.delivery);
-            let text = if delivery == Some(QuestionDelivery::AwaitingConfirmation) {
-                state.config.language.text(
-                    "Your answer is awaiting native confirmation. It has not been sent again.",
-                    "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
-                    "你的答案正在等待 Codex 确认，没有重复提交。",
-                    "回答は Codex の確認待ちです。再送信していません。",
-                )
-            } else {
-                state.config.language.text(
-                    "The answer could not be submitted. Try again from the question card.",
-                    "답변을 제출하지 못했습니다. 질문 카드에서 다시 시도하세요.",
-                    "无法提交答案。请在问题卡片上重试。",
-                    "回答を送信できませんでした。質問カードから再試行してください。",
-                )
-            };
-            interaction
-                .edit_response(ctx, EditInteractionResponse::new().content(text))
-                .await?;
-            Err(error)
-        }
+    refresh_answer_card(&ctx.http, state, &question).await;
+    let result = submit_staged_answer(state, &question, &envelope, target).await;
+    refresh_answer_card(&ctx.http, state, &question).await;
+    let delivery = state
+        .async_questions
+        .lock()
+        .await
+        .question_for_interaction(interaction_id);
+    interaction
+        .edit_response(
+            ctx,
+            EditInteractionResponse::new().content(submission_feedback(
+                delivery.as_ref(),
+                state.config.language,
+            )),
+        )
+        .await?;
+    if let Err(error) = result {
+        tracing::warn!(?error, "failed to submit async question modal answer");
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1421,6 +1787,10 @@ mod tests {
             .unwrap();
         assert!(store.pending().is_empty());
         assert_eq!(store.ready()[0].answer.as_deref(), Some("Another choice"));
+        assert_eq!(
+            store.ready()[0].failed_attempt.as_ref().unwrap().outcome,
+            FailedAnswerOutcome::Unconfirmed
+        );
     }
 
     #[test]
@@ -1586,6 +1956,547 @@ mod tests {
         for expected in ["Which environment?", "Staging", "Production", "직접"] {
             assert!(joined.contains(expected));
         }
+    }
+
+    fn record_pages(store: &mut AsyncQuestionStore, question: &PendingQuestion) -> usize {
+        let total = presentation_messages(question, Language::English).len();
+        for page in 0..total {
+            store
+                .record_presentation_message(&question.item_id, page, 100 + page as u64, total)
+                .unwrap();
+        }
+        store.finish_presentation(&question.item_id, total).unwrap();
+        total
+    }
+
+    #[test]
+    fn selecting_answer_replaces_first_card_and_removes_all_other_choice_pages() {
+        let long_choice = "Long selected option, 한글 中文 日本語 🙂 ".repeat(100);
+        assert!(long_choice.chars().count() > 2_000);
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert(
+                "call",
+                "thread",
+                "turn",
+                vec![
+                    AsyncQuestionInput {
+                        title: "Choose an answer".into(),
+                        options: Some(vec!["Short contrast".into(), long_choice.clone()]),
+                    },
+                    question(),
+                ],
+            )
+            .unwrap();
+        let q = store.pending()[0].clone();
+        let q2 = store.pending()[1].clone();
+        let original_pages = record_pages(&mut store, &q);
+        let q2_pages = presentation_messages(&q2, Language::English).len();
+        for page in 0..q2_pages {
+            store
+                .record_presentation_message(&q2.item_id, page, 10_000 + page as u64, q2_pages)
+                .unwrap();
+        }
+        store.finish_presentation(&q2.item_id, q2_pages).unwrap();
+        assert!(original_pages > 3);
+        let unchanged_q2 = store.question_for_interaction(&q2.interaction_id).unwrap();
+
+        // Simulate a page that still needs sending while older extra pages already exist.
+        store.requests[0].questions[0].presentation_message_ids[1] = None;
+        assert_eq!(
+            store.answer_option(&q.interaction_id, 1).unwrap(),
+            long_choice
+        );
+        let envelope = store.reply_envelope(&q.item_id).unwrap().unwrap();
+        let payload = envelope
+            .strip_prefix("<send_user_message_question_reply>\n")
+            .unwrap()
+            .strip_suffix("\n</send_user_message_question_reply>")
+            .unwrap();
+        let submitted: serde_json::Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(submitted[0]["answer"], long_choice);
+        assert_eq!(submitted[0]["questionItemId"], q.item_id);
+        store.reconcile_delivery(&q.item_id, QueueObservation::Accepted);
+
+        let completed = store.question_for_interaction(&q.interaction_id).unwrap();
+        let parts = presentation_messages(&completed, Language::English);
+        assert!(parts.len() > 1);
+        assert!(
+            parts
+                .iter()
+                .all(|part| part.content.chars().count() <= 2_000)
+        );
+        assert!(parts.iter().all(|part| {
+            presentation_components(part, &q.interaction_id, Language::English).is_empty()
+        }));
+        assert_eq!(
+            parts
+                .iter()
+                .map(|part| part.content.as_str())
+                .collect::<String>(),
+            long_choice
+        );
+        let updates = presentation_updates(&completed, parts.len());
+        let mut expected = vec![
+            PresentationUpdate::Edit {
+                page: 0,
+                message_id: 100,
+            },
+            PresentationUpdate::Send { page: 1 },
+        ];
+        expected.extend((2..original_pages).map(|page| PresentationUpdate::Delete {
+            page,
+            message_id: 100 + page as u64,
+        }));
+        assert_eq!(updates, expected);
+        let q2_card_ids: Vec<_> = store.requests[0].questions[1]
+            .presentation_message_ids
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
+        assert!(updates.iter().all(|update| match update {
+            PresentationUpdate::Edit { message_id, .. }
+            | PresentationUpdate::Delete { message_id, .. } => !q2_card_ids.contains(message_id),
+            PresentationUpdate::Send { .. } => true,
+        }));
+        let remaining_q2 = store.question_for_interaction(&q2.interaction_id).unwrap();
+        assert_eq!(remaining_q2, unchanged_q2);
+        assert!(
+            presentation_messages(&remaining_q2, Language::English)
+                .iter()
+                .any(|part| !part.options.is_empty())
+        );
+        assert!(store.answer_option(&q2.interaction_id, 0).is_ok());
+
+        let mut short_store = AsyncQuestionStore::default();
+        short_store
+            .insert(
+                "short-call",
+                "thread",
+                "turn",
+                vec![AsyncQuestionInput {
+                    title: "Choose an answer".into(),
+                    options: Some(vec!["Short contrast".into(), long_choice]),
+                }],
+            )
+            .unwrap();
+        let short_question = short_store.pending()[0].clone();
+        short_store
+            .answer_option(&short_question.interaction_id, 0)
+            .unwrap();
+        assert_eq!(
+            short_question.options.as_ref().unwrap()[0],
+            "Short contrast"
+        );
+        short_store.reconcile_delivery(&short_question.item_id, QueueObservation::Accepted);
+        let short_answer = short_store
+            .question_for_interaction(&short_question.interaction_id)
+            .unwrap();
+        let short_parts = presentation_messages(&short_answer, Language::English);
+        assert_eq!(short_parts.len(), 1);
+        assert_eq!(short_parts[0].content, "Short contrast");
+        assert!(
+            presentation_components(
+                &short_parts[0],
+                &short_question.interaction_id,
+                Language::English,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn freeform_answer_keeps_full_content_and_other_questions_remain_interactive() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question(), question()])
+            .unwrap();
+        let first = store.pending()[0].clone();
+        let other = store.pending()[1].clone();
+        record_pages(&mut store, &first);
+        let answer = "Long answer, 한글 中文 日本語 🙂\n".repeat(300);
+        store
+            .answer_freeform(&first.interaction_id, answer.clone())
+            .unwrap();
+        store.reconcile_delivery(&first.item_id, QueueObservation::Accepted);
+        let completed = store
+            .question_for_interaction(&first.interaction_id)
+            .unwrap();
+        for language in [
+            Language::English,
+            Language::Korean,
+            Language::Chinese,
+            Language::Japanese,
+        ] {
+            let parts = presentation_messages(&completed, language);
+            assert!(parts.len() > 3);
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|part| part.content.as_str())
+                    .collect::<String>(),
+                answer
+            );
+            assert!(
+                parts
+                    .iter()
+                    .all(|part| part.content.chars().count() <= 2_000
+                        && presentation_components(part, &first.interaction_id, language)
+                            .is_empty())
+            );
+            assert!(
+                presentation_updates(&completed, parts.len())
+                    .iter()
+                    .any(|update| matches!(update, PresentationUpdate::Send { .. }))
+            );
+        }
+        let remaining = store
+            .question_for_interaction(&other.interaction_id)
+            .unwrap();
+        assert_eq!(remaining, other);
+        let parts = presentation_messages(&remaining, Language::English);
+        assert!(parts.iter().any(|part| !part.options.is_empty()));
+        assert!(parts.iter().any(|part| part.freeform));
+        store.answer_option(&other.interaction_id, 0).unwrap();
+        assert_eq!(store.ready().len(), 1);
+        assert_eq!(store.ready()[0].item_id, other.item_id);
+    }
+
+    #[test]
+    fn queued_or_uncertain_answers_are_not_confirmed_and_rejection_restores_choices() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question(), question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        let q2 = store.pending()[1].clone();
+        record_pages(&mut store, &q);
+        store.answer_option(&q.interaction_id, 0).unwrap();
+        store
+            .record_reply_target(
+                &q.item_id,
+                StoredReplyTarget {
+                    channel_id: 77,
+                    message_id: 88,
+                    source_guild: Some(99),
+                },
+            )
+            .unwrap();
+        let unchanged_q2 = store.question_for_interaction(&q2.interaction_id).unwrap();
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Queued),
+            ReconcileResult::Queued
+        );
+        let queued = store.queued()[0].clone();
+        assert_eq!(queued.answer.as_deref(), Some("Staging"));
+        assert_eq!(
+            submission_feedback(Some(&queued), Language::English),
+            "Answer queued for Codex."
+        );
+        assert_eq!(
+            presentation_messages(&queued, Language::English)[0].content,
+            "Answer queued for Codex.\n\nStaging"
+        );
+        store
+            .find_item_mut(&q.item_id)
+            .unwrap()
+            .presentation_message_ids = vec![Some(100)];
+        store.finish_presentation(&q.item_id, 1).unwrap();
+        assert!(store.ready_reply_envelope().unwrap().is_none());
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Unknown),
+            ReconcileResult::AwaitingConfirmation
+        );
+        let uncertain = store.awaiting_confirmation()[0].clone();
+        assert!(
+            presentation_messages(&uncertain, Language::Korean)
+                .iter()
+                .all(
+                    |part| presentation_components(part, &q.interaction_id, Language::Korean)
+                        .is_empty()
+                )
+        );
+        assert!(
+            store
+                .answer_freeform(&q.interaction_id, "duplicate".into())
+                .is_err()
+        );
+        assert_eq!(
+            store.reconcile_delivery_with_detail(
+                &q.item_id,
+                QueueObservation::Rejected,
+                Some("expected turn mismatch".into()),
+            ),
+            ReconcileResult::ReleasedForRetry
+        );
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let reopened: AsyncQuestionStore = serde_json::from_slice(&bytes).unwrap();
+        let restored = reopened
+            .question_for_interaction(&q.interaction_id)
+            .unwrap();
+        let failed = restored.failed_attempt.as_ref().unwrap();
+        assert_eq!(failed.answer, "Staging");
+        assert_eq!(failed.reply_target.as_ref().unwrap().message_id, 88);
+        assert_eq!(failed.outcome, FailedAnswerOutcome::Rejected);
+        assert_eq!(failed.detail.as_deref(), Some("expected turn mismatch"));
+        let parts = presentation_messages(&restored, Language::English);
+        let rendered = parts
+            .iter()
+            .map(|part| part.content.as_str())
+            .collect::<String>();
+        assert!(rendered.contains("not accepted"));
+        assert!(rendered.contains("Staging"));
+        assert!(parts.iter().any(|part| part.freeform));
+        assert!(parts.iter().any(|part| !part.options.is_empty()));
+        assert!(
+            submission_feedback(Some(&restored), Language::English)
+                .contains("expected turn mismatch")
+        );
+        assert_eq!(
+            reopened
+                .question_for_interaction(&q2.interaction_id)
+                .unwrap(),
+            unchanged_q2
+        );
+        assert_eq!(
+            presentation_updates(&restored, parts.len())[0],
+            PresentationUpdate::Edit {
+                page: 0,
+                message_id: 100
+            }
+        );
+        store
+            .answer_freeform(&q.interaction_id, "Retry answer".into())
+            .unwrap();
+        assert_eq!(store.ready()[0].answer.as_deref(), Some("Retry answer"));
+    }
+
+    #[test]
+    fn missing_queue_record_preserves_answer_and_reports_unconfirmed_not_rejected() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("missing-call", "thread", "turn", vec![question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        store
+            .answer_freeform(&q.interaction_id, "Keep this exact answer".into())
+            .unwrap();
+        store
+            .record_reply_target(
+                &q.item_id,
+                StoredReplyTarget {
+                    channel_id: 21,
+                    message_id: 34,
+                    source_guild: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Missing),
+            ReconcileResult::ReleasedForRetry
+        );
+
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let reopened: AsyncQuestionStore = serde_json::from_slice(&bytes).unwrap();
+        let pending = reopened
+            .question_for_interaction(&q.interaction_id)
+            .unwrap();
+        let failed = pending.failed_attempt.as_ref().unwrap();
+        assert_eq!(failed.answer, "Keep this exact answer");
+        assert_eq!(failed.reply_target.as_ref().unwrap().message_id, 34);
+        assert_eq!(failed.outcome, FailedAnswerOutcome::Missing);
+        assert!(failed.detail.is_none());
+        let feedback = submission_feedback(Some(&pending), Language::English);
+        assert!(feedback.contains("no matching native queue record"));
+        assert!(!feedback.contains("rejected"));
+    }
+
+    #[test]
+    fn interrupted_card_update_recovers_without_replaying_accepted_answer() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question(), question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        let q2 = store.pending()[1].clone();
+        record_pages(&mut store, &q);
+        let q2_page_count = presentation_messages(&q2, Language::English).len();
+        for page in 0..q2_page_count {
+            store
+                .record_presentation_message(&q2.item_id, page, 10_000 + page as u64, q2_page_count)
+                .unwrap();
+        }
+        store
+            .finish_presentation(&q2.item_id, q2_page_count)
+            .unwrap();
+        let unchanged_q2 = store.question_for_interaction(&q2.interaction_id).unwrap();
+
+        store.answer_option(&q.interaction_id, 0).unwrap();
+        let target = StoredReplyTarget {
+            channel_id: 77,
+            message_id: 88,
+            source_guild: Some(99),
+        };
+        store
+            .record_reply_target(&q.item_id, target.clone())
+            .unwrap();
+        store.reconcile_delivery(&q.item_id, QueueObservation::Accepted);
+        // Discord edited page zero and deleted page one before the worker stopped.
+        store
+            .find_item_mut(&q.item_id)
+            .unwrap()
+            .presentation_message_ids[1] = None;
+
+        let bytes = serde_json::to_vec(&store).unwrap();
+        let mut recovered: AsyncQuestionStore = serde_json::from_slice(&bytes).unwrap();
+        let dirty = recovered.presentation_pending_for_thread("thread");
+        assert_eq!(dirty.len(), 1);
+        assert_eq!(dirty[0].delivery, QuestionDelivery::Sent);
+        assert_eq!(dirty[0].item_id, q.item_id);
+        assert_eq!(dirty[0].interaction_id, q.interaction_id);
+        assert_eq!(dirty[0].answer.as_deref(), Some("Staging"));
+        assert_eq!(dirty[0].reply_target, Some(target.clone()));
+        assert_eq!(
+            recovered
+                .question_for_interaction(&q2.interaction_id)
+                .unwrap(),
+            unchanged_q2
+        );
+        assert!(recovered.answer_option(&q.interaction_id, 1).is_err());
+        assert!(recovered.ready_reply_envelope().unwrap().is_none());
+        assert_eq!(
+            presentation_updates(&dirty[0], 1),
+            vec![
+                PresentationUpdate::Edit {
+                    page: 0,
+                    message_id: 100
+                },
+                PresentationUpdate::Delete {
+                    page: 2,
+                    message_id: 102
+                },
+            ]
+        );
+
+        recovered
+            .find_item_mut(&q.item_id)
+            .unwrap()
+            .presentation_message_ids[2] = None;
+        recovered.finish_presentation(&q.item_id, 1).unwrap();
+        let complete_bytes = serde_json::to_vec(&recovered).unwrap();
+        let mut complete: AsyncQuestionStore = serde_json::from_slice(&complete_bytes).unwrap();
+        assert!(
+            complete
+                .presentation_pending_for_thread("thread")
+                .is_empty()
+        );
+        let accepted = complete
+            .question_for_interaction(&q.interaction_id)
+            .unwrap();
+        assert_eq!(accepted.delivery, QuestionDelivery::Sent);
+        assert_eq!(accepted.item_id, q.item_id);
+        assert_eq!(accepted.answer.as_deref(), Some("Staging"));
+        assert_eq!(accepted.reply_target, Some(target));
+        assert_eq!(
+            complete
+                .question_for_interaction(&q2.interaction_id)
+                .unwrap(),
+            unchanged_q2
+        );
+        assert!(complete.answer_option(&q.interaction_id, 1).is_err());
+        assert!(complete.ready_reply_envelope().unwrap().is_none());
+    }
+
+    #[test]
+    fn replacing_card_id_does_not_forget_other_pages_and_answer_targets_retained_card() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        record_pages(&mut store, &q);
+        store
+            .record_presentation_message(&q.item_id, 0, 200, 1)
+            .unwrap();
+        let current = store.question_for_interaction(&q.interaction_id).unwrap();
+        assert_eq!(
+            current.presentation_message_ids,
+            vec![Some(200), Some(101), Some(102)]
+        );
+        assert!(!current.presentation_sent);
+        let clicked = target_for_card(ChannelId::new(50), serenity::all::MessageId::new(102), None);
+        let target = answer_target(&current, &clicked);
+        assert_eq!(target.message_id.get(), 200);
+        assert_eq!(target.channel_id, clicked.channel_id);
+    }
+
+    #[test]
+    fn legacy_state_and_inflight_recovery_preserve_question_identity() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        store.answer_option(&q.interaction_id, 0).unwrap();
+        store.active_submissions.insert(q.item_id.clone());
+        assert!(store.recoverable_answers().is_empty());
+        let mut saved = serde_json::to_value(&store).unwrap();
+        assert!(saved.get("active_submissions").is_none());
+        saved["requests"][0]["questions"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("presentation_delivery");
+        let recovered: AsyncQuestionStore = serde_json::from_value(saved).unwrap();
+        assert!(recovered.active_submissions.is_empty());
+        assert_eq!(recovered.recoverable_answers().len(), 1);
+        assert_eq!(recovered.ready()[0].interaction_id, q.interaction_id);
+        assert!(recovered.ready()[0].presentation_delivery.is_none());
+        assert_eq!(
+            recovered.ready_reply_envelope().unwrap(),
+            store.ready_reply_envelope().unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_sent_queue_is_reconciled_without_replaying_missing_records() {
+        let mut store = AsyncQuestionStore::default();
+        store
+            .insert("call", "thread", "turn", vec![question()])
+            .unwrap();
+        let q = store.pending()[0].clone();
+        store.answer_option(&q.interaction_id, 0).unwrap();
+        store
+            .record_reply_target(
+                &q.item_id,
+                StoredReplyTarget {
+                    channel_id: 40,
+                    message_id: 100,
+                    source_guild: None,
+                },
+            )
+            .unwrap();
+        store.mark_sent(&q.item_id).unwrap();
+        assert_eq!(store.recoverable_answers().len(), 1);
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Missing),
+            ReconcileResult::Unchanged
+        );
+        assert!(store.ready_reply_envelope().unwrap().is_none());
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Queued),
+            ReconcileResult::Queued
+        );
+        assert_eq!(store.queued()[0].answer.as_deref(), Some("Staging"));
+        assert_eq!(
+            store.reconcile_delivery(&q.item_id, QueueObservation::Accepted),
+            ReconcileResult::MarkedSent
+        );
+        store
+            .record_presentation_message(&q.item_id, 0, 100, 1)
+            .unwrap();
+        store.finish_presentation(&q.item_id, 1).unwrap();
+        assert!(store.recoverable_answers().is_empty());
     }
 
     #[test]

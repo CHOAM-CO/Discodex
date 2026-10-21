@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Talk in Discord and keep the same context.</strong><br />
-  A Rust bridge connecting text and voice to an ongoing conversation with the official Codex app-server.
+  A Rust bridge connecting Discord to a persistent conversation, powered by a bundled Codex fork.
 </p>
 
 <p align="center">English · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a></p>
@@ -13,7 +13,9 @@
 
 ---
 
-Discodex connects one Discord app profile to one persistent conversation with the official Codex app-server. Text and voice share the conversation. Codex handles task decisions and tool execution.
+Discodex connects one Discord app profile to one persistent conversation. Text and voice share Codex context; an optional Antigravity CLI backend supports text conversations. The bundled Codex fork manages native tasks and subagents.
+
+This page describes the 1.0 source tree. Downloadable binaries follow the published release tags.
 
 ## Features
 
@@ -36,7 +38,7 @@ Discodex connects one Discord app profile to one persistent conversation with th
 
 ## Getting started
 
-Download `discodex-installers.zip` from the [latest release](https://github.com/CHOAM-CO/Discodex/releases/latest), extract it, and open the extracted folder in a terminal. Installers download the prebuilt executable for your operating system and architecture. Client installation does not require Rust, Cargo, Git, or build tools.
+Download `discodex-installers.zip` from the [latest release](https://github.com/CHOAM-CO/Discodex/releases/latest), extract it, and open the extracted folder in a terminal. Installers download the prebuilt worker and matching managed Codex runtime for your operating system and architecture. Choose an existing Codex data home to share account, memory and history (recommended when found), or a separate home for Discodex. Shared Codex settings are preserved. Client installation does not require Rust, Cargo, Git, or build tools.
 
 On macOS or Linux, run:
 
@@ -56,29 +58,29 @@ Setup connects the Codex app-server and Discord bot, configures a profile, and r
 
 ## Custom and local models
 
-The primary and subagent pickers use the active provider catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. **Default subagent model** is saved as a Discodex-owned override and applies after a worker restart. See [Custom and local Codex providers](docs/installation.md#custom-and-local-codex-providers) for examples and discovery details.
+The main-model and **Default subagent model** pickers include the native catalog and explicitly configured provider/model pairs. The bundled fork allows a child to use a different provider from its parent. Saved child defaults are loaded on the next thread creation or resume, including after a worker restart. The current thread keeps its effective settings until resumed; existing children and the parent conversation remain intact. Codex still owns provider authentication and model capabilities. See the [provider guide](docs/installation.md#custom-and-local-codex-providers).
+
+Provider history compatibility uses independent `encrypted_content` and `agent_messages` capabilities. Outbound conversion preserves readable context and leaves saved history untouched; see [history compatibility](docs/design.md#provider-changes-and-encrypted-history).
+
+Antigravity preferences apply on the next model selection or AGY session start; native process feature switches require a worker restart. Enable **Antigravity** in Settings to discover exact model IDs and labels through the installed CLI’s `agy models` command for both pickers; manually entered IDs supplement that list. Effort choices come from CLI `--help`, without model-name guesses or remapping. Catalog failures are shown in settings, and an explicitly requested unsupported effort is passed through so the CLI can report its error. Discodex uses a separately installed AGY CLI and its existing subscription login, not the SDK. AGY executes its overlapping built-in tools; additional Discord and task tools connect through MCP. Subagent lifecycle remains with the Codex fork. Each response starts a fresh CLI execution with native conversation and visible tool-result context; private AGY state is not resumed. AGY voice is not supported.
 
 ## Updating
 
-Use the updater from the installer bundle with the existing profile config:
+Run `/discodex update` to check immediately. The **Update / Cancel** confirmation explains that applying an update interrupts active work, including subagents, and ends voice. Confirmation applies the release without an idle queue. Completion or failure is posted in the home channel after restart; interrupted responses are not automatically restarted, and no resume prompt or empty-input continuation is inserted.
+
+Automatic checks run every six hours, retry failures after 15 minutes, and show notices after five minutes of inactivity. Notices offer **Update**, **Skip this version**, and **Never notify again**. These timing rules control notices, not an update you confirm.
+
+For a manual update, use the installer bundle:
 
 ```sh
 ./update --config "<path-to-existing-config.json>"
 ```
 
-On Windows PowerShell:
-
 ```powershell
 ./scripts/update.ps1 -Config "<path-to-existing-config.json>"
 ```
 
-The updater downloads the matching prebuilt release executable, verifies its SHA-256 digest, and applies it to the profile named by `--config`. The Discord Update button uses the same release assets. Client machines do not need Git, Cargo, or a compiler. `./install --update --config ...` and `./scripts/install.ps1 -Update -Config ...` are aliases.
-
-Release checks use the persisted last-check timestamp: every six hours after success and every 15 minutes after failure. The first check is due immediately; due checks run through a 15-second loop and wake notifications. A notice appears only while the native connection is available and after five continuous minutes with no active turn, voice call or teardown, pending approval or input, message handling, or output delivery. Discovery adds no wait when the worker has already met that idle condition. **Update** applies the selected release, **Skip this version** suppresses that release, and **Never notify again** disables notices for that profile. Re-enable notices in `/discodex settings`.
-
-Profiles on versions older than v0.1.3 need a one-time manual update from the installer bundle to install the self-updater. This update preserves the existing session and settings. Afterward, Discord release updates are available from the notice buttons.
-
-`/discodex update` preserves any queued, preparing, ready, or applying target. Only when no target is pending does it force a latest-release check, even before the six-hour interval is due, then queue the same verified updater used by the notice button. It creates no Codex turn and waits for the normal five-minute idle condition without interrupting work or voice. It works when notices are muted or a version was skipped, without changing those preferences. Existing targets stay pinned; a failed pinned target is retried without a fresh GitHub check. The command reports when the profile is current, no platform asset is available, or an error occurs.
+The updater downloads the worker and its matching prebuilt Codex package. Its manifest binds the worker version, fork commit, platform and checksums. It stages the runtime and replaces only the selected profile's owned files. On replacement or restart failure, the updater attempts to restore the previous worker, profile configuration, runtime references, ownership record, and service state. If a required recovery step fails, dependent steps stop and the cause is reported; a mixed installation is not restarted. Unused staged runtimes are cleaned up after any required service recovery, and cleanup failures are also reported. Codex home, account, memory, history and profile settings stay in place. Existing 0.1.x self-updaters retain the same executable asset names and helper entrypoint; installations before 0.1.3 need the manual script first. Client machines do not compile source.
 
 ## Discord commands
 
@@ -93,7 +95,7 @@ Profiles on versions older than v0.1.3 need a one-time manual update from the in
 | Check for and apply updates | `/discodex update` |
 | Start a new conversation | `/discodex new` |
 
-The settings panel offers supported models, reasoning effort, service tier, permission profile, input delivery, voice profile, and release notices. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel.
+The settings panel offers the main model, default subagent model, reasoning effort, service tier, permission profile, approval policy, input delivery, voice profile, and release notices. Approval defaults to **on-request**, independently of the permission profile. **Advanced settings** contains detailed native feature switches; it does not repeat the subagent-model picker. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel. Approval choices are saved per profile in `native-features.json`; they do not overwrite shared Codex configuration.
 
 Leaving voice disconnects the call while keeping the persistent conversation. Use `/discodex new` to start a different conversation.
 

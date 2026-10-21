@@ -1,5 +1,6 @@
 //! Discord-owned update notifications. No notification becomes a Codex turn.
 use crate::{
+    commands::split_discord_content,
     discord::{BridgeState, QueueDelivery},
     i18n::Language,
     install::updates::{self, UpdateSnapshot, UpdateStatus, UpdateStore},
@@ -14,6 +15,7 @@ use serenity::{
     builder::{CreateAllowedMentions, CreateMessage, EditMessage},
     http::Http,
 };
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -1036,41 +1038,83 @@ fn result_message(
             "Update complete. Discodex has restarted; your session and settings were preserved.",
             "업데이트 완료. Discodex가 재시작됐으며 세션과 설정을 유지했습니다.",
             "更新完成。Discodex 已重启，会话和设置已保留。",
-            "更新完了。Discodex が再起動し、セッションと設定は保持されています。"),
+            "更新完了。Discodex が再起動し、セッションと設定は保持されています。",
+        ),
         UpdateStatus::Failed => language.text(
-            "Update failed. Run /discodex update to retry. Your session and settings are preserved.",
-            "업데이트에 실패했습니다. /discodex update로 다시 시도할 수 있습니다. 세션과 설정은 유지됩니다.",
-            "更新失败。可运行 /discodex update 重试。会话和设置已保留。",
-            "更新に失敗しました。/discodex update で再試行できます。セッションと設定は保持されています。"),
+            "Update failed. Run /discodex update to retry.",
+            "업데이트에 실패했습니다. /discodex update로 다시 시도할 수 있습니다.",
+            "更新失败。可运行 /discodex update 重试。",
+            "更新に失敗しました。/discodex update で再試行できます。",
+        ),
         _ => return None,
     };
-    Some((
-        token.clone(),
-        format!("**Discodex {}**\n{status}", result.version),
-    ))
+    let mut content = format!("**Discodex {}**\n{status}", result.version);
+    if snapshot.status == UpdateStatus::Failed
+        && let Some(error) = &snapshot.last_error
+    {
+        content.push_str("\n\n");
+        content.push_str(error);
+    }
+    Some((token.clone(), content))
+}
+
+fn result_message_pages(token: &str, content: &str) -> Vec<CreateMessage> {
+    split_discord_content(content)
+        .into_iter()
+        .enumerate()
+        .map(|(page, content)| {
+            let nonce = if page == 0 {
+                token.chars().filter(|c| *c != '-').take(24).collect()
+            } else {
+                format!("{:x}", Sha256::digest(format!("{token}:{page}")))
+                    .chars()
+                    .take(24)
+                    .collect()
+            };
+            CreateMessage::new()
+                .content(content)
+                .allowed_mentions(mentions())
+                .nonce(serenity::all::Nonce::String(nonce))
+                .enforce_nonce(true)
+        })
+        .collect()
+}
+
+async fn deliver_result_with<F, Fut>(
+    snapshot: &UpdateSnapshot,
+    language: Language,
+    current_commit: &str,
+    mut send: F,
+) -> Result<Option<String>>
+where
+    F: FnMut(CreateMessage) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let Some((token, content)) = result_message(snapshot, language, current_commit) else {
+        return Ok(None);
+    };
+    for message in result_message_pages(&token, &content) {
+        send(message).await?;
+    }
+    Ok(Some(token))
 }
 
 async fn deliver_result(state: &BridgeState, http: &Http) -> Result<()> {
     let mut store = state.updates.store.lock().await;
-    let Some((token, content)) = result_message(
+    let channel = ChannelId::new(state.config.home_channel_id);
+    let Some(token) = deliver_result_with(
         &store.snapshot(),
         state.config.language,
         updates::current_build_commit(),
-    ) else {
+        |message| async move {
+            channel.send_message(http, message).await?;
+            Ok(())
+        },
+    )
+    .await?
+    else {
         return Ok(());
     };
-    ChannelId::new(state.config.home_channel_id)
-        .send_message(
-            http,
-            CreateMessage::new()
-                .content(content)
-                .allowed_mentions(mentions())
-                .nonce(serenity::all::Nonce::String(
-                    token.chars().filter(|c| *c != '-').take(24).collect(),
-                ))
-                .enforce_nonce(true),
-        )
-        .await?;
     store.record_result_notified(&token)?;
     Ok(())
 }
@@ -1094,18 +1138,12 @@ async fn interrupt_owned_turns(state: &BridgeState) {
     }
     drop(current);
 
-    let requests = turns.into_iter().map(|(thread_id, turn_id)| async move {
-        let result = tokio::time::timeout(
-            INTERRUPT_TIMEOUT,
-            state.native.request(
-                "turn/interrupt",
-                serde_json::json!({"threadId": thread_id, "turnId": turn_id}),
-            ),
-        )
-        .await;
-        (thread_id, turn_id, result)
-    });
-    for (thread_id, turn_id, result) in futures_util::future::join_all(requests).await {
+    for (thread_id, turn_id, result) in
+        request_turn_interruptions(&turns, INTERRUPT_TIMEOUT, |method, params| {
+            state.native.request(method, params)
+        })
+        .await
+    {
         match result {
             Ok(Ok(_)) => {
                 tracing::info!(%thread_id, %turn_id, "requested active turn interruption for update")
@@ -1118,6 +1156,40 @@ async fn interrupt_owned_turns(state: &BridgeState) {
             }
         }
     }
+}
+
+type TurnInterruption = (
+    String,
+    String,
+    std::result::Result<Result<serde_json::Value>, tokio::time::error::Elapsed>,
+);
+
+/// Each request retains its native result or deadline error. Neither prevents
+/// the caller from handing off the already-confirmed update afterwards.
+async fn request_turn_interruptions<F, Fut>(
+    turns: &HashMap<String, String>,
+    timeout: Duration,
+    request: F,
+) -> Vec<TurnInterruption>
+where
+    F: Fn(&'static str, serde_json::Value) -> Fut,
+    Fut: std::future::Future<Output = Result<serde_json::Value>>,
+{
+    let requests = turns.iter().map(|(thread_id, turn_id)| {
+        let request = &request;
+        async move {
+            let result = tokio::time::timeout(
+                timeout,
+                request(
+                    "turn/interrupt",
+                    serde_json::json!({"threadId": thread_id, "turnId": turn_id}),
+                ),
+            )
+            .await;
+            (thread_id.clone(), turn_id.clone(), result)
+        }
+    });
+    futures_util::future::join_all(requests).await
 }
 
 pub(crate) async fn run(
@@ -1338,6 +1410,75 @@ pub(crate) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn update_interrupts_main_and_children_and_returns_all_failures() {
+        let turns = HashMap::from([
+            ("main".to_owned(), "main-turn".to_owned()),
+            ("child-refused".to_owned(), "refused-turn".to_owned()),
+            ("child-waiting".to_owned(), "waiting-turn".to_owned()),
+        ]);
+        let before = turns.clone();
+        let calls = SyncMutex::new(Vec::new());
+        let results =
+            request_turn_interruptions(&turns, Duration::from_millis(1), |method, params| {
+                calls.lock().unwrap().push((method, params.clone()));
+                async move {
+                    match params["threadId"].as_str().unwrap() {
+                        "main" => Ok(serde_json::json!({})),
+                        "child-refused" => Err(anyhow::anyhow!("native interrupt refusal")),
+                        "child-waiting" => std::future::pending().await,
+                        other => panic!("unexpected interruption target {other}"),
+                    }
+                }
+            })
+            .await;
+        let mut results: HashMap<_, _> = results
+            .into_iter()
+            .map(|(thread, turn, result)| (thread, (turn, result)))
+            .collect();
+        let (turn, result) = results.remove("main").unwrap();
+        assert_eq!(turn, "main-turn");
+        assert_eq!(result.unwrap().unwrap(), serde_json::json!({}));
+        let (turn, result) = results.remove("child-refused").unwrap();
+        assert_eq!(turn, "refused-turn");
+        assert_eq!(
+            result.unwrap().unwrap_err().to_string(),
+            "native interrupt refusal"
+        );
+        let (turn, result) = results.remove("child-waiting").unwrap();
+        assert_eq!(turn, "waiting-turn");
+        assert!(result.is_err());
+        assert!(results.is_empty());
+        assert_eq!(turns, before);
+        let mut actual = calls.lock().unwrap().clone();
+        actual.sort_by_key(|(_, params)| params["threadId"].as_str().unwrap().to_owned());
+        assert_eq!(
+            actual,
+            vec![
+                (
+                    "turn/interrupt",
+                    serde_json::json!({"threadId":"child-refused", "turnId":"refused-turn"})
+                ),
+                (
+                    "turn/interrupt",
+                    serde_json::json!({"threadId":"child-waiting", "turnId":"waiting-turn"})
+                ),
+                (
+                    "turn/interrupt",
+                    serde_json::json!({"threadId":"main", "turnId":"main-turn"})
+                ),
+            ]
+        );
+        let idle = request_turn_interruptions(&HashMap::new(), Duration::ZERO, |method, params| {
+            calls.lock().unwrap().push((method, params));
+            std::future::ready(Ok(serde_json::json!({})))
+        })
+        .await;
+        assert!(idle.is_empty());
+        assert_eq!(calls.lock().unwrap().len(), 3);
+    }
+
     #[test]
     fn old_or_equal_selected_version_is_not_newer_than_installed() {
         assert_eq!(version_is_newer("v0.1.11", "0.1.12"), Some(false));
@@ -1593,6 +1734,134 @@ mod tests {
         store.mark_applied(9).unwrap();
         let (second, _) = result_message(&store.snapshot(), Language::English, "commit-9").unwrap();
         assert_ne!(first, second);
+    }
+
+    fn failed_result_snapshot(error: Option<String>) -> UpdateSnapshot {
+        UpdateSnapshot {
+            status: UpdateStatus::Failed,
+            last_result: Some(pinned_release(9)),
+            last_error: error,
+            result_notification_id: Some("11111111-2222-4333-8444-555555555555".into()),
+            ..UpdateSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn failed_result_preserves_actual_rollback_outcome_in_every_language() {
+        for error in [
+            Some(
+                "update failed; previous worker and service state were restored: candidate start failed",
+            ),
+            Some(
+                "update failed (candidate start failed); rollback incomplete (profile runtime restore failed: read-only filesystem)",
+            ),
+            None,
+        ] {
+            let snapshot = failed_result_snapshot(error.map(str::to_owned));
+            let before = snapshot.clone();
+            for (language, status) in [
+                (
+                    Language::English,
+                    "Update failed. Run /discodex update to retry.",
+                ),
+                (
+                    Language::Korean,
+                    "업데이트에 실패했습니다. /discodex update로 다시 시도할 수 있습니다.",
+                ),
+                (
+                    Language::Chinese,
+                    "更新失败。可运行 /discodex update 重试。",
+                ),
+                (
+                    Language::Japanese,
+                    "更新に失敗しました。/discodex update で再試行できます。",
+                ),
+            ] {
+                let (token, content) = result_message(&snapshot, language, "old").unwrap();
+                let detail = error
+                    .map(|error| format!("\n\n{error}"))
+                    .unwrap_or_default();
+                assert_eq!(content, format!("**Discodex 9.0.0**\n{status}{detail}"));
+                assert_eq!(Some(token), snapshot.result_notification_id);
+                assert_eq!(snapshot, before);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn result_delivery_retries_stable_pages_and_completes_only_after_all_pages() {
+        let snapshot = failed_result_snapshot(Some(format!(
+            "update failed (candidate start failed); rollback incomplete:\n{}",
+            "복원错误🙂\n".repeat(1_400),
+        )));
+        let before = snapshot.clone();
+        let (token, content) = result_message(&snapshot, Language::English, "old").unwrap();
+        let mut partial = Vec::new();
+        let failure = deliver_result_with(&snapshot, Language::English, "old", |message| {
+            partial.push(serde_json::to_value(message).unwrap());
+            std::future::ready(if partial.len() == 2 {
+                Err(anyhow::anyhow!("second page delivery failed"))
+            } else {
+                Ok(())
+            })
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(failure.to_string(), "second page delivery failed");
+        assert_eq!(partial.len(), 2);
+        assert_eq!(snapshot, before);
+        assert_eq!(snapshot.result_notified_id, None);
+
+        let mut delivered = Vec::new();
+        let complete = deliver_result_with(&snapshot, Language::English, "old", |message| {
+            delivered.push(serde_json::to_value(message).unwrap());
+            std::future::ready(Ok(()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(complete.as_deref(), Some(token.as_str()));
+        assert!(delivered.len() > 2);
+        assert_eq!(&delivered[..partial.len()], partial.as_slice());
+        let chunks = delivered
+            .iter()
+            .map(|page| page["content"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 2_000));
+        assert_eq!(chunks.concat(), content);
+        let nonces = delivered
+            .iter()
+            .map(|page| {
+                assert_eq!(page["enforce_nonce"], true);
+                let nonce = page["nonce"].as_str().unwrap();
+                assert!(nonce.len() <= 25);
+                nonce
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(nonces.len(), delivered.len());
+        assert_eq!(
+            delivered[0]["nonce"],
+            token
+                .chars()
+                .filter(|c| *c != '-')
+                .take(24)
+                .collect::<String>()
+        );
+        for page in result_message_pages("66666666-7777-4888-8999-000000000000", &content) {
+            let page = serde_json::to_value(page).unwrap();
+            assert!(!nonces.contains(page["nonce"].as_str().unwrap()));
+        }
+        assert_eq!(snapshot, before);
+
+        let mut notified = snapshot;
+        notified.result_notified_id = complete;
+        assert_eq!(
+            deliver_result_with(&notified, Language::English, "old", |_| {
+                std::future::ready(Err(anyhow::anyhow!("already notified")))
+            })
+            .await
+            .unwrap(),
+            None
+        );
     }
 
     #[test]

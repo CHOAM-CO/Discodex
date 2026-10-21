@@ -146,6 +146,7 @@ mod tests {
         assert_eq!(store.load().unwrap().model_selection, None);
 
         let selection = ModelSelection {
+            executor: crate::model_catalog::ModelExecutor::Codex,
             provider: "local-provider".to_owned(),
             model: "local-model".to_owned(),
         };

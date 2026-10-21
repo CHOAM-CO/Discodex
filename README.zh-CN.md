@@ -1,9 +1,11 @@
 <p align="center"><img src="docs/assets/discodex-banner.png" alt="Discodex — 文字与语音对话" width="960" /></p>
-<p align="center"><strong>在 Discord 中交谈，并延续同一上下文。</strong><br />将文字和语音连接到官方 Codex app-server 持久对话的 Rust 桥接程序。</p>
+<p align="center"><strong>在 Discord 中交谈，并延续同一上下文。</strong><br />随附受管理的 Codex 分支，将 Discord 连接到持久对话的 Rust 桥接程序。</p>
 <p align="center"><a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · 简体中文 · <a href="README.ja.md">日本語</a></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="docs/installation.zh-CN.md">安装指南</a> · <a href="docs/design.zh-CN.md">产品设计</a></p>
 
-Discodex 将一个 Discord 应用配置连接到官方 Codex app-server 的一个持久 thread。文字和语音共用该对话；任务判断和工具执行由 Codex 负责。
+Discodex 将一个 Discord 应用配置连接到一个持久对话。文字和语音共享 Codex 上下文，也可选择 Antigravity CLI 进行文字对话。原生任务和子智能体生命周期由随附的 Codex 分支管理。
+
+本页描述 1.0 源码。下载的二进制文件以已发布的版本标签为准。
 
 ## 功能
 
@@ -26,7 +28,7 @@ Discodex 将一个 Discord 应用配置连接到官方 Codex app-server 的一�
 
 ## 快速开始
 
-从[最新发行版](https://github.com/CHOAM-CO/Discodex/releases/latest)下载 `discodex-installers.zip`，解压并在该目录运行。安装脚本会下载适合当前操作系统和架构的预编译程序，无需安装 Rust、Cargo 或 Git 客户端。
+从[最新发行版](https://github.com/CHOAM-CO/Discodex/releases/latest)下载 `discodex-installers.zip`，解压并在该目录运行。安装脚本下载对应平台的 worker 和匹配的 Codex 运行时，无需 Rust、Cargo 或 Git。可以选择现有 Codex 数据目录共享账户、记忆和历史（检测到时推荐），或选择 Discodex 独立目录；共享设置不会被覆盖。
 
 Linux/macOS：
 
@@ -46,31 +48,33 @@ Windows PowerShell：
 
 ## 自定义与本地模型
 
-主模型和 subagent 选择器使用当前 provider catalog 以及 worker 有效配置中的模型，包括默认、subagent、安装和当前 thread 模型。**默认 subagent 模型**作为 Discodex 所有的覆盖项保存，并在 worker 重启后生效。配置示例和发现方式请参阅[自定义与本地 Codex provider](docs/installation.zh-CN.md#自定义与本地-codex-provider)。
+主模型和**默认子智能体模型**列出原生目录与明确配置的提供商/模型。随附分支允许子智能体使用不同于父会话的提供商。保存的子智能体默认值在下次创建或恢复线程时读取，包括 worker 重启后的恢复。当前线程在恢复前保持其有效设置；现有子会话的设置和父会话均保留。提供商认证与模型能力仍由 Codex 处理。示例见[提供商指南](docs/installation.zh-CN.md#自定义与本地-codex-provider)。
+
+历史兼容性由独立的 `encrypted_content` 与 `agent_messages` 控制。发送时保留可读上下文，保存的原始历史不变；详见[历史兼容性](docs/design.zh-CN.md#提供商切换与加密历史)。
+
+Antigravity 设置在下次模型选择或 AGY 会话启动时生效；原生进程功能开关需要重启 worker。在设置中启用 **Antigravity** 后，从已安装 CLI 的 `agy models` 读取准确的模型 ID 和名称，显示在两处选择器中；手动填写的 ID 用于补充列表。推理强度来自 CLI 的 `--help`，不按模型名称猜测或映射。列表读取失败会在设置中显示，明确指定的不受支持强度也会原样传给 CLI，由其返回错误。Discodex 使用单独安装的 AGY CLI 及其现有订阅登录，不使用 SDK。重叠的内置工具由 AGY 执行，额外的 Discord 和任务工具通过 MCP 连接；子智能体管理由 Codex 分支负责。每次响应启动新 CLI 并传入原生对话和可见工具结果，不恢复 AGY 私有状态。不支持 AGY 语音。
 
 ## 更新
 
-使用发行包中的更新脚本，并指定现有配置文件：
+`/discodex update` 会立即检查最新版本。**更新 / 取消**确认页面说明更新将中断当前工作（包括子智能体）并结束语音。确认后直接应用，无需空闲队列；重启后在主页频道报告完成或失败，不会自动重新启动已中断的响应，也不会插入恢复提示或空输入。
+
+自动检查成功后间隔 6 小时，失败后 15 分钟重试；空闲 5 分钟后显示通知，提供**更新**、**跳过此版本**、**不再通知**。这些时间条件只控制通知，不会延迟已确认的更新。
+
+手动更新使用安装包中的脚本：
 
 ```sh
 ./update --config "<path-to-existing-config.json>"
 ```
 
-Windows PowerShell：
-
 ```powershell
 ./scripts/update.ps1 -Config "<path-to-existing-config.json>"
 ```
 
-更新程序会下载并校验对应平台的正式发行版预编译程序，然后只更新 `--config` 指定的配置。Discord 内更新通知也使用相同的预编译程序。更新会保留配置语言、设置、凭据和持久 Codex 对话状态；若替换产品拥有的二进制或重启服务失败，会尝试恢复旧二进制、所有权记录和服务状态。若要更新低于 v0.1.3 的旧版本，首次请从发行包下载并运行新版更新脚本。`./install --update --config ...` 与 `./scripts/install.ps1 -Update -Config ...` 也会调用相同更新流程。
-
-若尚无上次检查记录，则立即执行首次正式 Release 检查；此后按照持久化的上次检查时间，在到期后再检查。检查循环约每 15 秒轮询一次是否到期；成功检查间隔为 6 小时，检查出错后 15 分钟重试。worker 重启遵循已保存的检查时间，不会强制立即检查。通知另有空闲条件：原生连接必须在线，且没有活动 turn、语音通话或清理、待处理批准、未处理输入、消息处理或输出发送；满足这些条件并已空闲至少 5 分钟后，才在主页频道提示。发现更新时若已空闲，不会再额外等待 5 分钟。
-
-`/discodex update` 若已有 queued、preparing、ready 或 applying 目标，则继续处理该目标。只有没有待处理目标时，才会立即检查最新 Release（不受 6 小时检查间隔限制），并排队使用通知按钮相同的已验证 updater。它不会创建 Codex turn，也不会中断工作或语音，而是等待现有的 5 分钟空闲条件。即使通知已静音或该版本已跳过，仍可使用此命令，且不会更改这些偏好。目标会保持固定；失败的固定目标无需重新查询 GitHub 即会重试。命令会说明当前已是最新版本、没有可用更新、缺少平台程序或发生错误。
+更新程序下载 worker 及其匹配的预编译 Codex 包。清单固定 worker 版本、分支提交、平台和校验和。先准备运行时，再替换所选配置拥有的文件。替换或重启失败时，更新程序会尝试恢复原 worker、配置、运行时引用、所有权记录和服务状态。必要的恢复步骤失败时，停止依赖该步骤的后续操作并报告原因，不会重启新旧文件混用的安装。未使用的暂存运行时会在必要的服务恢复后清理，清理失败也会报告。Codex 数据目录、账户、记忆、历史和设置保持不变。0.1.x 自动更新器保留原可执行文件资产名和 helper 入口；0.1.3 以前的版本需要先运行手动脚本。客户端不编译源码。
 
 ## Discord 命令
 
-设置面板显示当前选项，可通过按钮选择模型、推理强度、Fast 模式、权限配置、输入传递方式和语音。语音变更从下一次通话开始生效。
+设置面板提供主模型、默认子智能体模型、推理强度、Fast 模式、权限配置、批准策略、输入方式和语音。批准策略默认 **on-request**，与权限配置独立。**高级设置**集中详细原生功能，不重复子智能体模型选择。语音变更从下一次通话开始生效。 审批选择按配置文件保存在各自的 `native-features.json` 中，不覆盖共享 Codex 配置。
 
 - `/discodex settings`：使用按钮查看和选择设置
 - `/discodex voice`：选择语音配置

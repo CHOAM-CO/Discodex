@@ -47,13 +47,23 @@ Linux/macOSでは`sh scripts/install.sh`を直接実行する方法もありま�
 
 ## 初回インストール
 
-保存済みのインストール一覧がない場合、`discodex install`は対話形式で作成します。`install-plan`は同じ一覧の作成だけを行います。インストーラーではプロファイル表示名、Codex実行環境（検出済みデスクトップアプリ/既存CLI、またはインストーラーが取得する公式Codex core）、Discordサーバー、ホームテキストチャンネル、文字起こしチャンネル、許可音声チャンネル、操作者ID、受信ポリシー、登録ユーザー・チャンネルID一覧、既存プロジェクトフォルダー、任意のモデルを指定します。
+保存済みのインストール一覧がない場合、`discodex install`は対話形式で作成します。`install-plan`は同じ一覧の作成だけを行います。インストーラーではプロファイル表示名、Codexデータホーム（既存ホームの共有またはDiscodex専用ホーム）、Discordサーバー、ホームテキストチャンネル、文字起こしチャンネル、許可音声チャンネル、操作者ID、受信ポリシー、登録ユーザー・チャンネルID一覧、既存プロジェクトフォルダー、任意のモデルを指定します。
 
 受信ポリシーは`Everyone`（全サーバーとDM）、`RegisteredServer`（設定したサーバー）、`RegisteredChannels`（登録チャンネルとそのスレッド）、`Paired`（登録ユーザーID）から選びます。これは入力を許可するユーザー範囲を決めます。許可リストと拒否リストはポリシーとは別に保持し、拒否リストを優先します。ポリシーが制御するのはメッセージ入力の範囲だけで、slash commandと管理権限には指定操作者の設定を使います。許可された入力はホームチャンネル、ボットへのメンション、登録チャンネルやそのスレッド、許可されたDMから既存のルーティング経路に入ります。メンションは許可判定を変えず、入力の振り分けだけに使います。新しいインストール計画で選んだポリシーとリストは、インストール時に実行時の`message-access.json`へ一度適用します。その後の通常の再インストールや更新では現在のポリシーとリストを保ちます。
 
 Discord tokenは安全な入力欄で指定します。インストーラーはDiscordへの接続とnative接続を確認します。CodexログインやMFAが必要な場合は、公式ログイン手順をユーザーが完了します。workerの`config.json`に`effort`と`serviceTier`を指定すると、新しい永続スレッドに適用されます。`serviceTier: "off"`はnativeにtierの解除として渡します。省略時はnative既定値を使います。既存スレッドの再開時には`/discodex`で変更した現在のスレッド設定を上書きしません。
 
 インストール一覧を保存しただけではサービスの準備完了ではありません。インストーラーはnativeアカウントとcatalog、Discord設定を確認し、ユーザーサービスを登録します。サービスが起動したことだけで、テキスト、質問・承認、音声の動作確認が済んだとは判断しません。
+
+## 管理ランタイムとCodexデータ
+
+Discodex 1.0は`third_party/codex`に固定したCodexフォークをビルド済みで配布します。既存デスクトップアプリやCLIのcoreは実行基盤として選択しません。公式パッケージ構造を使い、`bin/codex`、`bin/codex-code-mode-host`、`rg`と、OSに必要なLinuxの`bwrap`、Windowsのcommand-runner・sandbox-setup helperを含めます。Windows実行ファイルには`.exe`が付きます。
+
+新規導入では既存Codexホームを共有し、ログイン・メモリ・設定・会話履歴を引き継げます。既存ホームを検出した場合は共有を推奨します。Discodexプロファイルデータ下の専用ホームも選べます。再インストールや更新では現在のホームを保持します。機能設定はDiscodexが保存して子プロセスやネイティブスレッドに渡し、共有`config.toml`を上書きしません。共有ホームの別々のセッションを利用でき、同じセッションは複数クライアントで同時に動かさないでください。
+
+各Releaseは従来の`discodex-<target>[.exe]`と、`discodex-runtime-<target>.tar.gz`、`discodex-runtime-<target>.json`を提供します。マニフェストにはworker版、正確なフォークコミット、OS/アーキテクチャ、アーカイブと相対ファイルパスのチェックサムだけを記録し、ユーザープロファイル・アカウント・認証情報・ホストアドレス・ローカルインストールパスを含めません。更新は版別ランタイムを先に準備して所有するworker・設定・所有記録を切り替えます。ランタイム準備失敗時には応答が中断済みの場合があり、既存ファイルを保持して応答は自動再開しません。ネイティブデータホームはコピーも削除もしません。置換や再起動に失敗した場合は下記の順序で復元を試み、清掃時も未記録のユーザーファイルは残します。
+
+本ガイドは1.0ソースの説明です。ダウンロード版は公開済みReleaseタグを確認してください。プラットフォームのビルド結果とユーザー検証結果は別途報告します。
 
 ## カスタムおよびローカルCodex provider
 
@@ -95,7 +105,21 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-アクティブな公式catalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、別providerへの変更はthreadがidleになるまで待ちます。機能と推論強度はnative metadataが提供する場合にだけ表示されます。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
+アクティブな公式catalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、プロバイダー・実行器の変更は、実行中の応答や音声通話が終わってから再選択します。キューには入りません。機能と推論強度はnative metadataが提供する場合にだけ表示されます。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
+
+メイン・既定子モデルの選択では実行器・プロバイダー・モデルを一緒に保持し、子は親を切り替えず別の登録プロバイダーを利用できます。`[model_providers.<id>.capabilities]`の`encrypted_content`と`agent_messages`は独立した任意の真偽値です。省略時はネイティブ既定値に従い、OpenAI・Azure Responsesは暗号化履歴の再利用対応、ネイティブOpenAI分類のみが`AgentMessage`形式対応となります。明示値は実際のプロトコル対応に合わせてください。`encrypted_content = true`でもネイティブagent-message形式に非対応なら、その不透明な本文は通常のassistantメッセージ内で利用不可と明示します。原本の履歴は変更しません。[履歴の互換性](design.ja.md#プロバイダー切り替えと暗号化履歴)を参照してください。
+
+## 承認方針、詳細設定とAntigravity
+
+`/discodex settings`では**承認方針**と**権限プロファイル**を分けます。プロファイルの既定値は`on-request`で、`never`は明示的に選択する値です。保存済み方針と現在のスレッドの実効値を区別します。稼働中スレッドにはネイティブ設定APIを使い、開始・再開にも選択した方針を渡します。Windows管理者権限とモデル自身の安全動作は別の仕組みです。 承認の選択はプロファイルごとの`native-features.json`に保存し、共有Codex設定は上書きしません。
+
+メイン設定の**既定サブエージェントモデル**は1か所だけです。**詳細設定**には機能スイッチと**Antigravity**をまとめます。ネイティブプロセスの機能切り替えはworker再起動後、Antigravity設定は次のモデル選択またはAGYセッション開始時に適用します。保存した子モデルの既定値は、worker再起動後を含め、次のスレッド作成・再開時に読み込みます。現在のスレッドは再開まで有効な設定を維持し、既存の子も自身の設定を保持します。
+
+Antigravityは既定で無効です。AGY CLIを別途インストールし、対応するサブスクリプションログインを済ませて**詳細設定 → Antigravity**を開きます。有効化し、必要ならCLIパスを入力します。既定は`PATH`上の`agy`です。一覧を補足する場合は正確なモデルIDを1行ずつ登録します。IDを推測せず、SDKでサブスクリプション認証を使いません。有効なモデルはメインと子の両方の一覧に表示されます。AGY設定はworker再起動なしで、次のモデル選択またはAGYセッション開始時に適用します。
+
+有効な場合はモデルへのプロンプトを送らず、インストール済みCLIの`agy models`から正確なIDと名称、`agy --help`から推論強度の選択肢を取得します。両方のモデル一覧に反映し、手入力IDで補足します。CLIヘルプは引数の選択肢であり、モデルごとの対応確認済みメタデータではありません。モデル名からIDや強度を推測・変換しません。取得失敗は設定に表示します。明示した未対応の強度はそのままCLIへ渡し、エラーになる場合も別の値へ置き換えません。
+
+AGYのテキスト作業は重複する内蔵ツールを使い、追加のDiscord・タスクツールはプロジェクトMCPで接続し、他のMCP項目を保持します。子のライフサイクルはCodexフォークが管理します。応答ごとに新しいAGY CLIを開始し、ネイティブ会話と可視ツール結果を再入力します。記録とメモリはCodexに残り、AGYの非公開推論や隠れた状態は再開しません。AGY音声は未対応で、AGY内蔵チーム機能をすべて無効化できるとは保証しません。モデルのツール選択をテストで強制しません。
 
 ## 更新
 
@@ -113,11 +137,11 @@ Windows PowerShell:
 ./scripts/update.ps1 -Config "<既存config.jsonのパス>"
 ```
 
-更新スクリプトはGitHub公式Releaseから現在のプラットフォーム用のビルド済み実行ファイルとSHA-256チェックサムを取得して検証します。ソースcheckoutを変更したり、ソースからバイナリをビルドしたりしません。検証済みバイナリを`discodex update --source <new-binary> --config <existing-config>`に渡し、指定された所有プロファイルだけを更新します。`./install --update --config ...`とWindowsの`./scripts/install.ps1 -Update -Config ...`は同じ更新経路の別名です。
+更新スクリプトはGitHub公式Releaseから現在のプラットフォーム用のビルド済み実行ファイルとSHA-256チェックサムを取得して検証します。ソースcheckoutを変更したり、ソースからバイナリをビルドしたりしません。検証済みバイナリを`discodex update --source <new-binary> --config <existing-config>`に渡します。新バージョンのupdaterが同じReleaseのCodexランタイムを準備してから、指定された所有プロファイルだけを更新します。`./install --update --config ...`とWindowsの`./scripts/install.ps1 -Update -Config ...`は同じ更新経路の別名です。
 
-更新では既存プロファイルの言語、設定、認証情報、永続Codex会話状態を保ち、新しいプロファイルは作りません。バイナリ置換またはサービス再起動が失敗した場合は、以前の所有バイナリ、所有記録、サービス状態へロールバックします。ロールバックやデータ保全のため残された旧ディレクトリは自動削除しません。既存設定や会話状態を変更する作業は明示的なmigration手順で行い、更新では代用できません。
+更新では既存プロファイルの言語、設定、認証情報、永続Codex会話状態を保ち、新しいプロファイルは作りません。置換や再起動に失敗した場合、以前のworker、プロファイル設定、ランタイム参照、所有記録、サービス状態の復元を試みます。必要な復元段階が失敗すると、その段階に依存する後続処理を止めて原因を報告し、新旧ファイルが混在した状態で再起動しません。未使用の準備済みランタイムは必要なサービス復元の後に削除し、削除の失敗も報告します。ロールバックやデータ保全のため残された旧ディレクトリは自動削除しません。既存設定や会話状態を変更する作業は明示的なmigration手順で行い、更新では代用できません。
 
-操作者専用の`/discodex update`は、6時間の確認間隔を待たずに最新の公開Releaseを即時確認します。固定済み対象をすでに適用中なら、その対象を変更せず現在の状態を伝えます。それ以外はプロファイルの言語で「更新」または「キャンセル」の確認画面を表示し、「更新」を選ぶとsubagent作業を含む進行中の作業を中断して接続中の音声通話を終了すると明示します。「キャンセル」では現在の作業に触れません。「更新」を選ぶとまずReleaseをダウンロードして検証します。準備に失敗した場合、現在のworkerと作業はそのまま続きます。準備成功後に限り、進行中の作業を中断し、音声通話を終了して直ちに再起動し、適用します。再起動後、通知設定に関係なく完了または失敗をホームチャンネルに別途投稿します。会話履歴と設定を保ち、セッション再開の自動promptは送りません。
+操作者専用の`/discodex update`は、6時間の確認間隔を待たずに最新の公開Releaseを即時確認します。固定済み対象をすでに適用中なら、その対象を変更せず現在の状態を伝えます。それ以外はプロファイルの言語で「更新」または「キャンセル」の確認画面を表示し、「更新」を選ぶとsubagent作業を含む進行中の作業を中断して接続中の音声通話を終了すると明示します。「キャンセル」では現在の作業に触れません。「更新」を選ぶとまずReleaseをダウンロードして検証します。worker取得・検証に失敗した場合、現在の作業はそのまま続きます。準備成功後に限り、進行中の作業を中断し、音声通話を終了して直ちに再起動し、適用します。再起動後、通知設定に関係なく完了または失敗をホームチャンネルに別途投稿します。会話履歴と設定を保ち、中断した応答は自動再開せず、再開promptや空入力も送りません。
 
 ## 運用と削除
 
@@ -145,7 +169,7 @@ WindowsインストーラーはプロファイルとCodexログインの準備�
 
 macOSのフルディスクアクセス（FDA）はインストーラーが自動で確認・許可できません。実行ファイルのパスが変わる新規インストールや再インストールでは、署名identityの維持とは別にパス変更を検知します。所有権を確認した新しい実行ファイルの正確なパスを示し、Finderとシステム設定のFDA画面を開きます。この案内はnativeプロファイル設定とLaunchAgent起動の前に表示されます。権限が必要な場合は表示された実行ファイルを一覧に追加して有効にします。すでに許可済み、または不要ならEnterで続行し、`q`で中止します。続行してもmacOSがアクセスを許可したかは確認できません。対話端末がない場合はサービス起動前に停止し、実行ファイルの場所を案内します。同じ署名・同じパスでの通常更新ではFDA画面を再表示しません。Files & FoldersやAppleEventsの許可は別のOSダイアログで求められ、この案内が代わりに許可することはありません。
 
-既存のad-hocインストールを`--migrate-adhoc`で切り替えるときも、新しい署名の実行ファイルを元のパスに置き換えた後、LaunchAgentの再起動前に同じ案内を開きます。設定画面を確認してEnterを押すと続行し、`q`を押すと以前のバイナリ、所有記録、サービス状態に戻します。
+既存のad-hocインストールを`--migrate-adhoc`で切り替えるときも、新しい署名の実行ファイルを元のパスに置き換えた後、LaunchAgentの再起動前に同じ案内を開きます。設定画面を確認してEnterを押すと続行し、`q`を押すと中止し、上記の復元順序に従って以前のバイナリ、所有記録、サービス状態の復元を試みます。
 
 インストールまたは権限リセット後に案内を直接開くには、次を実行します。ownership記録にある実際の実行ファイルをFinderで選択し、システム設定のFDA画面を開きます。
 
@@ -161,13 +185,13 @@ macOSで初回インストールすると、このMacのログインキーチェ
 
 署名メタデータと公開証明書は`~/Library/Application Support/Discodex/signing/`に保存します。旧`Codex Worker/signing/`ディレクトリがあり、新しい保存先がない場合はディレクトリ全体を原子的に移動して従来の署名identityを保ちます。署名identityを保っても、パス依存のTCC権限が新しい実行ファイルのパスに自動適用されるわけではありません。パスが変わるインストールでは上記FDA案内が新しいパスを示し、Files & FoldersとAppleEvents権限はmacOSが個別に尋ねる場合があります。新しい場所が空でも既存の署名identity/certificateが残っていれば、以前の署名保存先を使います。プロファイルを削除しても共有署名鍵とメタデータは再インストール用に保持します。このディレクトリやキーチェーン内の署名鍵を削除するとコードidentityを維持できないため、自動で新しい鍵を作りません。このローカル署名は公開配布用のDeveloper ID署名・公証の代わりではありません。
 
-macOSでも共通の`./update --config "<既存config.jsonのパス>"`を使います。スクリプトはGitHub公式ReleaseのmacOS実行ファイルとSHA-256チェックサムを取得・検証してアプリの更新経路を呼び出します。既存のad-hoc署名を初めて移行するときだけ`--migrate-adhoc`を付けます。`./install --update --config ...`は同じ更新経路の旧別名です。更新では署名identityを維持し、選択したプロファイルのサービスだけを再起動します。もともと停止中のサービスは起動しません。設定、認証情報、Codex会話状態を保ち、失敗時は以前の実行ファイル、所有記録、サービス状態に戻します。
+macOSでも共通の`./update --config "<既存config.jsonのパス>"`を使います。スクリプトはGitHub公式ReleaseのmacOS実行ファイルとSHA-256チェックサムを取得・検証してアプリの更新経路を呼び出します。既存のad-hoc署名を初めて移行するときだけ`--migrate-adhoc`を付けます。`./install --update --config ...`は同じ更新経路の旧別名です。更新では署名identityを維持し、選択したプロファイルのサービスだけを再起動します。もともと停止中のサービスは起動しません。設定、認証情報、Codex会話状態を保ち、失敗時は上記の順序で以前のインストール構成とサービス状態の復元を試みます。
 
 FDAが維持されているかはmacOS上でユーザーが確認します。製品はTCCデータベースを変更したり許可を自動化したりしません。Apple資料：[安定した署名とファイルアクセス権](https://developer.apple.com/forums/thread/678819)、[コード署名の同一性と自己署名](https://developer.apple.com/library/archive/technotes/tn2206/_index.html)。
 
 ## プロファイルの役割とメモリ
 
-設定の`name`は表示名であり、会話の基本的なidentityです。workerは新規スレッドとサービス再起動後の既存スレッド再開に、この名前を持つAI同僚の基本promptを使います。音声Realtimeはテキストbacking modelの`realtimeStartInstructions`とは別のbackend promptを使います。workerは`experimental_realtime_ws_backend_prompt`を所有するCodex子プロセスの`--config`にだけ渡し、Codex全体設定ファイルは変更しません。公式selectorはこの設定を要求promptより優先し、両方がない場合は既定backend promptを選びます。現在のCodex既定backend promptは自分をCodexと名乗るため、名前付きのvoice identityには専用promptが必要です。接続時の自動挨拶は挿入せず、通話境界と既存会話の継続性を伝え、最初の発話を待ちます。役割指示を変えるために既存会話を削除したり新規スレッドを作ったりする必要はありません。[prompt selector](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/realtime_prompt.rs)、[既定Realtime backend prompt](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/prompts/templates/realtime/backend_prompt.md)。
+設定の`name`は表示名であり、会話の基本的なidentityです。workerは新規スレッドとサービス再起動後の既存スレッド再開に、この名前を持つAI同僚の基本promptを使います。音声Realtimeはテキストbacking modelの`realtimeStartInstructions`とは別のbackend promptを使います。workerは`experimental_realtime_ws_backend_prompt`を所有するCodex子プロセスの`--config`にだけ渡し、Codex全体設定ファイルは変更しません。公式selectorはこの設定を要求promptより優先し、両方がない場合は既定backend promptを選びます。現在のCodex既定backend promptは自分をCodexと名乗るため、名前付きのvoice identityには専用promptが必要です。接続時の自動挨拶は挿入せず、通話境界と既存会話の継続性を伝え、最初の発話を待ちます。役割指示を変えるために既存会話を削除したり新規スレッドを作ったりする必要はありません。[prompt selector](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/realtime_prompt.rs#L5-L24)、[既定Realtime backend prompt](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/prompts/templates/realtime/backend_prompt.md#L1-L3)。
 
 `config.json`の任意項目`memoryEnabled: true`は、そのworkerで公式Codexメモリ機能、生成・利用、専用の参照・検索・ノート記録ツール、既存スレッドのメモリ生成を有効にします。`false`はそのworkerで無効にし、省略時は既存native設定を保ちます。再インストール時にもこの項目を保ちます。追加のインストール質問は設けず、他のCodexアプリの全体設定やアカウントファイルは変更しません。メモリ機能が有効でも、実際の抽出・統合はnativeの待機時間と使用条件に従います。
 
@@ -177,19 +201,19 @@ FDAが維持されているかはmacOS上でユーザーが確認します。製
 
 自動更新通知のRelease確認予定は`last_checked_unix`に保存します。初回確認だけ即時に行い、その後は保存済みの期限に従います。成功後は6時間、失敗後は15分で再確認し、起動時も保存済み予定を使います。確認ループは15秒ごとに動きます。自動通知はCodex接続中にアクティブturn、音声接続または終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく、5分間idleの場合にホームチャンネルに表示します。すでに条件を満たしていれば追加待機はありません。
 
-新しい公式Releaseの自動通知は、Codex接続中にアクティブturn、音声接続・終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく5分間idleの場合にホームチャンネルへ表示します。「更新」をクリックすると先にReleaseをダウンロードして検証します。準備に失敗した場合、現在のworkerと作業は続きます。準備成功後に進行中の作業（subagent作業を含む）を中断し、接続中の音声通話を終了して5分タイマーを待たずに直ちに再起動・適用します。再起動後、通知設定に関係なく完了または失敗をホームチャンネルへ別途投稿します。会話履歴と設定を保ち、セッション再開の自動promptは送りません。Skip this versionはそのバージョンだけを対象にし、Never notify againはプロファイルの通知を無効にします。`/discodex settings`から再び有効にできます。ボタン表示はプロファイルの言語に従います。
+新しい公式Releaseの自動通知は、Codex接続中にアクティブturn、音声接続・終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく5分間idleの場合にホームチャンネルへ表示します。「更新」をクリックすると先にReleaseをダウンロードして検証します。worker取得・検証に失敗した場合、現在の作業は続きます。準備成功後に進行中の作業（subagent作業を含む）を中断し、接続中の音声通話を終了して5分タイマーを待たずに直ちに再起動・適用します。再起動後、通知設定に関係なく完了または失敗をホームチャンネルへ別途投稿します。会話履歴と設定を保ち、中断した応答は自動再開せず、再開promptや空入力も送りません。Skip this versionはそのバージョンだけを対象にし、Never notify againはプロファイルの通知を無効にします。`/discodex settings`から再び有効にできます。ボタン表示はプロファイルの言語に従います。
 
 Discodexは承認済みGitHub Releaseから現在のOSとアーキテクチャ用のビルド済み実行ファイルを取得し、GitHub Release APIのSHA-256 digestとサイズを検証します。クライアントはソースを取得・ビルドしないため、Rust Cargoやプラットフォーム用ビルドツールは不要です。準備が成功した後にupdaterが実行ファイルを置き換えてサービスを直ちに再起動します。ダウンロードまたは検証に失敗した場合、現在の実行ファイルとworkerはそのまま稼働し、結果を伝えます。成功した更新では会話履歴、設定、自動起動、Macの署名identityを保ち、短時間再接続します。
 
 通知対象はmainブランチの全commitではなく公式GitHub Releaseです。公開時にはCargoパッケージのバージョンとReleaseの`vX.Y.Z`タグを一致させます。手動更新スクリプトも同じプラットフォーム別Releaseバイナリを取得し、SHA-256チェックサムを確認します。
 
-リリース担当者はバージョンのGit tagとdraft Releaseを作り、GitHub Actionsの`Build release binaries` workflowを`release_tag`とともに実行します。workflowはWindows、macOS、Linuxのx64/ARM64で単体テストとrelease buildを行い、6つの実行ファイル、SHA-256チェックサム、`discodex-installers.zip`をdraftに添付します。すべてのジョブと添付ファイルを確認してからReleaseを公開します。ソースアーカイブだけのReleaseは公開しません。
+リリース担当者はバージョンのGit tagとdraft Releaseを作り、GitHub Actionsの`Build release binaries` workflowを`release_tag`とともに実行します。workflowはWindows、macOS、Linuxのx64/ARM64で単体テストとrelease buildを行い、6つのworker実行ファイル、SHA-256チェックサム、プラットフォーム別Codexランタイムアーカイブとマニフェスト、`discodex-installers.zip`をdraftに添付します。すべてのジョブと添付ファイルを確認してからReleaseを公開します。ソースアーカイブだけのReleaseは公開しません。
 
 ## 作業ツールの更新
 
 更新後にworkerを再起動すると、既存Codexスレッドを保ったままnativeの`update_plan`、CLI作業ツール、管理ワークツリーツールが使えます。変更されたプランは新しいホームチャンネルEmbedカードで表示し、以前のカードは編集しません。同一イベントの再送は抑制し、プラン全体の文章はDiscordの上限を超える場合だけページ分割します。別途MCPをインストールしたり、ユーザー全体のCodex設定を編集したりする必要はありません。作業の閲覧・作成・分岐とワークツリー作成は同じ公式app-server接続を使います。新しい作業は呼び出し元のnative設定を引き継ぎ、既存会話やプロファイル設定を初期化しません。
 
-## Native機能、プラグイン、運用ログ
+## 詳細設定、プラグイン、運用ログ
 
 Native app-server機能の設定はプロファイルごとの`native-features.json`に保存されます。CodeMode、host、multiagent v2と`wait_agent`、通常モードの質問、clock、token budget/history notes、非同期通知が含まれます。設定画面は実効native状態と保存値を分けて表示し、worker再起動が必要な変更を示します。
 
