@@ -63,6 +63,8 @@ Discodex 1.0은 `third_party/codex`에 고정한 Codex 포크를 사전 빌드�
 
 이 안내는 1.0 소스 기준이다. 실제 다운로드 버전은 게시된 릴리스 태그를 확인하며, 플랫폼 빌드와 사용자 검증 결과는 별도로 보고한다.
 
+프로필 프로젝트에는 기본 `.agents/skills/discodex/` 스킬이 포함된다. 프로필 언어의 짧은 `SKILL.md`는 같은 빌드의 설치·설계 문서 4개 언어판을 참조하며, 설정·업데이트·진단 등에 필요한 문서만 읽도록 안내한다. 설치·업데이트 활성화·새 native app-server 연결 준비 시 이 도움말을 동기화한다. 기존에 사용자가 만든 동명 스킬은 그대로 두고, 관리 스킬 안에서 사용자가 수정한 파일은 파일별로 보존한다. 도움말 동기화 실패는 경고로 알리고 봇 연결을 막지 않는다. 베이스 프롬프트와 공유 `CODEX_HOME`은 유지한다.
+
 ## 사용자 지정 및 로컬 Codex provider
 
 선택한 Codex 프로세스가 실제로 사용하는 `CODEX_HOME/config.toml`에서 provider와 모델을 설정합니다. Codex에는 `ollama`, `lmstudio` 기본 provider가 있고 Responses API 사용자 지정 provider도 지원합니다. Provider 인증은 Codex가 담당합니다. `env_key`로 지정한 자격 증명은 worker 서비스 환경에서 사용할 수 있어야 합니다. 비밀 값을 Discodex 프로필 파일에 넣지 마세요. Native 비 OpenAI provider를 사용하는 데 ChatGPT 계정이나 OpenAI API key가 필요한 것은 아닙니다.
@@ -85,9 +87,15 @@ name = "Example provider"
 base_url = "https://provider.example/v1"
 env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
+# 공급자가 입력 토큰 계산 API를 제공하는 경우에만 사용:
+# input_tokens_endpoint = "/responses/input_tokens"
 ```
 
-자리표시자 모델 이름과 endpoint를 provider가 지원하는 값으로 바꾸세요. 실시간 `model/list` catalog는 활성 provider만 제공합니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. Discodex 모델 선택지는 활성 native catalog와 유효한 worker 설정의 모델을 사용하며 기본·subagent·설치·현재 thread 모델을 포함합니다. 비활성 profile 파일은 자동으로 열거하지 않습니다.
+자리표시자 모델 이름과 endpoint를 provider가 지원하는 값으로 바꾸세요. 실시간 `model/list` catalog는 활성 provider만 제공합니다. native 조회는 Codex의 `{ "models": [...] }`와 호환 `{ "data": [...] }` catalog를 모두 읽습니다. 호환 항목에서는 모델 ID와 `context_window`, `context_length`, `max_model_len`, `meta.n_ctx`로 제공된 문맥 한도를 읽고, 명시되지 않은 기능에는 native 모델 기본값을 사용합니다. 모든 공급자가 조회 가능한 catalog를 제공한다는 뜻은 아닙니다. Discodex는 유효한 worker 설정의 기본·subagent·설치·현재 thread 모델도 표시하며, 비활성 profile 파일은 자동으로 열거하지 않습니다.
+
+입력 토큰 계산을 사용하려면 공급자 표의 `input_tokens_endpoint` 주석을 해제하고 공급자가 제공하는 주소를 지정하세요. 경로는 `base_url` 뒤에 붙으며 위 예시의 `/responses/input_tokens`는 `https://provider.example/v1/responses/input_tokens`가 됩니다. 절대 URL로 다른 endpoint를 지정할 수도 있습니다. 기존 공급자의 인증·전송 경로를 사용합니다.
+
+공급자는 실제 생성에 쓰는 모델 입력·지침·도구를 받아 `{ "object": "response.input_tokens", "input_tokens": 123 }`을 반환하는 [OpenAI 입력 토큰 계산 계약](https://developers.openai.com/api/docs/guides/token-counting)을 제공해야 합니다. 토큰화는 공급자가 담당합니다. 설정을 생략하면 native 사용량 기반 추정을 유지하며, 공급자나 모델 이름으로 API 지원 여부를 추정하지 않습니다.
 
 실시간 `model/list` 결과는 활성 native catalog에서 가져옵니다. Discodex는 native 설정의 `[profiles.NAME]` 항목에 `model`과 `model_provider`를 모두 지정해 명시적으로 등록한 모델도 표시합니다. provider 정의만으로는 모델이 등록되지 않으며, 별도의 `*.config.toml` profile 파일을 자동으로 불러오거나 검색하지 않습니다. 예시:
 
@@ -103,7 +111,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-활성 공식 catalog와 등록된 profile이 모델 선택지를 제공합니다. 모델을 선택하면 같은 영구 thread에서 provider를 전환하고 대화 기록을 유지합니다. 같은 provider 안의 변경은 바로 적용할 수 있으며, 공급자·실행기 변경은 진행 중 응답이나 음성 통화가 끝난 뒤 다시 선택해야 하며 대기열에 넣지 않습니다. 기능과 추론 강도 선택지는 native 메타데이터가 제공하는 경우에만 표시됩니다. 로컬의 일반 `/v1/models` 응답은 Codex 모델 메타데이터로 자동 변환되지 않습니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/)와 [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)를 참고하세요.
+활성 catalog와 등록된 profile이 모델 선택지를 제공합니다. 모델을 선택하면 같은 영구 thread에서 provider를 전환하고 대화 기록을 유지합니다. 같은 provider 안의 변경은 바로 적용할 수 있으며, 공급자·실행기 변경은 진행 중 응답이나 음성 통화가 끝난 뒤 다시 선택해야 하며 대기열에 넣지 않습니다. 기능과 추론 강도 선택지는 native 메타데이터를 따릅니다. 호환 catalog에 사용한 기본값은 공급자의 기능을 검증한 결과가 아닙니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/)와 [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)를 참고하세요.
 
 메인·기본 하위 모델 선택은 실행기·공급자·모델을 함께 보존하며, 자식은 부모를 전환하지 않고 다른 등록 공급자를 사용할 수 있다. `[model_providers.<id>.capabilities]`의 `encrypted_content`와 `agent_messages`는 독립적인 선택적 불리언 설정이다. 생략하면 native 기본 분류를 따른다. OpenAI·Azure Responses는 암호화 기록 재사용을 지원하는 것으로, native OpenAI 분류만 `AgentMessage` 형식을 지원하는 것으로 본다. 명시적 값은 실제 공급자의 프로토콜 지원에 맞춰 설정한다. `encrypted_content = true`여도 native agent-message 형식이 미지원이면 해당 불투명 본문은 일반 assistant 메시지 안에서 이용 불가 안내로 표시된다. 원본 기록은 유지한다. 자세한 내용은 [기록 호환성](design.ko.md#공급자-변경과-암호화된-기록)을 참고한다.
 

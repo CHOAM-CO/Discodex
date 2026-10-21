@@ -65,6 +65,8 @@ Discodex 1.0は`third_party/codex`に固定したCodexフォークをビルド�
 
 本ガイドは1.0ソースの説明です。ダウンロード版は公開済みReleaseタグを確認してください。プラットフォームのビルド結果とユーザー検証結果は別途報告します。
 
+プロファイルのプロジェクトには既定の `.agents/skills/discodex/` スキルを含めます。短い `SKILL.md` はプロファイルの言語を使い、同じビルドのインストール・設計文書を4言語で参照して、設定・更新・診断に必要な資料だけ読むよう案内します。インストール、更新の有効化、新しいネイティブ app-server 接続の準備時にヘルプを同期します。ユーザーが作成した同名スキルは保持し、管理スキル内でユーザーが編集したファイルも個別に保持します。同期エラーは警告として表示し、ボットの接続は止めません。基本プロンプトと共有 `CODEX_HOME` は変更しません。
+
 ## カスタムおよびローカルCodex provider
 
 選択したCodexプロセスが実際に使うものと同じ `CODEX_HOME/config.toml` でproviderとモデルを設定します。Codexには組み込みの `ollama`、`lmstudio` providerがあり、Responses APIのカスタムproviderにも対応します。provider認証はCodexが処理します。`env_key` で指定した認証情報はworkerサービスの環境から利用できるようにしてください。秘密情報をDiscodexプロファイルファイルに保存しないでください。nativeの非OpenAI providerを使うだけでChatGPTアカウントやOpenAI API keyが必要になることはありません。
@@ -87,9 +89,15 @@ name = "Example provider"
 base_url = "https://provider.example/v1"
 env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
+# 入力トークン数 API を提供するプロバイダーの場合だけ有効化:
+# input_tokens_endpoint = "/responses/input_tokens"
 ```
 
-プレースホルダーのモデル名とendpointをproviderが対応する値に置き換えてください。ライブの`model/list` catalogを提供するのはアクティブなproviderだけです。ローカルの通常の`/v1/models`応答はCodexモデルmetadataに自動変換されません。Discodexの候補はアクティブなnative catalogと有効なworker設定のモデルを使い、既定、subagent、インストール時、現在のthreadのモデルを含みます。非アクティブなprofileファイルは自動列挙されません。
+プレースホルダーのモデル名とendpointをproviderが対応する値に置き換えてください。ライブの`model/list` catalogを提供するのはアクティブなproviderだけです。ネイティブの検出はCodexの `{ "models": [...] }` と互換形式の `{ "data": [...] }` の両方に対応します。互換項目からモデルIDと、`context_window`、`context_length`、`max_model_len`、`meta.n_ctx` で提供された文脈容量を読み取り、未指定の機能にはネイティブのモデル既定値を使います。すべてのプロバイダーが検出可能なカタログを提供するという意味ではありません。Discodexは有効なworker設定の既定、subagent、インストール時、現在のthreadのモデルも表示します。非アクティブなprofileファイルは自動列挙されません。
+
+入力トークン数の計算を使うには、プロバイダー表の `input_tokens_endpoint` のコメントを外し、提供されているエンドポイントを設定してください。パスは `base_url` の末尾に追加され、上の `/responses/input_tokens` は `https://provider.example/v1/responses/input_tokens` になります。絶対URLで別のエンドポイントも指定できます。既存プロバイダーの認証と通信処理を使います。
+
+プロバイダーは、生成と同じモデル入力・指示・ツールを受け取り、`{ "object": "response.input_tokens", "input_tokens": 123 }` を返す [OpenAI入力トークン数APIの契約](https://developers.openai.com/api/docs/guides/token-counting)を実装する必要があります。トークン化はプロバイダーが担当します。省略時はネイティブの使用量に基づく推定を維持し、プロバイダー名やモデル名からAPI対応を推測しません。
 
 ライブの`model/list`結果はアクティブなnative catalogから取得します。Discodexはnative設定の`[profiles.NAME]`テーブルに`model`と`model_provider`を両方指定して明示登録したモデルも表示します。provider定義だけではモデルは登録されず、別の`*.config.toml` profileファイルも自動ロード・検索されません。例:
 
@@ -105,7 +113,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-アクティブな公式catalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、プロバイダー・実行器の変更は、実行中の応答や音声通話が終わってから再選択します。キューには入りません。機能と推論強度はnative metadataが提供する場合にだけ表示されます。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
+アクティブなcatalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、プロバイダー・実行器の変更は、実行中の応答や音声通話が終わってから再選択します。キューには入りません。機能と推論強度の選択肢はネイティブのメタデータに従います。互換カタログに使う既定値は、プロバイダーの実際の機能を検証した結果ではありません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
 
 メイン・既定子モデルの選択では実行器・プロバイダー・モデルを一緒に保持し、子は親を切り替えず別の登録プロバイダーを利用できます。`[model_providers.<id>.capabilities]`の`encrypted_content`と`agent_messages`は独立した任意の真偽値です。省略時はネイティブ既定値に従い、OpenAI・Azure Responsesは暗号化履歴の再利用対応、ネイティブOpenAI分類のみが`AgentMessage`形式対応となります。明示値は実際のプロトコル対応に合わせてください。`encrypted_content = true`でもネイティブagent-message形式に非対応なら、その不透明な本文は通常のassistantメッセージ内で利用不可と明示します。原本の履歴は変更しません。[履歴の互換性](design.ja.md#プロバイダー切り替えと暗号化履歴)を参照してください。
 

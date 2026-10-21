@@ -65,6 +65,8 @@ Each release provides the existing `discodex-<target>[.exe]` worker asset plus `
 
 This guide documents the 1.0 source tree. Consult the published release tag for the currently downloadable version; platform build and user validation results are reported separately.
 
+The profile project includes the default `.agents/skills/discodex/` skill. Its short `SKILL.md` follows the profile language and points to the same build's installation and design documents in all four languages, so agents can read only the references needed for setup, settings, updates or diagnosis. Installation, update activation and preparation for a new native app-server connection synchronize this help. Existing user-owned skills of the same name are kept, and user-modified files inside a managed skill are preserved individually. Help synchronization errors produce a warning without blocking the bot connection. The base prompt and shared `CODEX_HOME` stay unchanged.
+
 ## Custom and local Codex providers
 
 Configure the provider and model in the same `CODEX_HOME/config.toml` used by the selected Codex process. Codex includes built-in `ollama` and `lmstudio` providers and supports custom Responses API providers. Provider authentication belongs to Codex. The credential named by `env_key` must be available in the worker service environment; do not place the secret in Discodex profile files. A native non-OpenAI provider does not by itself require a ChatGPT account or OpenAI API key.
@@ -87,9 +89,15 @@ name = "Example provider"
 base_url = "https://provider.example/v1"
 env_key = "PROVIDER_API_KEY"
 wire_api = "responses"
+# Optional, when the provider offers input token counting:
+# input_tokens_endpoint = "/responses/input_tokens"
 ```
 
-Replace the placeholder model name and endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. A regular local `/v1/models` response is not automatically converted to Codex model metadata. Discodex model choices use the active native catalog and models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. Inactive profile files are not automatically enumerated.
+Replace the placeholder model name and endpoint with values supported by your provider. Only the active provider supplies the live `model/list` catalog. Native discovery accepts both Codex `{ "models": [...] }` and compatible `{ "data": [...] }` catalogs. Compatible entries supply model IDs and may supply context capacity through `context_window`, `context_length`, `max_model_len`, or `meta.n_ctx`; unadvertised capabilities use native model defaults. This does not guarantee that a provider exposes a discoverable catalog. Discodex also uses models in the effective worker configuration, including configured primary, subagent, installation, and current-thread models. Inactive profile files are not automatically enumerated.
+
+To enable input token counting, uncomment `input_tokens_endpoint` in the provider table and set the endpoint supplied by that provider. A path is appended to `base_url` (`/responses/input_tokens` above becomes `https://provider.example/v1/responses/input_tokens`); an absolute URL can select a different endpoint. The request uses the provider's existing authentication and transport.
+
+The provider must implement the [OpenAI input-token counting contract](https://developers.openai.com/api/docs/guides/token-counting), returning `{ "object": "response.input_tokens", "input_tokens": 123 }` for the same model input, instructions and tools used by generation. Tokenization belongs to the provider. Omit this setting to keep native usage-based estimation; support is not inferred from a provider or model name.
 
 Only the active native catalog supplies live `model/list` results. Discodex also lists models explicitly registered in native configuration with both `model` and `model_provider` under a `[profiles.NAME]` table. A provider definition by itself does not register a model, and unrelated `*.config.toml` profile files are not loaded or scanned automatically. For example:
 
@@ -105,7 +113,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-The active official catalog and registered profiles provide model choices. Selecting a model switches the provider on the same durable thread and keeps its history; changes within one provider can apply immediately, while a provider/executor change must be selected again after the active response or voice call finishes; it is not queued. Capability and effort choices appear only when native metadata advertises them. A regular local `/v1/models` response is not automatically converted to Codex model metadata. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/) and [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).
+The active catalog and registered profiles provide model choices. Selecting a model switches the provider on the same durable thread and keeps its history; changes within one provider can apply immediately, while a provider/executor change must be selected again after the active response or voice call finishes; it is not queued. Capability and effort choices follow native metadata; defaults used for a compatible catalog are not a verification of the provider's capabilities. See the [Codex provider configuration guide](https://developers.openai.com/codex/config-advanced/) and [official model metadata schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs).
 
 The fork keeps executor, provider and model together for main and default-subagent selections; a child can use a different configured provider without switching its parent. In `[model_providers.<id>.capabilities]`, `encrypted_content` and `agent_messages` are independent optional booleans. Omitted values follow native classification defaults: encrypted replay is true for OpenAI and Azure Responses; native `AgentMessage` support is true only for OpenAI. Explicit overrides must describe the provider’s actual protocol support. Setting `encrypted_content = true` does not make an unsupported native agent-message payload replayable: opaque content in its ordinary assistant-message envelope is marked unavailable. These conversions leave original history untouched. See [history compatibility](design.md#provider-changes-and-encrypted-history).
 

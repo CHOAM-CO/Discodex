@@ -1,6 +1,7 @@
 pub mod agy;
 pub mod agy_mcp;
 pub mod attachments;
+mod bundled_skill;
 pub mod commands;
 pub mod config;
 pub mod discord;
