@@ -92,6 +92,7 @@ The updater downloads the worker and its matching prebuilt Codex package. Its ma
 | Join an allowed voice channel | `/discodex voice-join channel:<voice channel>` |
 | Leave the voice call | `/discodex voice-leave` |
 | Request that the current response stop | `/discodex interrupt` |
+| Compact the current conversation context | `/discodex compact` |
 | Check for and apply updates | `/discodex update` |
 | Start a new conversation | `/discodex new` |
 

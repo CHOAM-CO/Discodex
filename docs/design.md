@@ -10,9 +10,11 @@ The fork is tracked as the `third_party/codex` submodule with small patch commit
 
 Release CI uses the official Codex package builder to produce the core, code-mode host, `rg` and required OS helpers. The worker and package manifest fix the compatible worker version, fork commit, platform and checksums. The managed executable lives separately from `CODEX_HOME`. The installer offers an existing home (recommended when found) or a separate profile home. Existing profiles keep their selected home, login, memory, session history and settings. Shared `config.toml` is not overwritten. Separate sessions may share a home; concurrent control of the same session is outside this contract.
 
-This document describes the 1.0 source tree, not a completed public release or a claim that all platform builds and live voice tests have passed. Published artifacts and validation results are reported separately.
+This document describes the implementation. Published builds and version-specific changes are listed in the [releases](https://github.com/CHOAM-CO/Discodex/releases).
 
 ## Conversation and settings
+
+`/discodex compact` sends `thread/compact/start` for the current persistent thread. Native Codex interrupts any active response and starts manual compaction in the same conversation. Discodex neither creates a new thread nor injects a user message. The command acknowledges that the request was accepted, not that compaction has finished, and displays the native error if submission fails.
 
 The main settings panel exposes **Approval policy** separately from **Permission profile**. The profile default is `on-request`; `never` remains an explicit user choice. Saved and effective policies are shown separately, active threads use the native settings-update API, and thread start/resume receives the selected policy. **Advanced settings** groups the detailed native switches and AGY preferences without duplicating the default-subagent picker. Approval choices are saved per profile in `native-features.json`; they do not overwrite shared Codex configuration.
 
@@ -24,7 +26,7 @@ The configured home text channel is the persistent conversation surface for ordi
 
 The message-policy controls can select a receive policy and manage allowed or blocked users and channels. User choices show names or nicknames resolved from the current server, while adding or removing a person uses their account ID. Voice choices come from `thread/realtime/listVoices`. Choosing the Codex default omits an explicit voice so native settings apply. A selected voice is stored in worker state and reused on the next connection.
 
-Slash commands include `/discodex update`, `/discodex settings`, `/discodex voice`, `/discodex status`, `/discodex interrupt`, `/discodex new`, `/discodex voice-join`, and `/discodex voice-leave`. Slash commands and administrative actions retain their configured operator checks. During an active ordinary Discord-message turn, the home channel typing indicator is refreshed and stopped on completion, error, or disconnect.
+Slash commands include `/discodex update`, `/discodex settings`, `/discodex voice`, `/discodex status`, `/discodex interrupt`, `/discodex compact`, `/discodex new`, `/discodex voice-join`, and `/discodex voice-leave`. Slash commands and administrative actions retain their configured operator checks. During an active ordinary Discord-message turn, the home channel typing indicator is refreshed and stopped on completion, error, or disconnect.
 
 When native Codex asks a question or requests approval, Discodex displays a Discord form or buttons and returns the response with the original request ID and choice scope. Old controls cannot answer a resolved request or a request from a different connection generation.
 
