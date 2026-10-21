@@ -121,6 +121,10 @@ jobs:
           if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
             export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
           fi
+          # rust-cache prunes gn_out but retains V8's build-script fingerprint.
+          # Let the official build script restore its verified native archive.
+          cargo clean --manifest-path third_party/codex/codex-rs/Cargo.toml \
+            --package v8 --target "$TARGET" --release
           python third_party/codex/scripts/build_codex_package.py \
             --variant codex --target "$TARGET" --cargo-profile release \
             --package-dir "runtime-package" \
