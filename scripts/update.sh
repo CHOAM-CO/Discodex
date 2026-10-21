@@ -6,7 +6,8 @@ usage() {
 Usage: ./update --config <existing-profile-config.json> [--migrate-adhoc]
 
 Downloads the official Discodex release for this operating system and architecture,
-then asks that binary to update the explicitly selected profile.
+then stages its matching prebuilt Codex runtime and updates the selected profile.
+The existing Codex data home, conversations and settings are preserved.
 USAGE
 }
 

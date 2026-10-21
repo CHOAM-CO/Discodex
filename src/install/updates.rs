@@ -2,7 +2,7 @@
 //!
 //! Discovery, preparation, state changes, and the eventual service update are kept
 //! separate so the Discord loop can do network work without holding its state
-//! mutex and can make the final idle decision immediately before handoff.
+//! mutex and can hand off a confirmed update without waiting for idle work.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -1114,7 +1114,7 @@ fn require_release_asset(
     })
 }
 
-fn platform_asset_name() -> Result<&'static str> {
+pub(super) fn platform_asset_name() -> Result<&'static str> {
     platform_asset_name_for(std::env::consts::OS, std::env::consts::ARCH)
 }
 
@@ -1130,8 +1130,15 @@ fn platform_asset_name_for(os: &str, arch: &str) -> Result<&'static str> {
     }
 }
 
-/// Run the detached updater and persist its outcome after rollback/restart.
-pub fn run_helper(args: &[String]) -> Result<()> {
+#[derive(Debug, PartialEq, Eq)]
+struct HelperArgs {
+    source: String,
+    config_path: PathBuf,
+    release_id: u64,
+    attempt_id: String,
+}
+
+fn parse_helper_args(args: &[String]) -> Result<HelperArgs> {
     let mut source: Option<String> = None;
     let mut config_path: Option<String> = None;
     let mut release_id: Option<String> = None;
@@ -1174,6 +1181,22 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         .parse()
         .context("invalid update release ID")?;
     let attempt_id = attempt_id.context("update-helper requires --attempt-id")?;
+    Ok(HelperArgs {
+        source,
+        config_path,
+        release_id,
+        attempt_id,
+    })
+}
+
+/// Run the detached updater and persist its outcome after rollback/restart.
+pub fn run_helper(args: &[String]) -> Result<()> {
+    let HelperArgs {
+        source,
+        config_path,
+        release_id,
+        attempt_id,
+    } = parse_helper_args(args)?;
     let config = crate::config::Config::load(&config_path)?;
     let source_path = PathBuf::from(&source)
         .canonicalize()
@@ -1460,6 +1483,94 @@ fn ps_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_helper_arguments_keep_the_incoming_binary_and_existing_profile() {
+        let args: Vec<String> = [
+            "--source",
+            "prepared/discodex-1.0.0.exe",
+            "--config",
+            "existing profile/config.json",
+            "--release-id",
+            "42",
+            "--attempt-id",
+            "existing-0.1-attempt",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let original = args.clone();
+        assert_eq!(
+            parse_helper_args(&args).unwrap(),
+            HelperArgs {
+                source: "prepared/discodex-1.0.0.exe".into(),
+                config_path: "existing profile/config.json".into(),
+                release_id: 42,
+                attempt_id: "existing-0.1-attempt".into(),
+            }
+        );
+        assert_eq!(args, original);
+        let mut duplicate = args.clone();
+        duplicate.extend(["--source".into(), "different/latest.exe".into()]);
+        assert!(parse_helper_args(&duplicate).is_err());
+        assert!(parse_helper_args(&args[..6]).is_err());
+    }
+
+    #[test]
+    fn update_outcomes_preserve_failure_reason_and_never_report_rollback_as_applied() {
+        for failure in [
+            "runtime preparation failed",
+            "update failed; previous worker and service state were restored",
+            "update failed; rollback incomplete: profile runtime restore failed",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store = UpdateStore::load(dir.path()).unwrap();
+            store.set_muted(true).unwrap();
+            store
+                .apply_check(CheckResult::Modified {
+                    checked_at_unix: 100,
+                    etag: None,
+                    release: Some(notice(42)),
+                })
+                .unwrap();
+            let pinned = store.select_update(42).unwrap();
+            store.request_immediate(42).unwrap();
+            store
+                .store_prepared(PreparedUpdate {
+                    release_id: 42,
+                    version: pinned.version.clone(),
+                    commit: pinned.commit.clone(),
+                    binary: "prepared/incoming-worker".into(),
+                })
+                .unwrap();
+            store.mark_applying(42).unwrap();
+            store.mark_apply_failed(42, failure.into()).unwrap();
+            let failed = store.snapshot();
+            assert_eq!(failed.status, UpdateStatus::Failed);
+            assert_eq!(failed.last_error.as_deref(), Some(failure));
+            assert_eq!(failed.last_result, Some(pinned.clone()));
+            assert_eq!(failed.pending, Some(pinned.clone()));
+            assert_eq!(failed.last_applied_release_id, None);
+            assert_eq!(failed.immediate_release_id, None);
+            assert_eq!(failed.apply_attempt_id, None);
+            assert!(failed.result_notification_id.is_some());
+            assert!(failed.muted);
+
+            assert_eq!(store.retry_update(42).unwrap(), pinned);
+            store.request_immediate(42).unwrap();
+            store.mark_applying(42).unwrap();
+            store.mark_applied(42).unwrap();
+            let applied = store.snapshot();
+            assert_eq!(applied.status, UpdateStatus::Applied);
+            assert_eq!(applied.last_applied_release_id, Some(42));
+            assert_eq!(applied.last_result, Some(pinned));
+            assert_eq!(applied.last_error, None);
+            assert_eq!(applied.pending, None);
+            assert_eq!(applied.prepared, None);
+            assert_eq!(applied.immediate_release_id, None);
+            assert!(applied.result_notification_id.is_some());
+        }
+    }
     use tempfile::tempdir;
 
     fn notice(release_id: u64) -> ReleaseNotice {
@@ -2160,6 +2271,7 @@ mod tests {
     #[test]
     fn semver_comparison_is_numeric_and_ignores_prefix() {
         assert!(is_newer_version("v1.10.0", "1.9.9"));
+        assert!(is_newer_version("v1.0.0", "0.1.13"));
         assert!(!is_newer_version("1.2.3", "v1.2.3"));
         assert!(!is_newer_version("preview", "1.2.3"));
     }

@@ -455,15 +455,14 @@ dependencies = [
 
 [[package]]
 name = "codex-uds"
-version = "0.160.0"
-source = "git+https://github.com/openai/codex?rev=a956835d020762cb2b570053af06f643a11c0ecc#a956835d020762cb2b570053af06f643a11c0ecc"
+version = "0.163.0"
 dependencies = [
  "async-io",
  "libc",
  "tokio",
  "tokio-util",
  "uds_windows",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -869,9 +868,10 @@ dependencies = [
 
 [[package]]
 name = "discodex"
-version = "0.1.13"
+version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "codex-uds",
  "flate2",
  "fontdb",

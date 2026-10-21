@@ -1,12 +1,22 @@
-ローカルの通常の`/v1/models`応答はCodex model metadataに自動変換されません。モデル候補はアクティブなnative catalogと、`[profiles.NAME]`に`model`と`model_provider`を指定して明示登録したモデルです。provider定義だけではモデルは登録されず、任意のprofileファイルも自動列挙されません。機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
+# 製品設計
 
-<p align="center"><a href="design.md">English</a> · <a href="design.ko.md">한국어</a> · <a href="design.zh-CN.md">简体中文</a> · 日本語</p>
+Discodex 1.0は同梱CodexフォークでDiscordと永続会話を接続します。ルーティング・表示・メディアはDiscodex、ネイティブ実行・メモリ・子エージェントのライフサイクルはCodexが担当します。任意のAntigravity実行にはログイン済みのローカルAGY CLIを使います。
 
-DiscodexはDiscordのチャンネル、スレッド、音声、メッセージの接続と配送を担当します。Codexが判断する権限、セキュリティ、ファイルアクセスを別の製品ポリシーで制限しません。Discord APIとプロトコルの制約にはページ分割と複数回送信で対応し、ユーザーの内容やファイル名を勝手に切り詰めません。
+[English](design.md) · [한국어](design.ko.md) · [简体中文](design.zh-CN.md) · **日本語**
 
-Discodexは、1つのDiscordアプリプロファイルを公式Codex app-serverの1つの永続スレッドに接続するRustブリッジです。Discordとの入力・応答、質問フォームと承認、設定変更、音声メディアの受け渡しを担い、タスクの判断とツール実行はCodexが行います。新規インストールではバイナリ、OSサービス、アプリデータに`discodex`の名前を使います。既存のCodex Workerプロファイルはユーザーが指定した設定ファイルから明示的に移行し、ロールバック用に元データを残します。
+## ランタイム、データと実装範囲
+
+フォークは`third_party/codex`サブモジュールで公式版と小さなパッチを固定します。プロバイダー・実行器の選択と要求互換性を拡張し、公式ツールと子の制御経路を保ちます。別タスク管理器、重複設定DB、黙ったモデル代替は作りません。ファイル種類・パス制限や第二のモデル安全方針を追加せず、Discordアクセス、実際のプロトコル上限、所有権、状態整合を扱います。
+
+Release CIは公式パッケージビルダーでcore・code-mode host・`rg`・OS helperを作ります。マニフェストで対応worker版、コミット、OS/CPU、チェックサムを固定します。実行体は`CODEX_HOME`と別に配置します。新規導入は既存ホーム共有（検出時推奨）か専用ホームを選び、既存設定はホーム・ログイン・メモリ・履歴を保ち、共有`config.toml`を上書きしません。別セッションはホームを共有でき、同じセッションの同時制御はこの契約に含めません。
+
+本文は1.0ソースの説明であり、公開Release完了や全OSビルド・実音声試験合格を意味しません。公開物と検証結果は別途報告します。
 
 ## 会話と設定
+
+ホーム設定は**承認方針**と**権限プロファイル**を分けます。既定は`on-request`、`never`は明示的なユーザー選択です。保存値と実効値を区別し、稼働中スレッドにはネイティブ設定API、開始・再開には選択方針を渡します。**詳細設定**に機能スイッチとAGYをまとめ、子モデル選択を重複させません。 承認の選択はプロファイルごとの`native-features.json`に保存し、共有Codex設定は上書きしません。
+
+回答がネイティブ要求に受理されると元のDiscordメッセージには選んだ回答だけを残し、回答ボタンを削除します。送信前の入力エラーは修正できます。通信エラーだけでは回答の受信有無を判断せず、実際の原因を表示して、不確かな応答を自動再送しません。遅延・重複クリックで別の質問へ回答したり二重送信したりしません。
 
 `/discodex settings`は現在値を表示し、選択項目をボタンで変更します。モデル、推論強度、サービス階層、権限プロファイルは公式native catalogと既存の更新経路を使います。入力の送信方法と音声プロファイルもボタンで選べます。Discordの行数・ボタン数に応じてページ分割し、選択肢を省略しません。ページが複数ある場合だけ前へ・次へを表示します。詳細設定の戻るボタンは設定一覧に戻り、一覧の終了ボタンは画面だけを閉じます。適用済み設定と進行中の会話は維持します。ボタン表示はプロファイルの言語に従います。選択値を保持し、現在のnative catalogで再確認します。
 
@@ -58,7 +68,7 @@ nativeの`update_plan`進捗は現在のプロファイル、thread、接続世�
 
 ## 名前と基本役割
 
-`src/instructions.rs`は設定の`name`を使い、一貫した名前と自己認識を持つAIの同僚として基本指示を作ります。nativeの`thread/start`と、worker起動時に既存スレッドを初めて読む`thread/resume`の`baseInstructions`で既定のコーディングエージェント指示を置き換えます。すでに読み込み済みのスレッドへのsocket再接続では上書きしません。会話履歴、権限、ツール定義、端末のCodexログインは保たれます。音声Realtimeはテキストスレッドの`baseInstructions`とは別のbackend promptを使います。所有するCodex子プロセスだけに`experimental_realtime_ws_backend_prompt`を渡して設定名の役割を示します。公式の選択順はこのoverride、要求prompt、既定backend promptであり、既定promptは自らをCodexと紹介します。`realtimeStartInstructions`はbacking Codexモデル向けのdeveloper文脈で、voice backendの役割promptの代わりにはなりません。接続時に挨拶は挿入せず、通話境界と永続スレッドの継続性だけ伝えてユーザーの発話を待ちます。[Codex realtime prompt selector](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/realtime_prompt.rs)、[既定Realtime backend prompt](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/prompts/templates/realtime/backend_prompt.md)。
+`src/instructions.rs`は設定の`name`を使い、一貫した名前と自己認識を持つAIの同僚として基本指示を作ります。nativeの`thread/start`と、worker起動時に既存スレッドを初めて読む`thread/resume`の`baseInstructions`で既定のコーディングエージェント指示を置き換えます。すでに読み込み済みのスレッドへのsocket再接続では上書きしません。会話履歴、権限、ツール定義、端末のCodexログインは保たれます。音声Realtimeはテキストスレッドの`baseInstructions`とは別のbackend promptを使います。所有するCodex子プロセスだけに`experimental_realtime_ws_backend_prompt`を渡して設定名の役割を示します。固定コアの基準コミット（`83086188`）では、空でない設定override、要求prompt、既定backend promptの順に選び、既定promptは自らをCodexと紹介します。[`realtimeStartInstructions`](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs#L244-L246)はbacking Codexモデル向けのdeveloper文脈で、voice backendの役割promptの代わりにはなりません。接続時に挨拶は挿入せず、通話境界と永続スレッドの継続性だけ伝えてユーザーの発話を待ちます。[Codex realtime prompt selector](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/realtime_prompt.rs#L5-L24)、[既定Realtime backend prompt](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/prompts/templates/realtime/backend_prompt.md#L1-L3)。
 
 通話終了の扱いは作業モデルの基本指示と`voice_leave`ツール説明で統一します。現在の通話を終える明示的依頼または文脈上明確な別れの言葉でツールを呼びます。引用、否定、別作業の終了を固定語句だけで判定せず、意図が曖昧なときだけ確認します。`voice_leave`は要約を必須とし、前後の空白を除いて1〜2000文字（Discordの単一投稿上限）にします。メディア転送を止めて音声チャンネルを先に退出し、その後native realtime、文字起こし、WebRTCを整理します。transcriptの整理が成功した場合だけ、呼び出し時に通話へ記録された親アンカー投稿を要約で更新します。手動の`/discodex voice-leave`には要約を付けず、すでに無効な通話の遅延処理で古い投稿を編集しません。「文字起こし処理: 完了」という表示は追加しません。永続Codexスレッドと進行中のテキスト作業は終了しません。
 
@@ -90,37 +100,49 @@ Windowsのログオン時タスクは、同じユーザーアカウントでのU
 
 Discordの直接入力では`source.author`、`body`、安定した`source.authorMention` tokenを渡します。ホーム外では`source.server`と`source.channel`を名前で付けます。会話回答では入力投稿者への明示的ユーザーメンションを許可できますが、状態・エラー通知では無効にします。転送メッセージのsnapshotは`forwardedMessages`として分け、通常添付とともにダウンロードします。繰り返し使う形式説明は基本promptに一度だけ置きます。ツールのチャンネル・ユーザー選択には名前、個別メッセージ参照にはDiscordリンク、添付選択にはファイル名を使います。重複候補に限り一時選択値を使いますが、内部IDと入力の出典・turn相関は保持します。
 
-## モデルとsubagentの既定値
+## モデルとサブエージェントの既定値
 
-メインモデルとsubagentモデルの選択画面には、アクティブなnative model catalogとnative設定profileに明示登録したモデルが表示されます。`[profiles.NAME]`テーブルに`model`と`model_provider`を両方指定してモデルを登録します。provider定義だけではモデルは追加されず、Discodexは任意の`*.config.toml`ファイルを検索しません。表示はmodelフィールド、ID、slugの順に優先します。
+メインと既定子モデルの一覧はアクティブCodexカタログと明示的な設定を合わせます。`[profiles.NAME]`に`model`と`model_provider`を両方書き、プロバイダー定義だけからモデルを推測しません。認証と能力はネイティブが管理します。[インストール例](installation.ja.md#カスタムおよびローカルcodex-provider)を参照してください。
 
-モデルを選ぶと、同じ永続Codex threadでproviderを切り替えて会話履歴を引き継ぎます。同じprovider内のモデル変更はthreadが動作中でも適用でき、別providerへの切り替えはthreadがidleになるまで待ちます。Native subagentは親のproviderを引き継ぐため、別providerのモデルはsubagentに使用できません。互換性のないsubagent選択はDiscodexが理由を示して拒否します。機能と推論強度はnative catalogが提供する場合にだけ選択できます。
+実行器・プロバイダー・モデルを組で保存します。フォークは子の対象を親と別に受け取るため、子は他の登録プロバイダーを使い、その認証・設定を解決できます。利用できない場合はエラーを示し、親モデルに黙って代替しません。メイン会話の履歴は保持します。**既定サブエージェントモデル**はホーム設定に1回だけ表示します。保存した子の既定値は、worker再起動後を含め、次のスレッド作成・再開時に読み込みます。現在のスレッドは再開まで有効な既定値を維持し、既存の子も自身の設定を保持します。
 
-provider定義はworkerが実際に使う`CODEX_HOME/config.toml`に設定します。Native Codexは組み込みのOllama、LM Studio providerとResponses APIのカスタムproviderに対応します。provider認証はCodexが処理します。通常のローカル`/v1/models`応答はCodex model metadataに自動変換されません。機能検出にはCodex catalog metadataが必要です。[Codex設定ガイド](https://developers.openai.com/codex/config-advanced/)、[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)、[同梱モデルcatalogの例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)を参照してください。
+## プロバイダー切り替えと暗号化履歴
 
+メインのプロバイダー変更と、親の文脈をフォークした子が別プロバイダーを使う場合に、同じ互換境界を適用します。保存済み原本と親スナップショットは変更しません。要求の組み立て時に`model_providers.<id>.capabilities.encrypted_content`を確認し、送信ビューだけを変換します。省略時はネイティブのOpenAI・Azure Responses分類を対応、それ以外を非対応とします。
 
-設定ホームには既定subagentモデルがあります。保存するとDiscodex所有の agents.default_subagent_model 機能上書きに記録され、worker再起動後に有効になります。リセットすると上書きを削除してnativeの既定値に戻します。モデルとツールの互換性は異なり、音声機能にはnative音声capabilityが必要な場合があります。
+対象は型付きのネイティブ応答項目で、推論・メッセージの暗号化本文、圧縮文脈、ツール結果、エージェントメッセージを含みます。読める要約・本文・画像と呼び出しIDは保ちます。不透明データだけの部分には、以前の内容を読めず必要なら再取得・再実行すべきとの明示を入れます。復号や全文を読んだという主張はしません。普通の文字列やツールJSONの`encrypted_content`というキーは再帰的に削除しません。これはプロバイダー専用の再利用データであり、一般的なパスワード隠蔽の仕組みではありません。
 
-Discodexは保存したsubagentモデル設定とproviderを一緒に保持します。メインモデルのproviderが変わって保存設定と互換性がない間も設定は残り、subagentの有効な既定値には新しい親モデルを使います。メインモデルを一致するproviderに戻すと、保存済み設定が再び適用されます。
+ネイティブ`AgentMessage`の送信形式への対応は`encrypted_content`とは別で、`model_providers.<id>.capabilities.agent_messages`で指定します。省略時はcoreの既存のネイティブOpenAIプロバイダー分類に従い、カスタムプロバイダーはこの拡張への対応に合わせて明示的に設定できます。非対応なら、送信ビューでは`id`・`author`・`recipient`と読める内容を通常のassistantメッセージ内のJSONに保ち、不透明なネイティブ内容には利用できない旨を明示します。原本の履歴は変更せず、この変換を理由にプロバイダーやモデルを拒否・代替しません。 `encrypted_content`がtrueでも、ネイティブagent-message形式に非対応なら、再利用契約のない該当暗号文はこの通知に置き換えます。
+
+## 任意のAntigravity実行
+
+Antigravityは既定で無効です。**詳細設定 → Antigravity**で有効化し、必要ならCLIパスと正確なモデルIDを1行ずつ指定します。既存サブスクリプション認証はAGYが管理し、SDKや非公開モデルAPIに渡しません。登録した対象はメインと子の両一覧に現れ、次の選択またはAGYセッション開始に反映します。
+
+有効な場合はモデルへのプロンプトを送らず、インストール済みCLIの`agy models`から正確なIDと名称、`agy --help`から推論強度の選択肢を取得します。両方のモデル一覧に反映し、手入力IDで補足します。CLIヘルプは引数の選択肢であり、モデルごとの対応確認済みメタデータではありません。モデル名からIDや強度を推測・変換しません。取得失敗は設定に表示します。明示した未対応の強度はそのままCLIへ渡し、エラーになる場合も別の値へ置き換えません。
+
+会話とタスク記録の正本はCodexです。AGYは応答ごとに新しいCLI実行を開始し、ネイティブ会話と可視のツール結果を入力として再構成します。記録済み文脈を維持するのであり、AGYの非公開推論や隠れた実行状態を復元するものではありません。ネイティブメモリは選択したCodexホームに残ります。AGY音声には対応しません。
+
+重複するツールはAGY内蔵を使い、追加のDiscord・タスクツールは既存項目を保ったプロジェクトMCPで供給します。MCP操作はCodexフォークの公式子ライフサイクルに入り、状態・待機・メッセージ・中断を扱います。第二のスケジューラーはなく、AGY内蔵チームモードをすべて無効化できるとは保証しません。テストはデータとライフサイクルを確認し、モデルのツール選択を強制しません。
+
+各外部応答は、ネイティブのスレッド・ターン・応答 ID に関連付けられます。MCP 呼び出し、ストリーミングイベント、完了応答は、ネイティブ実行の時点までこの対応を保持します。同じネイティブターン内で応答が続いても、前の応答から遅れて届いた呼び出しが次の応答に結び付くことはありません。
+
 ## MCPツール実行の承認
 
 公式Codexのform elicitationで、`_meta.codex_approval_kind: "mcp_tool_call"`かつ空のobject schemaを持つ要求は、追加入力フォームではなく実行承認ボタンとして表示します。「今回のみ許可」「拒否」「キャンセル」を提示し、セッション許可と常時許可はnative要求の`_meta.persist`が示す範囲に限って表示します。選択結果は公式の`action`と必要な`_meta.persist`をそのまま渡し、ユーザー入力や認証情報を捏造しません。通常の入力フォームは従来経路を保ち、URLやユーザー認証要求を実行承認として解釈しません。要求ID、接続世代、重複応答防止には同じpending要求状態を使います。
 
-契約根拠は、インストール済みCodexと同じ公式commitの[承認フォーム生成・応答処理](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/mcp_tool_call.rs#L1884)と[app-serverの応答メタデータ転送](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/app-server/src/bespoke_event_handling.rs#L1689)です。
+契約根拠は、Discodexが固定するCodexフォークの基準コミット（`83086188`）の[承認フォーム生成](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/mcp_tool_call.rs#L1962-L2023)、[承認応答処理](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/mcp_tool_call.rs#L2113-L2149)、[app-serverの応答メタデータ転送](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/bespoke_event_handling.rs#L1728-L1753)です。
 
 ## 更新通知
 
-自動Release通知の確認予定は`last_checked_unix`に保存します。初回だけ即時確認し、その後は保存済みの期限に従います。成功後は6時間、失敗後は15分で再確認し、起動時も保存済み予定を使います。期限確認ループは15秒ごとに動きます。メタデータ確認はCodex turnやユーザーメッセージを作りません。
+確認時刻は永続化し、初回は即時、その後は成功から6時間・失敗から15分で確認します。15秒ループと起床イベントでモデルturnを作らず取得します。自動通知は5分アイドル後に表示し、**更新**、**このバージョンをスキップ**、**今後通知しない**を提供します。この時間条件は通知用です。
 
-自動通知はRelease確認とは独立して判定します。Codex接続中にアクティブturn、音声接続または終了処理、承認待ち、未処理入力、メッセージ処理、出力送信がなく、5分間アイドル状態ならホームチャンネルに表示します。Release発見時点ですでに条件を満たしていれば追加待機はありません。メンションやpush/desktop通知は使わず、Discord上の未読表示は残る場合があります。
+`/discodex update`は即時確認し、**更新 / キャンセル**と子作業・音声の中断案内を表示します。承諾後はアイドル待ちキューに入れません。worker取得・検証後に作業を中断し、新updaterが対応ランタイムを準備してからインストール済みサービスを停止・置換します。そのためランタイム準備失敗時には応答が中断済みの場合があります。既存worker・ランタイム・プロファイル参照は保持し、その応答は自動再開しません。
 
-通知にはUpdate、Skip this version、Never notify againの3つのボタンがあります。「更新」を押すと対象Releaseを固定し、まずダウンロードと検証を行います。準備に失敗した場合、現在のworkerと作業は続きます。準備成功後に限り、subagent作業を含む進行中の作業を中断し、接続中の音声通話を終了して5分タイマーを待たずに直ちに再起動・適用します。再起動後、通知設定に関係なく完了または失敗をホームチャンネルへ別途投稿します。会話履歴と設定を保ち、セッション再開の自動promptは送りません。Skip this versionはそのReleaseだけを対象にし、Never notify againはプロファイルの通知を無効にします。`/discodex settings`から再び有効にでき、ボタンと案内はインストール言語に従います。
+新helperは0.1.xの実行ファイルasset名と`update-helper`契約を保持し、workerに固定した公式レイアウトのランタイムとマニフェストを追加します。検証後に所有するworker・設定・所有記録を切り替えます。置換や再起動に失敗した場合、以前のworker、プロファイル設定、ランタイム参照、所有記録、サービス状態の復元を試みます。必要な復元段階が失敗すると、その段階に依存する後続処理を止めて原因を報告し、新旧ファイルが混在した状態で再起動しません。未使用の準備済みランタイムは必要なサービス復元の後に削除し、削除の失敗も報告します。清掃対象は記録済みで未変更の所有ファイルだけです。Codexホーム・アカウント・メモリ・履歴・設定をコピーも削除もしません。
 
-選択、skip、通知設定、送信試行、メッセージID、進捗を保存し、再起動後に同じ通知を重複作成しません。Discord送信結果が不明な場合は保存済み送信時点以降の既存通知を探して紐づけます。別のupdaterが承認済みGitHub ReleaseからOS・アーキテクチャ別のビルド済み実行ファイルを取得し、GitHub提供のSHA-256 digestとサイズを検証して既存の置換経路へ渡します。Release IDとcommitを固定するので、準備中に最新Releaseが変わっても選択は変わりません。保存済みの古い選択では同じRelease IDのasset情報を再取得します。ソースcheckoutやCargo buildは行いません。設定とCodexスレッドを保ち、適用時は短時間Discordが再接続します。他の端末は自動更新しません。
+再起動後、通知設定に関係なく完了または失敗をホームへ投稿します。再開promptや空入力を挿入せず、他端末を勝手に更新しません。CIはWindows/macOS/Linuxのx64・ARM64用worker、チェックサム、ランタイムマニフェスト、ソースなしインストーラーを定義し、利用者の端末でビルドしません。公開物は[Releaseページ](https://github.com/CHOAM-CO/Discodex/releases/latest)にあります。
 
-操作者専用の`/discodex update`は6時間の確認間隔を待たずに最新の公開Releaseを即時確認します。すでに固定対象を適用中なら対象を維持して状態を伝えます。それ以外はプロファイルの言語で「更新」または「キャンセル」の確認画面を表示し、「更新」を選ぶとsubagent作業を含む進行中の作業を中断して接続中の音声通話を終了すると明示します。「キャンセル」では現在の作業に触れません。「更新」を選ぶとReleaseを先にダウンロードして検証します。準備に失敗した場合、現在のworkerと作業は続きます。準備成功後に限り作業を中断し、音声通話を終了して直ちに再起動・適用します。再起動後、通知がミュート中または公開通知がなかった場合も、完了または失敗をホームチャンネルに別途投稿します。会話履歴と設定を保ち、セッション再開の自動promptは送りません。
-
-## Native機能、プラグイン、非同期リクエスト
+## 詳細設定、プラグイン、非同期リクエスト
 
 各Discodexプロファイルは専用の`native-features.json`を所有します。CodeMode、host、multiagent v2と`wait_agent`、通常モードの質問、clock、token budgetとhistory notes、非同期通知など、公式app-server機能を有効にします。Native機能の設定画面は実効状態と保存値を区別し、再起動が必要な変更を示します。
 

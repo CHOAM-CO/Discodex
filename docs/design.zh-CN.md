@@ -1,14 +1,22 @@
-普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。App-server 使用当前 active 配置；Discodex 不会枚举未激活的 profile 文件。worker 有效配置中显式设置的模型会与 native catalog 一起提供。`CODEX_HOME/small.config.toml` 这样的 Codex profile-v2 文件可通过 `codex --profile small` 供 CLI 选择，但不会切换 app-server 配置。基于 catalog 的能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
+# 产品设计
 
-<p align="center"><a href="../README.md">English README</a> · <a href="../README.ko.md">한국어 README</a> · <a href="../README.zh-CN.md">简体中文 README</a> · <a href="../README.ja.md">日本語 README</a></p>
-<p align="center"><a href="design.md">English</a> · <a href="design.ko.md">한국어</a> · 简体中文 · <a href="design.ja.md">日本語</a></p>
-<p align="center"><a href="installation.zh-CN.md">安装与卸载</a> · <a href="design.zh-CN.md">产品设计</a></p>
+Discodex 1.0 通过随附的 Codex 分支把 Discord 接入持久对话。Discodex 负责路由、界面和媒体；Codex 保留原生执行、记忆和子智能体生命周期。可选的 Antigravity 使用本机已登录的 AGY CLI。
 
-Discodex 负责连接和传递 Discord 频道、线程、语音与消息。它不会另行限制 Codex 对权限、安全或文件访问的决定。Discord API 和协议的实际限制通过分页和拆分发送处理，不会任意截断用户内容或文件名。
+[English](design.md) · [한국어](design.ko.md) · **简体中文** · [日本語](design.ja.md)
 
-Discodex 是 Rust 桥接程序，将一个 Discord 应用配置连接到官方 Codex app-server 中的一个持久 thread。桥接程序处理 Discord 输入与回复、问题和批准、设置变更及语音媒体传递；任务判断和工具执行由 Codex 完成。新安装使用 `discodex` 作为二进制、操作系统服务和应用数据路径名称。迁移现有 Codex Worker 配置时，必须由用户明确指定配置文件；原路径会保留以便回滚。
+## 运行时、数据与实现范围
+
+`third_party/codex` 子模块固定官方版本及少量分支补丁。补丁扩展提供商/执行器选择和请求兼容，保留官方工具与子智能体控制流程。不另建任务管理器、重复配置数据库或静默模型回退。Discodex 不增加文件类型/路径限制或第二套模型安全策略；仅处理 Discord 访问、真实协议限制、资源所有权和状态一致性。
+
+发布 CI 使用官方包构建器生成 core、code-mode host、`rg` 和平台 helper。清单固定匹配的 worker 版本、分支提交、平台和校验和。执行文件独立于 `CODEX_HOME`。安装可选择现有目录（检测到时推荐）或专用目录；已有配置保留登录、记忆、历史和设置，不覆盖共享 `config.toml`。不同会话可共用目录，同时控制同一会话不在此约定内。
+
+本文件描述 1.0 源码，不表示公开发行或所有平台构建、实际语音试验已完成。发布资产与验证结果单独报告。
 
 ## 对话与设置
+
+主设置将**批准策略**与**权限配置**分开。默认批准策略是 `on-request`，`never` 需用户明确选择。分别显示保存值与实际值，活动会话使用原生设置更新 API，开始/恢复时传入所选策略。**高级设置**汇集详细原生开关和 AGY，不重复子模型选择。 审批选择按配置文件保存在各自的 `native-features.json` 中，不覆盖共享 Codex 配置。
+
+原生请求接受回答后，原 Discord 消息只保留所选答案并移除答题按钮。发送前的输入错误可以修正。传输错误本身不能确定答案是否已收到；界面显示实际原因，不会自动重发传递状态不确定的响应。迟到或重复点击不能再次提交或回答其他问题。
 
 `/discodex settings` 会显示当前设置，并用按钮选择模型、推理强度、服务等级、权限配置、输入传递模式和语音配置。模型与权限选项来自官方 native catalog，并通过现有更新接口设置。选项按 Discord 行和按钮限制分页，不会遗漏；只有有多页时才显示上一页和下一页。子设置页的返回按钮回到主设置列表；主列表的退出按钮只关闭设置界面。已应用设置和正在进行的对话保持不变。按钮文案使用配置文件的语言。提交时会保留按钮显示的选择值，并以当前 native catalog 再次核对。
 
@@ -60,7 +68,7 @@ Native `update_plan` 进度关联当前配置、连接代次和 turn。每次计
 
 `src/instructions.rs` 根据配置中的 `name` 生成身份一致的默认智能体角色。worker 通过 native `thread/start` 和 worker 启动时首次读取现有 thread 的 `thread/resume`，用 `baseInstructions` 设置默认编码智能体指令；已加载 thread 的 socket 重连不会覆盖指令。对话历史、权限、工具定义和设备上的 Codex 登录保持不变。
 
-语音 Realtime 使用不同于文字 thread `baseInstructions` 的 backend prompt。只有产品拥有的 Codex 子进程会收到 `experimental_realtime_ws_backend_prompt`，不会改写 Codex 全局配置。官方实现按 override、请求 prompt、默认 backend prompt 的优先级选择；默认 prompt 会自称 Codex。`realtimeStartInstructions` 是给 backing Codex 模型的 developer 上下文，不能代替 voice backend 的身份 prompt。不会注入连接问候，只传递通话边界和持久 thread 的连续性，然后等待用户发言。依据：[Codex realtime prompt selector](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/realtime_prompt.rs)、[默认 realtime backend prompt](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/prompts/templates/realtime/backend_prompt.md)。
+语音 Realtime 使用不同于文字 thread `baseInstructions` 的 backend prompt。只有产品拥有的 Codex 子进程会收到 `experimental_realtime_ws_backend_prompt`，不会改写 Codex 全局配置。固定核心的基准提交（`83086188`）按非空配置 override、请求 prompt、默认 backend prompt 的优先级选择；默认 prompt 会自称 Codex。[`realtimeStartInstructions`](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server-protocol/src/protocol/v2/realtime.rs#L244-L246) 是给 backing Codex 模型的 developer 上下文，不能代替 voice backend 的身份 prompt。不会注入连接问候，只传递通话边界和持久 thread 的连续性，然后等待用户发言。依据：[Codex realtime prompt selector](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/realtime_prompt.rs#L5-L24)、[默认 realtime backend prompt](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/prompts/templates/realtime/backend_prompt.md#L1-L3)。
 
 语音结束策略由任务模型默认指令与 `voice_leave` 工具说明共同规定。用户明确要求结束当前通话或语境中显然是在告别时，模型调用实际工具；不会按固定关键词把引用、否定或其他任务的结束误判为当前通话结束，意图不清楚时才确认。`voice_leave` 必须提供摘要，去除首尾空格后须为 Discord 单条消息可接受的 1–2000 字符。流程先停止媒体传递并离开 Discord 语音频道，再清理 native realtime、转录和 WebRTC。只有转录清理成功时，才用摘要更新调用时捕获的本次通话父锚点消息。手动 `/discodex voice-leave` 不附带摘要；已停用通话的迟到清理不会修改旧消息，也不会添加“转录处理：完成”状态。持久 Codex thread 和正在进行的文字任务不会结束。
 
@@ -94,35 +102,49 @@ Windows 计划任务在安装时通过同一用户账号的 UAC 批准以 Highes
 
 Discord 直接输入会传递 `source.author`、`body` 和稳定的 `source.authorMention` token。主页以外的输入还会附上名称形式的 `source.server` 和 `source.channel`。实际对话回复允许明确提及输入作者；独立状态和错误通知则关闭提及。转发消息快照单独放在 `forwardedMessages` 中，并与普通附件一同下载。重复的格式说明只放在默认 prompt 中。工具以名称选择频道和用户，以 Discord 链接引用具体消息，以文件名选择附件。只有重名候选才使用临时选择值；内部 ID、输入来源和 turn 关联仍保留。
 
-## 模型与 subagent 默认值
+## 模型与子智能体默认值
 
-主模型和 subagent 选择器会显示当前 native 模型 catalog，以及在 native 配置 profile 中明确注册的模型。请在 `[profiles.NAME]` 表中同时设置 `model` 和 `model_provider` 来注册模型。仅定义 provider 不会添加模型；Discodex 不会扫描任意的 `*.config.toml` 文件。显示时优先使用 model 字段，其次是 ID，最后是 slug。
+主模型和默认子模型列表合并当前 Codex 目录与原生配置中明确登记的提供商/模型。`[profiles.NAME]` 同时指定 `model` 与 `model_provider`；仅定义提供商不会猜测模型。认证与能力由原生处理。示例见[安装指南](installation.zh-CN.md#自定义与本地-codex-provider)。
 
-选择模型时，可以在同一个持久 Codex thread 中切换 provider 并保留对话历史。切换到当前 provider 下的其他模型可在 thread 活跃时应用；切换到另一 provider 则会等到 thread 空闲。Native subagent 会继承父任务的 provider，因此不能为 subagent 使用其他 provider 的模型。Discodex 会说明并拒绝不兼容的 subagent 选择。只有 native catalog 提供的能力和推理强度选项才可用。
+选择同时保存执行器、提供商和模型。分支为子会话单独接收目标，因此子模型可使用其他已配置提供商，并读取该提供商自己的认证和设置。不可用时报告错误，不静默改用父模型。主会话历史保持不变。**默认子智能体模型**只在主设置出现一次。保存的子会话默认值在下次创建或恢复线程时读取，包括 worker 重启后的恢复。当前线程在恢复前保持有效默认值，现有子会话也保持各自设置。
 
-请在 worker 实际使用的 `CODEX_HOME/config.toml` 中定义 provider。Native Codex 支持内置 Ollama、LM Studio provider，以及使用 Responses API 的自定义 provider。Provider 认证由 Codex 处理。普通本地 `/v1/models` 响应不会自动转换为 Codex 模型元数据。能力发现需要 Codex catalog 元数据。请参阅 [Codex 配置指南](https://developers.openai.com/codex/config-advanced/)、[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)和[附带的模型 catalog 示例](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)。
+## 提供商切换与加密历史
 
+主提供商切换，以及子会话复制父上下文后使用另一提供商，经过相同兼容边界。持久化源历史和父快照不变。构造请求时检查 `model_providers.<id>.capabilities.encrypted_content`，只转换待发送视图。省略时按原生分类将 OpenAI、Azure Responses 视为支持，其他提供商视为不支持。
 
-设置主页包含默认 subagent 模型。保存后写入 Discodex 所有的 agents.default_subagent_model 功能覆盖项，并在 worker 重启后生效。重置会移除此覆盖项并恢复 native 默认值。模型与工具的兼容性各异；语音功能可能需要 native 语音 capability。
+转换处理有类型的原生响应项，包括推理/消息加密正文、压缩上下文、工具结果和智能体消息内容。保留可读摘要、文本、图片以及调用 ID。只有不透明数据的部分变成明确的“旧内容不可读，需要时重新查询或执行”提示，不会解密或声称完整读过上下文。普通字符串或工具 JSON 中字面名为 `encrypted_content` 的字段不会被递归删除。这些内容是提供商专用的重放数据，不是通用密码遮盖机制。
 
-Discodex 会将 provider 与已保存的 subagent 模型偏好一起记录。主模型切换 provider 后，偏好仍会保留；偏好与当前 provider 不兼容期间，subagent 会以新的父模型作为有效默认值。主模型切回匹配的 provider 后，已保存的偏好会恢复生效。
+原生 `AgentMessage` 传输格式的支持独立于 `encrypted_content`，由 `model_providers.<id>.capabilities.agent_messages` 控制。省略时沿用 core 现有的原生 OpenAI 提供商分类；自定义提供商可根据是否支持该扩展显式设置。不支持时，发送视图将 `id`、`author`、`recipient` 和可读内容保存在普通 assistant 消息内的 JSON 中，并明确提示不透明的原生内容不可用。原始历史不变，也不会因这项转换拒绝提供商或模型，或改用其他目标。 即使 `encrypted_content` 为 true，不支持原生 agent-message 格式时，没有重放契约的对应密文也会替换为此提示。
+
+## 可选 Antigravity 执行
+
+Antigravity 默认关闭。在**高级设置 → Antigravity**启用，可设置 CLI 路径和每行一个准确模型 ID。现有订阅登录由 AGY 管理，不通过 SDK 或私有模型端点传递凭据。登记的 AGY 目标出现在主模型和子模型列表；偏好在下一次选择或 AGY 会话启动时生效。
+
+启用后，Discodex 从已安装 CLI 的 `agy models` 读取准确模型 ID 和名称，从 `agy --help` 读取推理强度选项，不发送模型提示。两处模型列表显示发现结果，手动填写的 ID 用于补充。CLI 帮助列出的是参数选项，不是已验证的各模型能力元数据。不会按模型名称猜测 ID 或映射强度。列表读取失败会显示在设置中。明确指定的不受支持强度会原样传给 CLI，并可能返回错误，不会自动替换为其他值。
+
+Codex 是对话和任务记录的基准。每次 AGY 响应启动新的 CLI 执行，把原生会话和可见工具结果上下文重新放入输入。保留的是已记录上下文，不是 AGY 私有推理或隐藏执行状态。原生记忆仍在选定 Codex 目录。不支持 AGY 语音。
+
+重叠工具使用 AGY 内置实现，缺少的 Discord/任务工具通过项目 MCP 提供，保留其他配置项。MCP 任务管理进入 Codex 分支官方子生命周期，包括状态、等待、消息和中断。不增加第二个调度器，也不保证可关闭全部 AGY 内置团队模式。测试验证数据与生命周期，不强制模型选用某个工具。
+
+每个外部响应都绑定到其原生线程、轮次和响应 ID。MCP 调用、流式事件和完成响应在原生调度时仍保留该绑定。即使前后两个响应属于同一原生轮次，较早响应的延迟调用也不会被关联到后一个响应。
+
 ## MCP 工具执行批准
 
 官方 Codex form elicitation 若包含 `_meta.codex_approval_kind: "mcp_tool_call"` 且 schema 为空对象，会显示工具执行批准按钮，而不是额外输入表单。提供“仅此次允许”“拒绝”和“取消”；“允许此会话”和“始终允许”只在 native 请求 `_meta.persist` 指明的范围内显示。响应原样传递官方 `action` 和所需 `_meta.persist`，不会伪造用户输入或身份凭据。普通输入表单仍走原有流程；URL 或用户认证请求不会被当成执行批准。请求 ID、连接代次及防止重复响应使用同一 pending 请求状态。
 
-契约依据是与已安装 Codex 相同官方提交中的[批准表单生成与响应处理](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/core/src/mcp_tool_call.rs#L1884)和[app-server 响应元数据传递](https://github.com/openai/codex/blob/740e5af33c71225640e0c1c1555c514c2c93ab74/codex-rs/app-server/src/bespoke_event_handling.rs#L1689)。
+契约依据是 Discodex 固定的 Codex 分支基准提交（`83086188`）中的[批准表单生成](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/mcp_tool_call.rs#L1962-L2023)、[批准响应处理](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/core/src/mcp_tool_call.rs#L2113-L2149)和[app-server 响应元数据传递](https://github.com/CHOAM-CO/codex/blob/83086188ae0614bd882818ff1aa23f3194962012/codex-rs/app-server/src/bespoke_event_handling.rs#L1728-L1753)。
 
 ## 更新通知
 
-自动更新通知按持久化的上次检查时间查询公开 GitHub 正式 Release：首次立即检查，成功后每 6 小时检查，失败后 15 分钟重试；worker 重启时遵循已保存的时间。元数据查询在后台执行，不会创建 Codex turn 或用户消息。自动通知仅在原生连接在线，且没有活跃 turn、语音连接或清理、待处理批准、未处理输入、消息处理或输出发送，并已空闲 5 分钟后，才显示在主页频道。若发现更新时已满足空闲条件，不会再额外等待 5 分钟。检查循环约每 15 秒运行一次。不会 @提及用户，也不会触发 push/桌面通知；Discord 未读标记仍可能出现。
+检查时间持久化：首次立即检查，此后成功后 6 小时、失败后 15 分钟。15 秒循环及唤醒事件调度检查，不产生模型 turn。自动通知在空闲 5 分钟后显示，提供**更新**、**跳过此版本**、**不再通知**；这些条件只控制通知时间。
 
-通知提供“更新”“跳过此版本”“不再通知”三个按钮。点击“更新”会固定所选 Release，并先下载和验证；准备失败时，当前 worker 和工作会继续运行。只有准备成功后才中断当前工作（包括 subagent 任务）、结束已连接的语音会话并立即重启安装，不等待通知的 5 分钟计时器。重启后会在主页频道另发完成或失败消息，不受通知设置影响。对话历史和设置会保留；不会自动发送恢复会话的 prompt。“跳过此版本”只针对该 Release；“不再通知”会关闭此配置文件的通知，可在设置中重新启用。按钮和说明使用安装语言。
+`/discodex update` 立即检查并显示**更新 / 取消**，明确说明子任务和语音将中断。确认后不进入空闲队列。先下载验证 worker，再中断工作；新 updater 在停止或替换安装服务前准备匹配运行时。因此运行时准备失败时，响应可能已中断。已安装 worker、运行时和配置引用保持不变，不自动恢复被中断响应。
 
-选择、跳过、通知设置、发送尝试、消息 ID 和进度都会持久化，避免重启后重复创建相同通知。若 Discord 发送结果不明确，会查找保存发送时点之后的既有通知并关联。独立 updater 会下载获准 Release 中当前系统和架构的预编译程序，校验 GitHub 提供的 SHA-256 digest 和大小，再交给现有安装替换流程。Release ID 和 commit 会固定，即使准备期间出现更新版本也不会改变选择；恢复之前保存的选择时，会重新查询同一 Release ID 的 asset 元数据。不下载源码或运行 Cargo 构建。应用后保留设置和 Codex thread，但 Discord 连接会短暂重连。其他设备不会自动更新。
+新 helper 保持 0.1.x 可执行文件资产名和 `update-helper` 约定，Release 增加与 worker 固定匹配的官方布局运行时归档和清单。验证暂存内容后切换拥有的 worker/配置/所有权记录。替换或重启失败时，更新程序会尝试恢复原 worker、配置、运行时引用、所有权记录和服务状态。必要的恢复步骤失败时，停止依赖该步骤的后续操作并报告原因，不会重启新旧文件混用的安装。未使用的暂存运行时会在必要的服务恢复后清理，清理失败也会报告。只清理登记且未修改的包文件，不复制或删除 Codex 目录、账户、记忆、历史与设置。
 
-仅操作者可用的`/discodex update`会立即检查最新正式 Release，不受 6 小时检查间隔限制。若已有固定目标正在安装，会保留该目标并报告当前状态。否则会使用配置语言显示“更新”或“取消”确认，并明确提示“更新”会中断当前工作（包括 subagent 任务）并结束已连接的语音会话。取消不会影响当前工作。“更新”先下载并验证 Release；准备失败时，当前 worker 和工作会继续运行。只有准备成功后才中断工作、结束语音并立即重启安装。重启后会在主页频道另发完成或失败消息，即使通知已静音或没有发布通知。对话历史、配置和设置会保留；不会自动发送恢复会话的 prompt。
+重启后无论通知偏好如何，都在主页报告完成或失败。不插入恢复 prompt 或空输入，不自动更新其他设备。CI 定义 Windows/macOS/Linux x64 与 ARM64 的 worker、校验和、运行时清单和无源码安装包，客户端不构建。公开下载见[Release 页面](https://github.com/CHOAM-CO/Discodex/releases/latest)。
 
-## Native 功能、插件与异步请求
+## 高级设置、插件与异步请求
 
 每个 Discodex 配置文件拥有自己的 `native-features.json`，用于启用 CodeMode、host、multiagent v2 与 `wait_agent`、普通模式问题、clock、token budget 与 history notes、异步通知等官方 app-server 功能。Native 功能设置界面会区分实际生效状态与保存值，并标明需要重启的更改。
 

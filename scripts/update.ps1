@@ -39,6 +39,8 @@ try {
         throw 'The downloaded release binary failed SHA256 verification.'
     }
 
+    # The new worker stages its matching prebuilt runtime before stopping services.
+    # Profile settings, CODEX_HOME, and session data remain in their existing locations.
     $updateArguments = @('update', '--source', $binaryPath, '--config', $configPath)
     if ($MigrateAdhoc) { $updateArguments += '--migrate-adhoc' }
     & $binaryPath @updateArguments

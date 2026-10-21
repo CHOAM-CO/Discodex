@@ -37,6 +37,7 @@ pub(crate) enum SettingsKind {
     Effort,
     Fast,
     Permissions,
+    ApprovalPolicy,
     Input,
     Voice,
     Updates,
@@ -46,6 +47,7 @@ pub(crate) enum SettingsKind {
     Blacklist,
     RegisteredChannels,
     NativeFeatures,
+    Antigravity,
     NativeFeature(NativeFeatureKey),
 }
 
@@ -64,7 +66,7 @@ pub(crate) enum NativeFeatureKey {
 }
 
 impl NativeFeatureKey {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 9] = [
         Self::CodeMode,
         Self::CodeModeHost,
         Self::MultiAgentV2,
@@ -74,7 +76,6 @@ impl NativeFeatureKey {
         Self::Clock,
         Self::TokenBudget,
         Self::HistoryNotes,
-        Self::SubagentModel,
     ];
 
     fn key(self) -> &'static str {
@@ -167,7 +168,11 @@ impl NativeFeatureKey {
             Self::Clock => &["features.current_time_reminder.enabled"],
             Self::TokenBudget => &["features.token_budget.enabled"],
             Self::HistoryNotes => &["features.token_budget.use_history_notes_extension"],
-            Self::SubagentModel => &["agents.default_subagent_model"],
+            Self::SubagentModel => &[
+                "agents.default_subagent_model",
+                "agents.default_subagent_model_provider",
+                "agents.default_subagent_executor",
+            ],
         }
     }
 }
@@ -984,196 +989,23 @@ async fn build_settings_menu(
     };
     let model_scope = thread_model_scope(&thread);
     let (current_value, current, choices) = match kind {
-        SettingsKind::Hub => {
-            let mut current = format_settings_with_language(&settings_snapshot(&thread), language);
-            let mode = *state.input_mode.read().await;
-            current.push_str(&format!(
-                "\n{}: {}",
-                language.text(
-                    "Input delivery",
-                    "입력 전달 방식",
-                    "输入传递方式",
-                    "入力の送信方法"
-                ),
-                input_mode(mode, language)
-            ));
-            if let Some(provider) = thread.get("modelProvider").and_then(Value::as_str) {
-                current.push_str(&format!(
-                    "\n{}: {provider}",
-                    language.text(
-                        "Active model provider",
-                        "현재 모델 제공자",
-                        "当前模型提供方",
-                        "現在のモデルプロバイダー"
-                    )
-                ));
-            }
-            let selected_voice = state.voice.selected_voice()?;
-            let voice = selected_voice.unwrap_or_else(|| {
-                language
-                    .text(
-                        "Codex default",
-                        "Codex 기본 설정",
-                        "Codex 默认设置",
-                        "Codex の既定設定",
-                    )
-                    .to_owned()
-            });
-            current.push_str(&format!(
-                "\n{}: {voice}",
-                language.text(
-                    "Voice profile",
-                    "음성 프로필",
-                    "语音配置",
-                    "音声プロファイル"
-                )
-            ));
-            let choices = [
-                ("model", "Model", "모델", "模型", "モデル"),
-                (
-                    "subagent-model",
-                    "Default subagent model",
-                    "기본 하위 에이전트 모델",
-                    "默认子代理模型",
-                    "既定のサブエージェントモデル",
-                ),
-                (
-                    "effort",
-                    "Reasoning effort",
-                    "추론 강도",
-                    "推理强度",
-                    "推論の強さ",
-                ),
-                ("fast", "Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
-                (
-                    "updates",
-                    "Update notifications",
-                    "업데이트 알림",
-                    "更新通知",
-                    "更新通知",
-                ),
-                (
-                    "permissions",
-                    "Permission profile",
-                    "권한 프로필",
-                    "权限配置",
-                    "権限プロファイル",
-                ),
-                (
-                    "input",
-                    "Input delivery",
-                    "입력 전달 방식",
-                    "输入传递方式",
-                    "入力の送信方法",
-                ),
-                (
-                    "message-access",
-                    "Message reception policy",
-                    "메시지 수신 정책",
-                    "消息接收策略",
-                    "メッセージ受信ポリシー",
-                ),
-                (
-                    "voice",
-                    "Voice profile",
-                    "음성 프로필",
-                    "语音配置",
-                    "音声プロファイル",
-                ),
-                (
-                    "native-features",
-                    "Native Codex features",
-                    "네이티브 Codex 기능",
-                    "原生 Codex 功能",
-                    "ネイティブ Codex 機能",
-                ),
-            ]
-            .into_iter()
-            .map(|(value, en, ko, zh, ja)| SettingsChoice {
-                value: value.to_owned(),
-                label: language.text(en, ko, zh, ja).to_owned(),
-            })
-            .collect();
-            (None, current, choices)
-        }
+        SettingsKind::Hub => settings_home_values(
+            &thread,
+            *state.input_mode.read().await,
+            state.voice.selected_voice()?,
+            language,
+        ),
         SettingsKind::SubagentModel => {
             let snapshot = state.native.read_native_feature_snapshot().await?;
-            let saved = snapshot.preferences.subagent_model.clone();
             let catalog = state.native.model_catalog().await?;
-            let effective = effective_native_feature_text(
-                &snapshot.native_config,
-                NativeFeatureKey::SubagentModel,
-                language,
-            );
-            let selected = subagent_preference_scope(&snapshot.preferences, &catalog)
-                .and_then(|value| normalized_model_value(&catalog, &value));
-            let current = format!(
-                "{}: {}\n{}: {}\n{}: {}\n{}",
-                language.text(
-                    "Saved preference",
-                    "저장된 설정",
-                    "已保存的偏好",
-                    "保存済みの設定"
-                ),
-                saved.as_deref().unwrap_or_else(|| language.text(
-                    "Native default", "네이티브 기본값", "原生默认值", "ネイティブ既定値"
-                )),
-                language.text(
-                    "Active model provider",
-                    "현재 모델 제공자",
-                    "当前模型提供方",
-                    "現在のモデルプロバイダー"
-                ),
-                catalog.get("provider").and_then(Value::as_str).unwrap_or("unknown"),
-                language.text(
-                    "Effective Codex config",
-                    "실효 Codex 설정",
-                    "Codex 当前生效配置",
-                    "有効な Codex 設定"
-                ),
-                effective,
-                language.text(
-                    "The subagent model uses the active provider. Restart the Discodex worker to apply this saved default.",
-                    "하위 에이전트 모델은 현재 제공자를 사용합니다. 저장한 기본값을 적용하려면 Discodex 워커를 재시작하세요.",
-                    "子代理模型使用当前提供方。重启 Discodex 工作进程后应用此默认值。",
-                    "サブエージェントモデルは現在のプロバイダーを使います。保存した既定値を適用するには Discodex ワーカーを再起動してください。"
-                )
-            );
-            let current_value = selected
-                .or(saved)
-                .unwrap_or_else(|| "native-default".to_owned());
-            let choices = subagent_model_choices(&catalog, language);
-            (Some(current_value), current, choices)
+            subagent_model_settings_values(&thread, &snapshot, &catalog, language)
         }
         SettingsKind::NativeFeatures => {
-            let descriptors = state.native.list_native_feature_settings()?;
-            let mut current = language
-                .text(
-                    "Saved choices apply after the Discodex worker restarts.",
-                    "저장한 선택은 Discodex 워커를 다시 시작한 뒤 적용됩니다.",
-                    "保存的选择会在 Discodex 工作进程重启后生效。",
-                    "保存した選択は Discodex ワーカーの再起動後に適用されます。",
-                )
-                .to_owned();
+            advanced_settings_values(&state.native.read_native_feature_preferences()?, language)
+        }
+        SettingsKind::Antigravity => {
             let preferences = state.native.read_native_feature_preferences()?;
-            for key in NativeFeatureKey::ALL {
-                let value = native_feature_saved_value(&preferences, key);
-                current.push_str(&format!(
-                    "\n• {}: {}",
-                    key.label(language),
-                    native_preference_label(value.as_ref(), language)
-                ));
-            }
-            let choices = descriptors
-                .into_iter()
-                .filter_map(|(descriptor, _)| {
-                    NativeFeatureKey::from_key(descriptor.key).map(|key| SettingsChoice {
-                        value: format!("native-feature:{}", key.key()),
-                        label: key.label(language).to_owned(),
-                    })
-                })
-                .collect();
-            (None, current, choices)
+            antigravity_settings_values(&preferences, language)
         }
         SettingsKind::NativeFeature(key) => {
             let snapshot = state.native.read_native_feature_snapshot().await?;
@@ -1245,12 +1077,16 @@ async fn build_settings_menu(
                     "有効な Codex 設定"
                 ),
                 effective,
-                language.text(
-                    "Restart required to apply this preference.",
-                    "이 설정을 적용하려면 재시작이 필요합니다.",
-                    "此偏好需要重启后生效。",
-                    "この設定の適用には再起動が必要です。"
-                )
+                if key == NativeFeatureKey::SubagentModel {
+                    child_default_timing(language)
+                } else {
+                    language.text(
+                        "Restart required to apply this preference.",
+                        "이 설정을 적용하려면 재시작이 필요합니다.",
+                        "此偏好需要重启后生效。",
+                        "この設定の適用には再起動が必要です。",
+                    )
+                }
             );
             (Some(current_value), current, choices)
         }
@@ -1440,10 +1276,7 @@ async fn build_settings_menu(
             let selected = model_scope
                 .as_deref()
                 .and_then(|value| normalized_model_value(&catalog, value));
-            let provider = catalog
-                .get("provider")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
+            let provider = thread_model_provider(&thread).unwrap_or("unknown");
             let current = format!(
                 "{}\n{}: {provider}",
                 choice_current_label(&choices, selected.as_deref(), language),
@@ -1454,7 +1287,7 @@ async fn build_settings_menu(
                     "現在のモデルプロバイダー"
                 )
             );
-            (selected, current, choices)
+            (selected, model_catalog_warnings(current, &catalog), choices)
         }
         SettingsKind::Effort | SettingsKind::Fast => {
             let catalog = state.native.model_catalog().await?;
@@ -1472,7 +1305,7 @@ async fn build_settings_menu(
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let current = effort_current_label(&choices, thread.get("effort"), language);
-                (selected, current, choices)
+                (selected, model_catalog_warnings(current, &catalog), choices)
             } else {
                 let mut choices = vec![SettingsChoice {
                     value: "off".to_owned(),
@@ -1493,7 +1326,11 @@ async fn build_settings_menu(
                     .map(str::to_owned)
                     .unwrap_or_else(|| "off".to_owned());
                 let current = choice_current_label(&choices, Some(&selected), language);
-                (Some(selected), current, choices)
+                (
+                    Some(selected),
+                    model_catalog_warnings(current, &catalog),
+                    choices,
+                )
             }
         }
         SettingsKind::Permissions => {
@@ -1527,6 +1364,17 @@ async fn build_settings_menu(
                 .map(str::to_owned);
             let current = choice_current_label(&choices, selected.as_deref(), language);
             (selected, current, choices)
+        }
+        SettingsKind::ApprovalPolicy => {
+            let requirements = state
+                .native
+                .request("configRequirements/read", json!({}))
+                .await?;
+            let saved = state
+                .native
+                .read_native_feature_preferences()?
+                .approval_policy;
+            approval_policy_settings_values(&thread, &saved, &requirements, language)
         }
         SettingsKind::Input => {
             let mode = *state.input_mode.read().await;
@@ -1681,16 +1529,289 @@ fn choice_current_label(
         })
 }
 
+fn model_catalog_warnings(mut current: String, catalog: &Value) -> String {
+    for warning in catalog
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        current.push('\n');
+        current.push_str(warning);
+    }
+    current
+}
+
+fn settings_home_values(
+    thread: &Value,
+    mode: crate::config::InputMode,
+    selected_voice: Option<String>,
+    language: crate::i18n::Language,
+) -> (Option<String>, String, Vec<SettingsChoice>) {
+    let mut current = format_settings_with_language(&settings_snapshot(thread), language);
+    current.push_str(&format!(
+        "\n{}: {}",
+        language.text(
+            "Input delivery",
+            "입력 전달 방식",
+            "输入传递方式",
+            "入力の送信方法"
+        ),
+        input_mode(mode, language)
+    ));
+    if let Some(provider) = thread_model_provider(thread) {
+        current.push_str(&format!(
+            "\n{}: {provider}",
+            language.text(
+                "Active model provider",
+                "현재 모델 제공자",
+                "当前模型提供方",
+                "現在のモデルプロバイダー"
+            )
+        ));
+    }
+    let voice = selected_voice.unwrap_or_else(|| {
+        language
+            .text(
+                "Codex default",
+                "Codex 기본 설정",
+                "Codex 默认设置",
+                "Codex の既定設定",
+            )
+            .to_owned()
+    });
+    current.push_str(&format!(
+        "\n{}: {voice}",
+        language.text(
+            "Voice profile",
+            "음성 프로필",
+            "语音配置",
+            "音声プロファイル"
+        )
+    ));
+    let choices = [
+        ("model", "Model", "모델", "模型", "モデル"),
+        (
+            "subagent-model",
+            "Default subagent model",
+            "기본 하위 에이전트 모델",
+            "默认子代理模型",
+            "既定のサブエージェントモデル",
+        ),
+        (
+            "effort",
+            "Reasoning effort",
+            "추론 강도",
+            "推理强度",
+            "推論の強さ",
+        ),
+        ("fast", "Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
+        (
+            "updates",
+            "Update notifications",
+            "업데이트 알림",
+            "更新通知",
+            "更新通知",
+        ),
+        (
+            "permissions",
+            "Permission profile",
+            "권한 프로필",
+            "权限配置",
+            "権限プロファイル",
+        ),
+        (
+            "approval-policy",
+            "Approval policy",
+            "승인 방식",
+            "审批策略",
+            "承認ポリシー",
+        ),
+        (
+            "input",
+            "Input delivery",
+            "입력 전달 방식",
+            "输入传递方式",
+            "入力の送信方法",
+        ),
+        (
+            "message-access",
+            "Message reception policy",
+            "메시지 수신 정책",
+            "消息接收策略",
+            "メッセージ受信ポリシー",
+        ),
+        (
+            "voice",
+            "Voice profile",
+            "음성 프로필",
+            "语音配置",
+            "音声プロファイル",
+        ),
+        (
+            "native-features",
+            "Advanced settings",
+            "고급 설정",
+            "高级设置",
+            "詳細設定",
+        ),
+    ]
+    .into_iter()
+    .map(|(value, en, ko, zh, ja)| SettingsChoice {
+        value: value.to_owned(),
+        label: language.text(en, ko, zh, ja).to_owned(),
+    })
+    .collect();
+    (None, current, choices)
+}
+
+fn subagent_model_settings_values(
+    thread: &Value,
+    snapshot: &crate::native::NativeFeatureSnapshot,
+    catalog: &Value,
+    language: crate::i18n::Language,
+) -> (Option<String>, String, Vec<SettingsChoice>) {
+    let saved = snapshot.preferences.subagent_model.clone();
+    let effective = effective_native_feature_text(
+        &snapshot.native_config,
+        NativeFeatureKey::SubagentModel,
+        language,
+    );
+    let selected = subagent_preference_scope(&snapshot.preferences, catalog)
+        .and_then(|value| normalized_model_value(catalog, &value));
+    let saved_label = saved.as_ref().map(|model| {
+        format!(
+            "{} — {} / {}",
+            model,
+            snapshot
+                .preferences
+                .subagent_model_executor
+                .as_deref()
+                .unwrap_or("codex"),
+            snapshot
+                .preferences
+                .subagent_model_provider
+                .as_deref()
+                .unwrap_or_else(|| language.text(
+                    "Native default",
+                    "네이티브 기본값",
+                    "原生默认值",
+                    "ネイティブ既定値"
+                )),
+        )
+    });
+    let current = format!(
+        "{}: {}\n{}: {}\n{}: {}\n{}",
+        language.text(
+            "Saved preference",
+            "저장된 설정",
+            "已保存的偏好",
+            "保存済みの設定"
+        ),
+        saved_label.as_deref().unwrap_or_else(|| language.text(
+            "Native default",
+            "네이티브 기본값",
+            "原生默认值",
+            "ネイティブ既定値"
+        )),
+        language.text(
+            "Active model provider",
+            "현재 모델 제공자",
+            "当前模型提供方",
+            "現在のモデルプロバイダー"
+        ),
+        thread_model_provider(thread).unwrap_or("unknown"),
+        language.text(
+            "Effective Codex config",
+            "실효 Codex 설정",
+            "Codex 当前生效配置",
+            "有効な Codex 設定"
+        ),
+        effective,
+        child_default_timing(language)
+    );
+    let current_value = selected
+        .or(saved)
+        .unwrap_or_else(|| "native-default".to_owned());
+    let choices = subagent_model_choices(catalog, language);
+    (
+        Some(current_value),
+        model_catalog_warnings(current, catalog),
+        choices,
+    )
+}
+
+fn child_default_timing(language: crate::i18n::Language) -> &'static str {
+    language.text(
+        "The saved child default applies on the next thread creation or resume, including after a worker restart. The current thread keeps its effective settings until resumed.",
+        "저장한 하위 에이전트 기본값은 다음 스레드 생성·재개 시 적용되며, 워커 재시작 후 재개할 때도 적용됩니다. 현재 스레드의 실효 설정은 재개 전까지 유지됩니다.",
+        "保存的子代理默认值在下次创建或恢复线程时生效，包括工作进程重启后的恢复。当前线程在恢复前保持其有效设置。",
+        "保存した子エージェントの既定値は、ワーカー再起動後を含め、次のスレッド作成・再開時に適用されます。現在のスレッドは再開するまで有効な設定を保持します。",
+    )
+}
+
+fn child_default_saved_notice(language: crate::i18n::Language) -> String {
+    format!(
+        "{}\n{}",
+        language.text("Saved.", "저장했습니다.", "已保存。", "保存しました。"),
+        child_default_timing(language)
+    )
+}
+
+fn advanced_settings_values(
+    preferences: &crate::native::NativeFeaturePreferences,
+    language: crate::i18n::Language,
+) -> (Option<String>, String, Vec<SettingsChoice>) {
+    let descriptors = preferences.settings();
+    let mut current = language
+        .text(
+            "Native feature switches apply after the Discodex worker restarts. Antigravity settings apply on the next model selection or AGY session start.",
+            "네이티브 기능 스위치는 Discodex 워커 재시작 후 적용됩니다. Antigravity 설정은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+            "原生功能开关在 Discodex 工作进程重启后生效。Antigravity 设置在下次模型选择或 AGY 会话启动时生效。",
+            "ネイティブ機能の切り替えは Discodex ワーカーの再起動後に適用されます。Antigravity 設定は次のモデル選択または AGY セッション開始時に適用されます。",
+        )
+        .to_owned();
+    for key in NativeFeatureKey::ALL {
+        let value = native_feature_saved_value(preferences, key);
+        current.push_str(&format!(
+            "\n• {}: {}",
+            key.label(language),
+            native_preference_label(value.as_ref(), language)
+        ));
+    }
+    current.push_str(&format!(
+        "\n• Antigravity: {}",
+        if preferences.antigravity_enabled {
+            language.text("On", "켜짐", "已开启", "オン")
+        } else {
+            language.text("Off", "꺼짐", "已关闭", "オフ")
+        }
+    ));
+    let mut choices = descriptors
+        .into_iter()
+        .filter_map(|(descriptor, _)| {
+            NativeFeatureKey::from_key(descriptor.key).map(|key| SettingsChoice {
+                value: format!("native-feature:{}", key.key()),
+                label: key.label(language).to_owned(),
+            })
+        })
+        .collect::<Vec<_>>();
+    choices.push(SettingsChoice {
+        value: "antigravity".to_owned(),
+        label: "Antigravity".to_owned(),
+    });
+    (None, current, choices)
+}
+
 fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &'static str {
     match kind {
         SettingsKind::Hub => language.text("Settings", "설정", "设置", "設定"),
-        SettingsKind::NativeFeatures => language.text(
-            "Native Codex features",
-            "네이티브 Codex 기능",
-            "原生 Codex 功能",
-            "ネイティブ Codex 機能",
-        ),
+        SettingsKind::NativeFeatures => {
+            language.text("Advanced settings", "고급 설정", "高级设置", "詳細設定")
+        }
         SettingsKind::NativeFeature(key) => key.label(language),
+        SettingsKind::Antigravity => "Antigravity",
         SettingsKind::Updates => language.text(
             "Update notifications",
             "업데이트 알림",
@@ -1714,6 +1835,9 @@ fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &
             "权限配置",
             "権限プロファイル",
         ),
+        SettingsKind::ApprovalPolicy => {
+            language.text("Approval policy", "승인 방식", "审批策略", "承認ポリシー")
+        }
         SettingsKind::Input => language.text(
             "Input delivery",
             "입력 전달 방식",
@@ -1937,7 +2061,7 @@ fn settings_page_from_action(action: &str) -> Option<usize> {
         .ok()
 }
 
-fn split_discord_content(content: &str) -> Vec<String> {
+pub(crate) fn split_discord_content(content: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut count = 0;
@@ -2215,7 +2339,7 @@ fn effective_native_feature_text(
             }
         })
         .collect::<Vec<_>>()
-        .join("\\n")
+        .join("\n")
 }
 
 fn effective_config_value<'a>(native_config: &'a Value, path: &str) -> Option<&'a Value> {
@@ -2273,6 +2397,26 @@ fn set_native_feature_preference(
     Ok(())
 }
 
+fn set_subagent_model_selection(
+    preferences: &mut crate::native::NativeFeaturePreferences,
+    selection: Option<&crate::model_catalog::ModelSelection>,
+) {
+    preferences.subagent_model = selection.map(|value| value.model.clone());
+    preferences.subagent_model_provider = selection.map(|value| value.provider.clone());
+    preferences.subagent_model_executor = selection.map(|value| value.executor.as_str().to_owned());
+}
+
+fn settings_back_target(kind: SettingsKind) -> SettingsKind {
+    if matches!(
+        kind,
+        SettingsKind::NativeFeature(_) | SettingsKind::Antigravity
+    ) {
+        SettingsKind::NativeFeatures
+    } else {
+        SettingsKind::Hub
+    }
+}
+
 fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
     match value {
         "model" => Some(SettingsKind::Model),
@@ -2280,13 +2424,175 @@ fn settings_kind_from_key(value: &str) -> Option<SettingsKind> {
         "effort" => Some(SettingsKind::Effort),
         "fast" => Some(SettingsKind::Fast),
         "permissions" => Some(SettingsKind::Permissions),
+        "approval-policy" => Some(SettingsKind::ApprovalPolicy),
         "input" => Some(SettingsKind::Input),
         "voice" => Some(SettingsKind::Voice),
         "updates" => Some(SettingsKind::Updates),
         "message-access" => Some(SettingsKind::MessageAccess),
         "native-features" => Some(SettingsKind::NativeFeatures),
+        "antigravity" => Some(SettingsKind::Antigravity),
         _ => None,
     }
+}
+
+fn antigravity_settings_values(
+    preferences: &crate::native::NativeFeaturePreferences,
+    language: crate::i18n::Language,
+) -> (Option<String>, String, Vec<SettingsChoice>) {
+    let enabled = if preferences.antigravity_enabled {
+        "on"
+    } else {
+        "off"
+    };
+    let status = if preferences.antigravity_enabled {
+        language.text("On", "켜짐", "已开启", "オン")
+    } else {
+        language.text("Off", "꺼짐", "已关闭", "オフ")
+    };
+    let models = if preferences.antigravity_models.is_empty() {
+        language
+            .text(
+                "No model IDs configured",
+                "설정한 모델 ID 없음",
+                "未配置模型 ID",
+                "モデル ID 未設定",
+            )
+            .to_owned()
+    } else {
+        preferences.antigravity_models.join("\n")
+    };
+    let current = format!("{status}\n{}: {}\n{}:\n{models}\n{}",
+        language.text("CLI executable", "CLI 실행파일", "CLI 可执行文件", "CLI 実行ファイル"),
+        preferences.antigravity_path.as_deref().unwrap_or("agy"),
+        language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
+        language.text(
+            "Uses your locally signed-in Antigravity CLI. Changes apply when you next select a model or start an AGY session.",
+            "로컬에 로그인된 Antigravity CLI를 사용합니다. 변경은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+            "使用本机已登录的 Antigravity CLI。更改将在下次选择模型或启动 AGY 会话时生效。",
+            "ローカルでログイン済みの Antigravity CLI を使用します。変更は次のモデル選択または AGY セッション開始時に適用されます。",
+        ),
+    );
+    let choices = [
+        ("on", language.text("On", "켜기", "开启", "オン")),
+        ("off", language.text("Off", "끄기", "关闭", "オフ")),
+        (
+            "path",
+            language.text(
+                "CLI executable",
+                "CLI 실행파일",
+                "CLI 可执行文件",
+                "CLI 実行ファイル",
+            ),
+        ),
+        (
+            "models",
+            language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
+        ),
+    ]
+    .into_iter()
+    .map(|(value, label)| SettingsChoice {
+        value: value.to_owned(),
+        label: label.to_owned(),
+    })
+    .collect();
+    (Some(enabled.to_owned()), current, choices)
+}
+
+fn antigravity_text_field<'a>(menu: &'a SettingsMenuState, action: &str) -> Option<&'a str> {
+    if menu.kind != SettingsKind::Antigravity {
+        return None;
+    }
+    let index = action.strip_prefix('c')?.parse::<usize>().ok()?;
+    let value = menu.choices.get(index)?.value.as_str();
+    matches!(value, "path" | "models").then_some(value)
+}
+
+fn antigravity_text_modal(
+    menu_id: &str,
+    field: &str,
+    preferences: &crate::native::NativeFeaturePreferences,
+    language: crate::i18n::Language,
+) -> anyhow::Result<CreateModal> {
+    let (title, label, placeholder, value, style) = match field {
+        "path" => (
+            language.text(
+                "Antigravity CLI",
+                "Antigravity CLI",
+                "Antigravity CLI",
+                "Antigravity CLI",
+            ),
+            language.text(
+                "Executable path",
+                "실행파일 경로",
+                "可执行文件路径",
+                "実行ファイルのパス",
+            ),
+            language.text(
+                "Leave blank to use agy from PATH",
+                "비우면 PATH의 agy 사용",
+                "留空则使用 PATH 中的 agy",
+                "空欄なら PATH の agy を使用",
+            ),
+            preferences.antigravity_path.clone().unwrap_or_default(),
+            InputTextStyle::Short,
+        ),
+        "models" => (
+            language.text(
+                "Antigravity models",
+                "Antigravity 모델",
+                "Antigravity 模型",
+                "Antigravity モデル",
+            ),
+            language.text(
+                "Model IDs (one per line)",
+                "모델 ID (줄마다 하나)",
+                "模型 ID（每行一个）",
+                "モデル ID（1 行に 1 つ）",
+            ),
+            language.text(
+                "Exact model IDs from your AGY CLI",
+                "AGY CLI에서 확인한 정확한 모델 ID",
+                "AGY CLI 中的准确模型 ID",
+                "AGY CLI の正確なモデル ID",
+            ),
+            preferences.antigravity_models.join("\n"),
+            InputTextStyle::Paragraph,
+        ),
+        _ => bail!("unknown Antigravity text setting"),
+    };
+    Ok(
+        CreateModal::new(format!("codex:agy-settings:{menu_id}:{field}"), title).components(vec![
+            CreateActionRow::InputText(
+                serenity::builder::CreateInputText::new(style, label, "value")
+                    .required(false)
+                    .placeholder(placeholder)
+                    .value(value),
+            ),
+        ]),
+    )
+}
+
+fn set_antigravity_text_preference(
+    preferences: &mut crate::native::NativeFeaturePreferences,
+    field: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    match field {
+        "path" => {
+            preferences.antigravity_path =
+                (!value.trim().is_empty()).then(|| value.trim().to_owned())
+        }
+        "models" => {
+            preferences.antigravity_models = value
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }
+        _ => bail!("unknown Antigravity text setting"),
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -2386,6 +2692,20 @@ async fn handle_settings_component(
             return Ok(());
         }
     };
+    if let Some(field) = antigravity_text_field(&menu, action) {
+        let response = async {
+            let preferences = state.native.read_native_feature_preferences()?;
+            let modal =
+                antigravity_text_modal(menu_id, field, &preferences, state.config.language)?;
+            interaction
+                .create_response(ctx, CreateInteractionResponse::Modal(modal))
+                .await?;
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+        release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+        return response.context("open Antigravity setting input");
+    }
     if matches!(action, "a" | "r") && is_access_list(menu.kind) {
         let key =
             access_list_key(menu.kind).ok_or_else(|| anyhow!("invalid message access list"))?;
@@ -2564,11 +2884,7 @@ async fn handle_claimed_settings_action(
         };
         menu.page = 0;
     } else if prefix == 'h' && suffix.is_empty() {
-        menu.kind = if matches!(menu.kind, SettingsKind::NativeFeature(_)) {
-            SettingsKind::NativeFeatures
-        } else {
-            SettingsKind::Hub
-        };
+        menu.kind = settings_back_target(menu.kind);
         menu.page = 0;
     } else if prefix == 'b' && suffix.is_empty() && is_access_list(menu.kind) {
         menu.kind = SettingsKind::MessageAccess;
@@ -2583,12 +2899,16 @@ async fn handle_claimed_settings_action(
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
         if menu.kind == SettingsKind::NativeFeatures {
-            let feature = selected
-                .value
-                .strip_prefix("native-feature:")
-                .and_then(NativeFeatureKey::from_key)
-                .ok_or_else(|| anyhow!("unknown native feature choice"))?;
-            menu.kind = SettingsKind::NativeFeature(feature);
+            menu.kind = if selected.value == "antigravity" {
+                SettingsKind::Antigravity
+            } else {
+                let feature = selected
+                    .value
+                    .strip_prefix("native-feature:")
+                    .and_then(NativeFeatureKey::from_key)
+                    .ok_or_else(|| anyhow!("unknown native feature choice"))?;
+                SettingsKind::NativeFeature(feature)
+            };
             let refreshed = build_settings_menu(
                 ctx,
                 state,
@@ -2703,16 +3023,16 @@ async fn handle_claimed_settings_action(
             Ok(result) => result,
             Err(error) => {
                 tracing::warn!(error = ?error, "failed to apply Discord settings choice");
-                state
-                    .config
-                    .language
-                    .text(
+                format!(
+                    "{}\n{}",
+                    state.config.language.text(
                         "Could not apply that setting. The current choices are shown below.",
                         "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
                         "无法应用该设置。当前选项如下。",
                         "設定を適用できませんでした。現在の選択肢を表示します。",
-                    )
-                    .to_owned()
+                    ),
+                    settings_error_detail(&error)
+                )
             }
         };
         let refreshed = build_settings_menu(
@@ -2837,6 +3157,24 @@ async fn apply_setting_choice(
         .unwrap_or_else(|| state.native.thread_id());
     let language = state.config.language;
     match kind {
+        SettingsKind::Antigravity => {
+            let mut preferences = state.native.read_native_feature_preferences()?;
+            preferences.antigravity_enabled = match requested {
+                "on" => true,
+                "off" => false,
+                _ => bail!("unknown Antigravity switch"),
+            };
+            state
+                .native
+                .apply_native_feature_preferences(&preferences)
+                .await?;
+            Ok(language.text(
+                "Antigravity preference saved. It applies on the next model selection or AGY session start.",
+                "Antigravity 설정을 저장했습니다. 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+                "Antigravity 设置已保存。将在下次选择模型或启动 AGY 会话时生效。",
+                "Antigravity の設定を保存しました。次のモデル選択または AGY セッション開始時に適用されます。",
+            ).to_owned())
+        }
         SettingsKind::Updates => {
             let muted = match requested {
                 "on" => false,
@@ -2884,6 +3222,21 @@ async fn apply_setting_choice(
                 &settings,
                 active_turn,
                 language,
+            ))
+        }
+        SettingsKind::ApprovalPolicy => {
+            let policy: Value =
+                serde_json::from_str(requested).context("parse native approval policy choice")?;
+            let settings = state.native.set_approval_policy_and_confirm(policy).await?;
+            Ok(format!(
+                "{}: {}",
+                language.text(
+                    "Approval policy applied and saved",
+                    "승인 방식을 적용하고 저장했습니다",
+                    "审批策略已应用并保存",
+                    "承認ポリシーを適用して保存しました"
+                ),
+                format_approval_policy_with_language(&settings["approvalPolicy"], language),
             ))
         }
         SettingsKind::Input => {
@@ -2938,12 +3291,30 @@ async fn apply_setting_choice(
             let thread = state.native.refresh_thread_state().await?;
             let catalog = state.native.model_catalog().await?;
             let selection = crate::model_catalog::resolve_selection(&catalog, requested)?;
+            if thread_model_scope(&thread).as_deref() == Some(selection.value().as_str()) {
+                return Ok(format_settings_with_language(
+                    &settings_snapshot(&thread),
+                    language,
+                ));
+            }
             let active_provider = thread
                 .get("modelProvider")
                 .and_then(Value::as_str)
                 .or_else(|| catalog.get("provider").and_then(Value::as_str))
                 .ok_or_else(|| anyhow!("current model provider is unavailable"))?;
-            if selection.provider != active_provider {
+            let active_executor = thread
+                .get("modelExecutor")
+                .cloned()
+                .map(serde_json::from_value::<crate::model_catalog::ModelExecutor>)
+                .transpose()
+                .context("read current model executor")?
+                .unwrap_or_default();
+            if model_change_requires_resume(
+                active_executor,
+                active_provider,
+                thread.get("model").and_then(Value::as_str),
+                &selection,
+            ) {
                 let current_turn = state.current_turn.lock().await;
                 ensure_provider_switch_idle(
                     input_phase
@@ -3024,35 +3395,18 @@ async fn apply_setting_choice(
                 .map(str::to_owned);
             let catalog = state.native.model_catalog().await?;
             if kind == SettingsKind::SubagentModel {
-                if requested != "native-default"
-                    && !crate::model_catalog::catalog_has_model(&catalog, requested)
-                {
-                    bail!("subagent model is not present in the current native model catalog");
-                }
                 let selection = if requested == "native-default" {
                     None
                 } else {
                     Some(subagent_model_selection(&catalog, requested, language)?)
                 };
-                let selected = selection.as_ref().map(|value| value.model.as_str());
                 let mut preferences = state.native.read_native_feature_preferences()?;
-                set_native_feature_preference(
-                    &mut preferences,
-                    NativeFeatureKey::SubagentModel,
-                    selected,
-                )?;
-                preferences.subagent_model_provider =
-                    selection.as_ref().map(|value| value.provider.clone());
+                set_subagent_model_selection(&mut preferences, selection.as_ref());
                 state
                     .native
                     .apply_native_feature_preferences(&preferences)
                     .await?;
-                return Ok(state.config.language.text(
-                    "Saved for the next Discodex worker start. The subagent model uses the active provider; restart required.",
-                    "다음 Discodex 워커 시작을 위해 저장했습니다. 하위 에이전트 모델은 현재 제공자를 사용하며 재시작이 필요합니다.",
-                    "已保存，供下次 Discodex 工作进程启动时使用。子代理模型使用当前提供方；需要重启。",
-                    "次回の Discodex ワーカー起動用に保存しました。サブエージェントモデルは現在のプロバイダーを使います。再起動が必要です。"
-                ).to_owned());
+                return Ok(child_default_saved_notice(language));
             }
             validate_setting_choice(sub, requested, &catalog, &current_model).await?;
             let (field, value) = match kind {
@@ -3154,13 +3508,15 @@ async fn apply_setting_choice(
             };
             set_native_feature_preference(&mut preferences, key, selected)?;
             if key == NativeFeatureKey::SubagentModel {
-                preferences.subagent_model_provider =
-                    selection.as_ref().map(|value| value.provider.clone());
+                set_subagent_model_selection(&mut preferences, selection.as_ref());
             }
             state
                 .native
                 .apply_native_feature_preferences(&preferences)
                 .await?;
+            if key == NativeFeatureKey::SubagentModel {
+                return Ok(child_default_saved_notice(language));
+            }
             Ok(language.text(
                 "Saved for the next Discodex worker start. Restart required; the effective native config shown above is unchanged for this running process.",
                 "다음 Discodex 워커 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
@@ -3334,8 +3690,7 @@ pub(crate) async fn handle_component(
         interaction
             .edit_response(
                 ctx,
-                serenity::builder::EditInteractionResponse::new()
-                    .content(state.config.language.text("Could not send the choice. Check whether the request is still active, then try again.", "선택을 전달하지 못했습니다. 요청이 아직 처리 중인지 확인한 뒤 다시 시도해 주세요.", "无法发送此选择。请确认请求仍在处理中，然后重试。", "選択を送信できませんでした。リクエストがまだ有効か確認してから再試行してください。")),
+                approval_delivery_failure_response(&error, state.config.language),
             )
             .await?;
         return Ok(());
@@ -3376,6 +3731,103 @@ pub(crate) async fn handle_component(
         checks.request_answered(pending.connection_generation, &pending.native_id);
     }
     Ok(())
+}
+
+async fn handle_antigravity_settings_modal(
+    ctx: &Context,
+    interaction: &ModalInteraction,
+    state: &Arc<BridgeState>,
+) -> anyhow::Result<()> {
+    let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
+    if parts.len() != 4 || parts[0] != "codex" || parts[1] != "agy-settings" {
+        bail!("unknown Antigravity settings modal id");
+    }
+    let menu_id = parts[2];
+    let field = parts[3];
+    let menu = claim_settings_menu(
+        &mut *state.settings_menus.lock().await,
+        menu_id,
+        interaction.user.id.get(),
+    )
+    .map_err(|_| anyhow!("This settings panel is no longer available to this user"))?;
+    let result = async {
+        if menu.kind != SettingsKind::Antigravity
+            || menu.connection_generation != state.native.current_generation()
+            || menu.thread_id != state.native.thread_id()
+        {
+            bail!(state.config.language.text(
+                "This settings panel is no longer active. Open settings again.",
+                "설정 화면이 만료되었습니다. 설정을 다시 여세요.",
+                "此设置面板已失效。请重新打开设置。",
+                "この設定パネルは無効です。設定を開き直してください。",
+            ));
+        }
+        interaction
+            .create_response(ctx, CreateInteractionResponse::Acknowledge)
+            .await?;
+        let mut values = serde_json::Map::new();
+        collect_modal_values(
+            &serde_json::to_value(&interaction.data.components)?,
+            &mut values,
+        );
+        {
+            let _settings_change = state.settings_change_lock.lock().await;
+            let mut preferences = state.native.read_native_feature_preferences()?;
+            set_antigravity_text_preference(
+                &mut preferences,
+                field,
+                values
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )?;
+            state
+                .native
+                .apply_native_feature_preferences(&preferences)
+                .await?;
+        }
+        let mut fresh = build_settings_menu(
+            ctx,
+            state,
+            SettingsKind::Antigravity,
+            0,
+            menu.requester_id,
+            menu.connection_generation,
+        )
+        .await?;
+        fresh.claimed = false;
+        let (content, rows) = render_settings_menu(menu_id, &fresh, state.config.language);
+        let chunks = split_discord_content(&content);
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new()
+                    .content(chunks.first().cloned().unwrap_or_default())
+                    .components(rows)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
+        state
+            .settings_menus
+            .lock()
+            .await
+            .insert(menu_id.to_owned(), fresh);
+        for chunk in chunks.into_iter().skip(1) {
+            interaction
+                .create_followup(
+                    ctx,
+                    serenity::builder::CreateInteractionResponseFollowup::new()
+                        .content(chunk)
+                        .ephemeral(true)
+                        .allowed_mentions(no_mentions()),
+                )
+                .await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+    result
 }
 
 async fn handle_message_access_modal(
@@ -3585,6 +4037,13 @@ pub(crate) async fn handle_modal(
     if interaction.data.custom_id.starts_with("codex:access:") {
         return handle_message_access_modal(ctx, interaction, &state).await;
     }
+    if interaction
+        .data
+        .custom_id
+        .starts_with("codex:agy-settings:")
+    {
+        return handle_antigravity_settings_modal(ctx, interaction, &state).await;
+    }
     let Some(key) = interaction.data.custom_id.strip_prefix("codex:input:") else {
         bail!("알 수 없는 modal id")
     };
@@ -3659,8 +4118,7 @@ pub(crate) async fn handle_modal(
         interaction
             .edit_response(
                 ctx,
-                serenity::builder::EditInteractionResponse::new()
-                    .content(state.config.language.text("Could not send the answer. Check whether the request is still active, then try again.", "답변을 전달하지 못했습니다. 요청이 아직 처리 중인지 확인한 뒤 다시 시도해 주세요.", "无法发送答案。请确认请求仍在处理中，然后重试。", "回答を送信できませんでした。リクエストがまだ有効か確認してから再試行してください。")),
+                approval_delivery_failure_response(&error, state.config.language),
             )
             .await?;
         return Ok(());
@@ -3858,6 +4316,26 @@ fn claim_pending(
     }
     item.claimed = true;
     Ok(item.clone())
+}
+
+fn approval_delivery_failure_message(
+    error: &anyhow::Error,
+    language: crate::i18n::Language,
+) -> String {
+    format!("{}\n{}", language.text(
+        "The approval response could not be confirmed as sent. This does not establish whether the command ran.",
+        "승인 응답 전달을 확인하지 못했습니다. 이 오류만으로 명령 실행 여부를 판단할 수 없습니다.",
+        "无法确认审批响应已发送。此错误不能证明命令是否已执行。",
+        "承認応答の送信を確認できませんでした。このエラーだけではコマンドが実行されたかは判断できません。"
+    ), settings_error_detail(error))
+}
+
+fn approval_delivery_failure_response(
+    error: &anyhow::Error,
+    language: crate::i18n::Language,
+) -> serenity::builder::EditInteractionResponse {
+    serenity::builder::EditInteractionResponse::new()
+        .content(approval_delivery_failure_message(error, language))
 }
 
 fn claim_approval(
@@ -4531,12 +5009,35 @@ pub async fn unregister_commands(config: &crate::config::Config) -> anyhow::Resu
     Ok(())
 }
 
+fn thread_model_executor(thread: &Value) -> Option<crate::model_catalog::ModelExecutor> {
+    thread
+        .get("modelExecutor")
+        .or_else(|| thread.get("model_executor"))
+        .cloned()
+        .map(serde_json::from_value::<crate::model_catalog::ModelExecutor>)
+        .transpose()
+        .ok()
+        .map(Option::unwrap_or_default)
+}
+
+fn thread_model_provider(thread: &Value) -> Option<&str> {
+    if thread_model_executor(thread)? == crate::model_catalog::ModelExecutor::Antigravity {
+        Some("antigravity")
+    } else {
+        thread.get("modelProvider").and_then(Value::as_str)
+    }
+}
+
 fn thread_model_scope(thread: &Value) -> Option<String> {
     let model = thread.get("model")?.as_str()?;
-    Some(match thread.get("modelProvider").and_then(Value::as_str) {
-        Some(provider) => {
-            serde_json::to_string(&[provider, model]).expect("model identity serializes")
+    let executor = thread_model_executor(thread)?;
+    Some(match thread_model_provider(thread) {
+        Some(provider) => crate::model_catalog::ModelSelection {
+            executor,
+            provider: provider.to_owned(),
+            model: model.to_owned(),
         }
+        .value(),
         None => model.to_owned(),
     })
 }
@@ -4553,15 +5054,27 @@ fn subagent_preference_scope(
     catalog: &Value,
 ) -> Option<String> {
     let model = preferences.subagent_model.as_deref()?;
+    let executor = preferences
+        .subagent_model_executor
+        .as_deref()
+        .map(|executor| {
+            serde_json::from_value::<crate::model_catalog::ModelExecutor>(json!(executor))
+        })
+        .transpose()
+        .ok()?
+        .unwrap_or_default();
     let provider = preferences
         .subagent_model_provider
         .as_deref()
         .or_else(|| catalog.get("catalogProvider").and_then(Value::as_str))
         .or_else(|| catalog.get("provider").and_then(Value::as_str));
     Some(match provider {
-        Some(provider) => {
-            serde_json::to_string(&[provider, model]).expect("model identity serializes")
+        Some(provider) => crate::model_catalog::ModelSelection {
+            executor,
+            provider: provider.to_owned(),
+            model: model.to_owned(),
         }
+        .value(),
         None => model.to_owned(),
     })
 }
@@ -4569,18 +5082,23 @@ fn subagent_preference_scope(
 fn subagent_model_selection(
     catalog: &Value,
     requested: &str,
-    language: crate::i18n::Language,
+    _language: crate::i18n::Language,
 ) -> anyhow::Result<crate::model_catalog::ModelSelection> {
-    let selection = crate::model_catalog::resolve_selection(catalog, requested)?;
-    if catalog.get("provider").and_then(Value::as_str) != Some(selection.provider.as_str()) {
-        bail!("{}", language.text(
-            "Codex subagents inherit the main agent's provider. Select this provider for the main model first, then choose its subagent model.",
-            "Codex 하위 에이전트는 메인 에이전트의 공급자를 따릅니다. 먼저 메인 모델을 이 공급자로 변경한 뒤 하위 에이전트 모델을 선택하세요.",
-            "Codex 子代理继承主代理的提供方。请先将主模型切换到此提供方，再选择其子代理模型。",
-            "Codex サブエージェントはメインエージェントのプロバイダーを継承します。先にメインモデルをこのプロバイダーに変更してから、サブエージェントモデルを選択してください。"
-        ));
-    }
-    Ok(selection)
+    crate::model_catalog::resolve_selection(catalog, requested)
+}
+
+fn model_change_requires_resume(
+    active_executor: crate::model_catalog::ModelExecutor,
+    active_provider: &str,
+    active_model: Option<&str>,
+    selection: &crate::model_catalog::ModelSelection,
+) -> bool {
+    use crate::model_catalog::ModelExecutor;
+    selection.executor != active_executor
+        || match selection.executor {
+            ModelExecutor::Codex => selection.provider != active_provider,
+            ModelExecutor::Antigravity => active_model != Some(selection.model.as_str()),
+        }
 }
 
 fn ensure_provider_switch_idle(
@@ -5366,24 +5884,94 @@ fn format_approval_policy(value: &Value) -> String {
 }
 
 fn format_approval_policy_with_language(value: &Value, language: crate::i18n::Language) -> String {
-    match value.as_str() {
-        Some("on-request") => language
+    let label = match value.as_str() {
+        Some("on-request") => Some(language.text(
+            "Ask when needed",
+            "필요할 때 확인",
+            "需要时询问",
+            "必要なときに確認",
+        )),
+        Some("untrusted") => Some(language.text(
+            "Ask unless trusted",
+            "신뢰된 명령 외에는 확인",
+            "非信任命令需审批",
+            "信頼済みコマンド以外は確認",
+        )),
+        Some("never") => Some(language.text(
+            "Never ask",
+            "승인 요청 안 함",
+            "不请求审批",
+            "承認を要求しない",
+        )),
+        _ => None,
+    };
+    if let Some(label) = label {
+        format!("{label} ({})", value.as_str().unwrap())
+    } else if value.is_null() || value.as_str() == Some("native snapshot did not report this field")
+    {
+        language
             .text(
-                "Ask when needed",
-                "필요할 때 확인",
-                "需要时询问",
-                "必要なときに確認",
+                "Not reported by Codex",
+                "Codex에서 보고하지 않음",
+                "Codex 未报告",
+                "Codex から報告なし",
             )
-            .to_owned(),
-        _ => language
-            .text(
-                "Current native setting",
-                "현재 native 설정",
-                "当前 native 设置",
-                "現在の native 設定",
-            )
-            .to_owned(),
+            .to_owned()
+    } else {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| value.to_string())
     }
+}
+
+fn approval_policy_settings_values(
+    thread: &Value,
+    saved: &Value,
+    requirements: &Value,
+    language: crate::i18n::Language,
+) -> (Option<String>, String, Vec<SettingsChoice>) {
+    let actual = thread.get("approvalPolicy");
+    let current = format!(
+        "{}: {}\n{}: {}",
+        language.text(
+            "Effective policy",
+            "실효 승인 방식",
+            "当前生效策略",
+            "有効なポリシー"
+        ),
+        format_approval_policy_with_language(actual.unwrap_or(&Value::Null), language),
+        language.text(
+            "Profile policy",
+            "프로필 승인 방식",
+            "配置策略",
+            "プロファイルポリシー"
+        ),
+        format_approval_policy_with_language(saved, language),
+    );
+    (
+        actual.map(Value::to_string),
+        current,
+        approval_policy_choices(requirements, language),
+    )
+}
+
+fn approval_policy_choices(
+    requirements: &Value,
+    language: crate::i18n::Language,
+) -> Vec<SettingsChoice> {
+    let policies = requirements
+        .pointer("/requirements/allowedApprovalPolicies")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| vec![json!("on-request"), json!("untrusted"), json!("never")]);
+    policies
+        .into_iter()
+        .map(|policy| SettingsChoice {
+            value: policy.to_string(),
+            label: format_approval_policy_with_language(&policy, language),
+        })
+        .collect()
 }
 
 fn format_approvals_reviewer(value: &Value) -> String {
@@ -5398,14 +5986,30 @@ fn format_approvals_reviewer_with_language(
         Some("user") => language
             .text("User", "사용자", "用户", "ユーザー")
             .to_owned(),
-        _ => language
+        Some("auto_review") => language
             .text(
-                "Current native setting",
-                "현재 native 설정",
-                "当前 native 设置",
-                "現在の native 設定",
+                "Automatic review (auto_review)",
+                "자동 검토 (auto_review)",
+                "自动审查 (auto_review)",
+                "自動レビュー (auto_review)",
             )
             .to_owned(),
+        _ if value.is_null()
+            || value.as_str() == Some("native snapshot did not report this field") =>
+        {
+            language
+                .text(
+                    "Not reported by Codex",
+                    "Codex에서 보고하지 않음",
+                    "Codex 未报告",
+                    "Codex から報告なし",
+                )
+                .to_owned()
+        }
+        _ => value
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| value.to_string()),
     }
 }
 
@@ -8092,6 +8696,738 @@ mod display_tests {
     use super::*;
 
     #[test]
+    fn settings_home_and_advanced_render_one_child_entry_without_changing_profiles() {
+        use crate::i18n::Language;
+        let mut profile_p = crate::native::NativeFeaturePreferences {
+            subagent_model: Some("child-before".into()),
+            subagent_model_provider: Some("provider-before".into()),
+            subagent_model_executor: Some("codex".into()),
+            history_notes: None,
+            ..Default::default()
+        };
+        let profile_q = crate::native::NativeFeaturePreferences {
+            subagent_model: Some("other-child".into()),
+            code_mode: Some(false),
+            approval_policy: json!("never"),
+            ..Default::default()
+        };
+        let shared_config = json!({"model":"shared-parent","approval_policy":"never",
+            "agents":{"default_subagent_model":"shared-child"}});
+        let q_before = profile_q.clone();
+        let shared_before = shared_config.clone();
+        let thread = json!({"id":"profile-p-thread","model":"parent-example",
+            "modelProvider":"parent-provider","approvalPolicy":"on-request"});
+        let thread_before = thread.clone();
+        let p_before = profile_p.clone();
+        for (language, child, advanced, exit, back) in [
+            (
+                Language::English,
+                "Default subagent model",
+                "Advanced settings",
+                "Exit",
+                "Back",
+            ),
+            (
+                Language::Korean,
+                "기본 하위 에이전트 모델",
+                "고급 설정",
+                "나가기",
+                "뒤로가기",
+            ),
+            (
+                Language::Chinese,
+                "默认子代理模型",
+                "高级设置",
+                "退出",
+                "返回",
+            ),
+            (
+                Language::Japanese,
+                "既定のサブエージェントモデル",
+                "詳細設定",
+                "閉じる",
+                "戻る",
+            ),
+        ] {
+            let mut home = menu_fixture();
+            home.kind = SettingsKind::Hub;
+            (home.current_value, home.current, home.choices) =
+                settings_home_values(&thread, crate::config::InputMode::Steering, None, language);
+            assert_eq!(
+                home.choices
+                    .iter()
+                    .filter(|c| c.value == "subagent-model")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                home.choices
+                    .iter()
+                    .find(|c| c.value == "subagent-model")
+                    .unwrap()
+                    .label,
+                child
+            );
+            assert_eq!(
+                home.choices
+                    .iter()
+                    .find(|c| c.value == "native-features")
+                    .unwrap()
+                    .label,
+                advanced
+            );
+            let (home_content, home_rows) = render_settings_menu("profile-p", &home, language);
+            let home_rows = serde_json::to_value(home_rows).unwrap();
+            let home_buttons = home_rows
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|row| row["components"].as_array().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                home_buttons.iter().filter(|b| b["label"] == child).count(),
+                1
+            );
+            assert_eq!(home_buttons.last().unwrap()["label"], exit);
+            assert_eq!(
+                home_buttons.last().unwrap()["custom_id"],
+                "codex:settings:profile-p:x"
+            );
+            assert!(!home_content.contains(child)); // no duplicated model summary
+
+            let mut detail = menu_fixture();
+            detail.kind = settings_kind_from_key("native-features").unwrap();
+            (detail.current_value, detail.current, detail.choices) =
+                advanced_settings_values(&profile_p, language);
+            let (detail_content, detail_rows) =
+                render_settings_menu("profile-p", &detail, language);
+            let detail_rows = serde_json::to_value(detail_rows).unwrap();
+            assert!(detail_content.starts_with(advanced));
+            assert!(!detail_content.contains(child));
+            assert!(!detail_content.contains("child-before"));
+            assert!(detail.choices.iter().all(|choice| !matches!(
+                choice.value.as_str(),
+                "subagent-model" | "native-feature:subagentModel"
+            )));
+            let controls = detail_rows.as_array().unwrap().last().unwrap()["components"]
+                .as_array()
+                .unwrap();
+            assert_eq!(controls.len(), 1);
+            assert_eq!(controls[0]["label"], back);
+            assert_eq!(controls[0]["custom_id"], "codex:settings:profile-p:h");
+            assert_eq!(settings_back_target(detail.kind), SettingsKind::Hub);
+            assert_eq!(
+                settings_back_target(SettingsKind::NativeFeature(NativeFeatureKey::Clock)),
+                SettingsKind::NativeFeatures
+            );
+            let repeated = render_settings_menu("profile-p", &detail, language);
+            assert_eq!(repeated.0, detail_content);
+            assert_eq!(serde_json::to_value(repeated.1).unwrap(), detail_rows);
+        }
+        assert_eq!(profile_p, p_before);
+        let selection = crate::model_catalog::ModelSelection {
+            executor: crate::model_catalog::ModelExecutor::Codex,
+            provider: "child-provider-after".into(),
+            model: "child-after".into(),
+        };
+        set_subagent_model_selection(&mut profile_p, Some(&selection));
+        set_native_feature_preference(&mut profile_p, NativeFeatureKey::CodeMode, Some("off"))
+            .unwrap();
+        let restored: crate::native::NativeFeaturePreferences =
+            serde_json::from_value(serde_json::to_value(&profile_p).unwrap()).unwrap();
+        assert_eq!(restored, profile_p);
+        assert_eq!(
+            subagent_preference_scope(&restored, &json!({})),
+            Some(selection.value())
+        );
+        assert_eq!(
+            native_feature_saved_value(&restored, NativeFeatureKey::CodeMode).as_deref(),
+            Some("false")
+        );
+        let mut expected = p_before;
+        expected.subagent_model = Some(selection.model);
+        expected.subagent_model_provider = Some(selection.provider);
+        expected.subagent_model_executor = Some("codex".into());
+        expected.code_mode = Some(false);
+        assert_eq!(profile_p, expected);
+        assert_eq!(profile_q, q_before);
+        assert_eq!(shared_config, shared_before);
+        assert_eq!(thread, thread_before);
+    }
+
+    #[test]
+    fn home_and_subagent_picker_report_the_running_executor_provider_in_every_language() {
+        for (language, provider_label) in [
+            (crate::i18n::Language::English, "Active model provider"),
+            (crate::i18n::Language::Korean, "현재 모델 제공자"),
+            (crate::i18n::Language::Chinese, "当前模型提供方"),
+            (crate::i18n::Language::Japanese, "現在のモデルプロバイダー"),
+        ] {
+            for (executor, expected_provider) in [
+                ("codex", "provider-example"),
+                ("antigravity", "antigravity"),
+            ] {
+                let thread = json!({"id":"thread-example","model":"model-example","modelProvider":"provider-example","modelExecutor":executor});
+                let before = thread.clone();
+                let snapshot = crate::native::NativeFeatureSnapshot {
+                    preferences: crate::native::NativeFeaturePreferences {
+                        subagent_model: Some("child-model".into()),
+                        subagent_model_provider: Some("child-provider".into()),
+                        subagent_model_executor: Some("codex".into()),
+                        ..Default::default()
+                    },
+                    native_config: json!({"config":{"agents":{"default_subagent_model":"child-model","default_subagent_model_provider":"child-provider"}}}),
+                };
+                let catalog = json!({"provider":"provider-example","data":[]});
+                let snapshot_before = snapshot.clone();
+                let catalog_before = catalog.clone();
+                for kind in [SettingsKind::Hub, SettingsKind::SubagentModel] {
+                    let mut menu = menu_fixture();
+                    menu.kind = kind;
+                    (menu.current_value, menu.current, menu.choices) = if kind == SettingsKind::Hub
+                    {
+                        settings_home_values(
+                            &thread,
+                            crate::config::InputMode::Steering,
+                            None,
+                            language,
+                        )
+                    } else {
+                        subagent_model_settings_values(&thread, &snapshot, &catalog, language)
+                    };
+                    let (content, _) = render_settings_menu("provider-example", &menu, language);
+                    let provider_lines = content
+                        .lines()
+                        .filter(|line| line.starts_with(provider_label))
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        provider_lines,
+                        vec![format!("{provider_label}: {expected_provider}")]
+                    );
+                }
+                assert_eq!(snapshot, snapshot_before);
+                assert_eq!(catalog, catalog_before);
+                assert_eq!(thread, before);
+            }
+        }
+    }
+
+    #[test]
+    fn settings_timing_distinguishes_child_resume_native_restart_and_agy_start() {
+        for (language, saved, child, advanced) in [
+            (
+                crate::i18n::Language::English,
+                "Saved.",
+                "The saved child default applies on the next thread creation or resume, including after a worker restart. The current thread keeps its effective settings until resumed.",
+                "Native feature switches apply after the Discodex worker restarts. Antigravity settings apply on the next model selection or AGY session start.",
+            ),
+            (
+                crate::i18n::Language::Korean,
+                "저장했습니다.",
+                "저장한 하위 에이전트 기본값은 다음 스레드 생성·재개 시 적용되며, 워커 재시작 후 재개할 때도 적용됩니다. 현재 스레드의 실효 설정은 재개 전까지 유지됩니다.",
+                "네이티브 기능 스위치는 Discodex 워커 재시작 후 적용됩니다. Antigravity 설정은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+            ),
+            (
+                crate::i18n::Language::Chinese,
+                "已保存。",
+                "保存的子代理默认值在下次创建或恢复线程时生效，包括工作进程重启后的恢复。当前线程在恢复前保持其有效设置。",
+                "原生功能开关在 Discodex 工作进程重启后生效。Antigravity 设置在下次模型选择或 AGY 会话启动时生效。",
+            ),
+            (
+                crate::i18n::Language::Japanese,
+                "保存しました。",
+                "保存した子エージェントの既定値は、ワーカー再起動後を含め、次のスレッド作成・再開時に適用されます。現在のスレッドは再開するまで有効な設定を保持します。",
+                "ネイティブ機能の切り替えは Discodex ワーカーの再起動後に適用されます。Antigravity 設定は次のモデル選択または AGY セッション開始時に適用されます。",
+            ),
+        ] {
+            assert_eq!(child_default_timing(language), child);
+            assert_eq!(
+                child_default_saved_notice(language),
+                format!("{saved}\n{child}")
+            );
+            let mut menu = menu_fixture();
+            menu.kind = SettingsKind::NativeFeatures;
+            (menu.current_value, menu.current, menu.choices) = advanced_settings_values(
+                &crate::native::NativeFeaturePreferences::default(),
+                language,
+            );
+            assert_eq!(menu.current.lines().next(), Some(advanced));
+            let (content, _) = render_settings_menu("advanced-example", &menu, language);
+            assert!(content.contains(advanced));
+        }
+    }
+
+    #[test]
+    fn approval_panel_separates_effective_saved_and_permission_values_in_every_language() {
+        use crate::i18n::Language;
+        let thread = json!({"approvalPolicy":"on-request","activePermissionProfile":{"id":"workspace-write","displayName":"Workspace"}});
+        let before = thread.clone();
+        for (language, policy_label, permission_label, effective_label, saved_label) in [
+            (
+                Language::English,
+                "Approval policy",
+                "Permission profile",
+                "Effective policy",
+                "Profile policy",
+            ),
+            (
+                Language::Korean,
+                "승인 방식",
+                "권한 프로필",
+                "실효 승인 방식",
+                "프로필 승인 방식",
+            ),
+            (
+                Language::Chinese,
+                "审批策略",
+                "权限配置",
+                "当前生效策略",
+                "配置策略",
+            ),
+            (
+                Language::Japanese,
+                "承認ポリシー",
+                "権限プロファイル",
+                "有効なポリシー",
+                "プロファイルポリシー",
+            ),
+        ] {
+            let mut menu = menu_fixture();
+            menu.kind = SettingsKind::ApprovalPolicy;
+            (menu.current_value, menu.current, menu.choices) =
+                approval_policy_settings_values(&thread, &json!("never"), &json!({}), language);
+            assert_eq!(menu.current_value, Some(json!("on-request").to_string()));
+            let effective = format_approval_policy_with_language(&json!("on-request"), language);
+            let saved = format_approval_policy_with_language(&json!("never"), language);
+            assert_eq!(
+                menu.current,
+                format!("{effective_label}: {effective}\n{saved_label}: {saved}")
+            );
+            let (content, rows) = render_settings_menu("policy-p", &menu, language);
+            assert!(content.starts_with(policy_label));
+            let rows = serde_json::to_value(rows).unwrap();
+            assert_eq!(rows[0]["components"][0]["label"], format!("✓ {effective}"));
+            assert_eq!(rows[0]["components"][2]["label"], saved);
+            let home =
+                settings_home_values(&thread, crate::config::InputMode::Steering, None, language);
+            assert!(home.1.contains(&format!("{policy_label}: {effective}")));
+            assert!(home.1.contains(&format!("{permission_label}:")));
+            let missing =
+                approval_policy_settings_values(&json!({}), &json!("never"), &json!({}), language);
+            assert_eq!(missing.0, None);
+            assert_eq!(
+                missing.1,
+                format!(
+                    "{effective_label}: {}\n{saved_label}: {saved}",
+                    format_approval_policy_with_language(&Value::Null, language)
+                )
+            );
+        }
+        assert_eq!(thread, before);
+    }
+
+    #[test]
+    fn model_catalog_diagnostics_preserve_the_cause_and_existing_settings() {
+        let catalog = json!({"warnings":["AGY model discovery failed: command exited with code 7", "model metadata unavailable"], "data":[{"model":"example"}]});
+        let before = catalog.clone();
+        assert_eq!(
+            model_catalog_warnings("Current model: example".into(), &catalog),
+            "Current model: example\nAGY model discovery failed: command exited with code 7\nmodel metadata unavailable"
+        );
+        assert_eq!(
+            model_catalog_warnings("Current model: example".into(), &json!({"data":[]})),
+            "Current model: example"
+        );
+        assert_eq!(catalog, before);
+    }
+
+    #[test]
+    fn approval_choice_and_delivery_error_keep_request_identity_and_unrelated_cards() {
+        let snapshot = |request: &PendingApproval| {
+            (
+                request.native_id.clone(),
+                request.method.clone(),
+                request.params.clone(),
+                request.channel_id,
+                request.message_id,
+                request.claimed,
+                request.connection_generation,
+            )
+        };
+        for (method, params, action, expected) in [
+            (
+                "item/commandExecution/requestApproval",
+                json!({"availableDecisions":["accept","decline"],"threadId":"thread-r1","turnId":"turn-r1","itemId":"item-r1","callId":"call-r1","reason":"provided reason","command":"example-command"}),
+                "offered-1",
+                json!({"decision":"decline"}),
+            ),
+            (
+                "mcpServer/elicitation/request",
+                json!({"mode":"form","threadId":"thread-r1","turnId":"turn-r1","callId":"call-r1","reason":"provided reason","message":"Example input"}),
+                "decline",
+                json!({"action":"decline"}),
+            ),
+        ] {
+            let r1 = PendingApproval {
+                native_id: json!("native-r1"),
+                method: method.into(),
+                params,
+                channel_id: ChannelId::new(10),
+                message_id: serenity::all::MessageId::new(11),
+                claimed: false,
+                connection_generation: 3,
+            };
+            let r2 = PendingApproval {
+                native_id: json!("native-r2"),
+                method: "item/commandExecution/requestApproval".into(),
+                params: json!({"threadId":"thread-r2","turnId":"turn-r2","itemId":"item-r2","reason":"other reason"}),
+                channel_id: ChannelId::new(20),
+                message_id: serenity::all::MessageId::new(21),
+                claimed: false,
+                connection_generation: 3,
+            };
+            let before_r2 = snapshot(&r2);
+            let mut requests =
+                std::collections::HashMap::from([("r1".into(), r1.clone()), ("r2".into(), r2)]);
+            let (claimed, response) = claim_approval(&mut requests, "r1", action, 3).unwrap();
+            assert_eq!(response, expected);
+            let mut expected_claim = r1;
+            expected_claim.claimed = true;
+            assert_eq!(snapshot(&claimed), snapshot(&expected_claim));
+            assert_eq!(snapshot(&requests["r2"]), before_r2);
+            let error = anyhow!("socket closed before delivery acknowledgment")
+                .context("approval transport");
+            for (language, prefix) in [
+                (
+                    crate::i18n::Language::English,
+                    "The approval response could not be confirmed as sent.",
+                ),
+                (
+                    crate::i18n::Language::Korean,
+                    "승인 응답 전달을 확인하지 못했습니다.",
+                ),
+                (crate::i18n::Language::Chinese, "无法确认审批响应已发送。"),
+                (
+                    crate::i18n::Language::Japanese,
+                    "承認応答の送信を確認できませんでした。",
+                ),
+            ] {
+                let message = approval_delivery_failure_message(&error, language);
+                assert!(message.starts_with(prefix));
+                assert!(
+                    message.ends_with(
+                        "approval transport: socket closed before delivery acknowledgment"
+                    )
+                );
+            }
+            assert_eq!(snapshot(&requests["r1"]), snapshot(&expected_claim));
+            assert_eq!(snapshot(&requests["r2"]), before_r2);
+            let resolved = claim_resolved_pending(&mut requests, &json!("native-r2"), 3);
+            assert_eq!(resolved.len(), 1);
+            assert_eq!(resolved[0].0, "r2");
+            assert_eq!(snapshot(&requests["r1"]), snapshot(&expected_claim));
+        }
+    }
+
+    #[test]
+    fn modal_delivery_error_reports_uncertainty_and_keeps_the_request_claimed() {
+        let snapshot = |request: &PendingApproval| {
+            (
+                request.native_id.clone(),
+                request.method.clone(),
+                request.params.clone(),
+                request.channel_id,
+                request.message_id,
+                request.claimed,
+                request.connection_generation,
+            )
+        };
+        for (method, native_id, params, field, answer, expected) in [
+            (
+                "item/tool/requestUserInput",
+                json!("native-question"),
+                json!({"threadId":"thread-r1","turnId":"turn-r1","itemId":"item-r1","questions":[{"id":"question-r1","question":"Choose a scope","options":[{"label":"Current operation","description":"Use the current operation only"}]}]}),
+                "question-r1",
+                "Current operation",
+                json!({"answers":{"question-r1":{"answers":["Current operation"]}}}),
+            ),
+            (
+                "mcpServer/elicitation/request",
+                json!(17),
+                json!({"mode":"form","threadId":"thread-r1","turnId":null,"serverName":"example-server","message":"Choose a scope","requestedSchema":{"type":"object","properties":{"scope":{"type":"string","enum":["current","session"]}},"required":["scope"]},"_meta":{"persist":"session"}}),
+                "elicitation_json",
+                "{\"scope\":\"current\"}",
+                json!({"action":"accept","content":{"scope":"current"}}),
+            ),
+        ] {
+            let pending = PendingApproval {
+                native_id,
+                method: method.into(),
+                params,
+                channel_id: ChannelId::new(10),
+                message_id: serenity::all::MessageId::new(11),
+                claimed: false,
+                connection_generation: 3,
+            };
+            let other = PendingApproval {
+                native_id: json!("native-other"),
+                method: "item/commandExecution/requestApproval".into(),
+                params: json!({"threadId":"thread-other","turnId":"turn-other","itemId":"item-other","availableDecisions":["decline"]}),
+                channel_id: ChannelId::new(20),
+                message_id: serenity::all::MessageId::new(21),
+                claimed: false,
+                connection_generation: 3,
+            };
+            let before_other = snapshot(&other);
+            let components = json!([{ "components":[{"custom_id":field,"value":answer}] }]);
+            let mut submitted = serde_json::Map::new();
+            collect_modal_values(&components, &mut submitted);
+            let result = match pending.method.as_str() {
+                "item/tool/requestUserInput" => user_input_result(&pending.params, submitted),
+                "mcpServer/elicitation/request" => elicitation_result(&pending.params, submitted),
+                _ => unreachable!(),
+            }
+            .unwrap();
+            assert_eq!(result, expected);
+            let mut requests =
+                HashMap::from([("r1".into(), pending.clone()), ("r2".into(), other)]);
+            let claimed = claim_pending(&mut requests, "r1", 3).unwrap();
+            let mut expected_claim = pending;
+            expected_claim.claimed = true;
+            assert_eq!(snapshot(&claimed), snapshot(&expected_claim));
+            let error = anyhow::Error::new(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pipe closed after write",
+            ))
+            .context("native response transport");
+            for (language, notice) in [
+                (
+                    crate::i18n::Language::English,
+                    "The approval response could not be confirmed as sent. This does not establish whether the command ran.",
+                ),
+                (
+                    crate::i18n::Language::Korean,
+                    "승인 응답 전달을 확인하지 못했습니다. 이 오류만으로 명령 실행 여부를 판단할 수 없습니다.",
+                ),
+                (
+                    crate::i18n::Language::Chinese,
+                    "无法确认审批响应已发送。此错误不能证明命令是否已执行。",
+                ),
+                (
+                    crate::i18n::Language::Japanese,
+                    "承認応答の送信を確認できませんでした。このエラーだけではコマンドが実行されたかは判断できません。",
+                ),
+            ] {
+                let response =
+                    serde_json::to_value(approval_delivery_failure_response(&error, language))
+                        .unwrap();
+                assert_eq!(
+                    response["content"],
+                    format!("{notice}\nnative response transport: pipe closed after write")
+                );
+                assert!(response.get("components").is_none());
+                assert!(claim_pending(&mut requests, "r1", 3).is_err());
+                assert_eq!(snapshot(&requests["r1"]), snapshot(&expected_claim));
+                assert_eq!(snapshot(&requests["r2"]), before_other);
+                assert_eq!(result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn approval_policy_menu_localizes_buttons_and_marks_the_actual_policy() {
+        use crate::i18n::Language;
+        for (language, title, never, back, advanced) in [
+            (
+                Language::English,
+                "Approval policy",
+                "Never ask (never)",
+                "Back",
+                "Advanced settings",
+            ),
+            (
+                Language::Korean,
+                "승인 방식",
+                "승인 요청 안 함 (never)",
+                "뒤로가기",
+                "고급 설정",
+            ),
+            (
+                Language::Chinese,
+                "审批策略",
+                "不请求审批 (never)",
+                "返回",
+                "高级设置",
+            ),
+            (
+                Language::Japanese,
+                "承認ポリシー",
+                "承認を要求しない (never)",
+                "戻る",
+                "詳細設定",
+            ),
+        ] {
+            assert_eq!(
+                settings_kind_title(SettingsKind::ApprovalPolicy, language),
+                title
+            );
+            assert_eq!(
+                settings_kind_title(SettingsKind::NativeFeatures, language),
+                advanced
+            );
+            assert_eq!(
+                settings_kind_from_key("approval-policy"),
+                Some(SettingsKind::ApprovalPolicy)
+            );
+            let mut menu = menu_fixture();
+            menu.kind = SettingsKind::ApprovalPolicy;
+            menu.choices = approval_policy_choices(&json!({"requirements":null}), language);
+            menu.current_value = Some(json!("never").to_string());
+            menu.current = format_approval_policy_with_language(&json!("never"), language);
+            let (content, rows) = render_settings_menu("approval-example", &menu, language);
+            assert!(content.contains(never));
+            let payload = serde_json::to_value(rows).unwrap();
+            assert_eq!(payload[0]["components"][2]["label"], format!("✓ {never}"));
+            assert_eq!(payload[1]["components"][0]["label"], back);
+            assert_eq!(
+                menu.choices
+                    .iter()
+                    .map(|choice| choice.value.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["\"on-request\"", "\"untrusted\"", "\"never\""]
+            );
+        }
+    }
+
+    #[test]
+    fn approval_policy_choices_use_native_requirements_and_preserve_granular_values() {
+        use crate::i18n::Language;
+        let granular = json!({"granular":{
+            "sandbox_approval":true,"rules":false,"mcp_elicitations":true,
+            "skill_approval":false,"request_permissions":true
+        }});
+        let choices = approval_policy_choices(
+            &json!({"requirements":{
+                "allowedApprovalPolicies":["on-request",granular]
+            }}),
+            Language::English,
+        );
+        assert_eq!(choices.len(), 2);
+        assert_eq!(
+            serde_json::from_str::<Value>(&choices[1].value).unwrap(),
+            granular
+        );
+        assert!(choices.iter().all(|choice| choice.value != "\"never\""));
+        assert!(
+            approval_policy_choices(
+                &json!({"requirements":{"allowedApprovalPolicies":[]}}),
+                Language::English
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            format_approval_policy_with_language(&granular, Language::English),
+            granular.to_string()
+        );
+        assert_eq!(
+            format_approvals_reviewer_with_language(&json!("custom-reviewer"), Language::English),
+            "custom-reviewer"
+        );
+        assert_eq!(
+            format_approvals_reviewer_with_language(&json!("auto_review"), Language::English),
+            "Automatic review (auto_review)"
+        );
+    }
+
+    #[test]
+    fn advanced_settings_has_no_duplicate_child_model_route() {
+        assert_eq!(
+            settings_kind_from_key("subagent-model"),
+            Some(SettingsKind::SubagentModel)
+        );
+        assert!(
+            NativeFeatureKey::ALL
+                .iter()
+                .all(|key| *key != NativeFeatureKey::SubagentModel)
+        );
+        assert_eq!(NativeFeatureKey::from_key("subagentModel"), None);
+    }
+
+    #[test]
+    fn antigravity_settings_are_opt_in_and_localized_with_text_modals() {
+        use crate::i18n::Language;
+        let preferences = crate::native::NativeFeaturePreferences::default();
+        for (language, off, path, models) in [
+            (Language::English, "Off", "CLI executable", "Model IDs"),
+            (Language::Korean, "끄기", "CLI 실행파일", "모델 ID"),
+            (Language::Chinese, "关闭", "CLI 可执行文件", "模型 ID"),
+            (Language::Japanese, "オフ", "CLI 実行ファイル", "モデル ID"),
+        ] {
+            let mut menu = menu_fixture();
+            menu.kind = SettingsKind::Antigravity;
+            (menu.current_value, menu.current, menu.choices) =
+                antigravity_settings_values(&preferences, language);
+            assert_eq!(menu.current_value.as_deref(), Some("off"));
+            assert!(menu.current.contains("agy"));
+            let (_, rows) = render_settings_menu("agy-example", &menu, language);
+            let payload = serde_json::to_value(rows).unwrap();
+            assert_eq!(payload[0]["components"][1]["label"], format!("✓ {off}"));
+            assert_eq!(payload[0]["components"][2]["label"], path);
+            assert_eq!(payload[0]["components"][3]["label"], models);
+            assert_eq!(antigravity_text_field(&menu, "c0"), None);
+            assert_eq!(antigravity_text_field(&menu, "c2"), Some("path"));
+            assert_eq!(antigravity_text_field(&menu, "c3"), Some("models"));
+            for field in ["path", "models"] {
+                let modal =
+                    antigravity_text_modal("agy-example", field, &preferences, language).unwrap();
+                let value = serde_json::to_value(modal).unwrap();
+                assert_eq!(
+                    value["custom_id"],
+                    format!("codex:agy-settings:agy-example:{field}")
+                );
+                assert_eq!(
+                    value["components"][0]["components"][0]["custom_id"],
+                    "value"
+                );
+                assert_eq!(value["components"][0]["components"][0]["required"], false);
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_text_settings_preserve_exact_model_ids_and_other_preferences() {
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        preferences.subagent_model = Some("child-example".into());
+        preferences.subagent_model_provider = Some("provider-example".into());
+        preferences.subagent_model_executor = Some("codex".into());
+        set_antigravity_text_preference(&mut preferences, "path", "  agy-preview  ").unwrap();
+        set_antigravity_text_preference(
+            &mut preferences,
+            "models",
+            "  exact/id-v2\n\nother:model+custom \n",
+        )
+        .unwrap();
+        assert_eq!(preferences.antigravity_path.as_deref(), Some("agy-preview"));
+        assert_eq!(
+            preferences.antigravity_models,
+            vec!["exact/id-v2", "other:model+custom"]
+        );
+        assert!(!preferences.antigravity_enabled);
+        assert_eq!(preferences.subagent_model.as_deref(), Some("child-example"));
+        assert_eq!(
+            preferences.subagent_model_executor.as_deref(),
+            Some("codex")
+        );
+        let before = preferences.clone();
+        assert!(set_antigravity_text_preference(&mut preferences, "unknown", "anything").is_err());
+        assert_eq!(preferences, before);
+        set_antigravity_text_preference(&mut preferences, "path", "").unwrap();
+        set_antigravity_text_preference(&mut preferences, "models", "").unwrap();
+        assert_eq!(preferences.antigravity_path, None);
+        assert!(preferences.antigravity_models.is_empty());
+    }
+
+    #[test]
     fn question_card_shows_question_and_choices_without_bridge_metadata() {
         let params = json!({
             "threadId":"thread-private-123",
@@ -10160,6 +11496,105 @@ mod native_feature_settings_tests {
     }
 
     #[test]
+    fn agy_child_selection_retains_executor_provider_and_model_without_affecting_parent() {
+        use crate::model_catalog::{ModelExecutor, ModelSelection};
+        let mut catalog = json!({"provider":"local","data":[{
+            "provider":"local", "model":"parent-example", "selectionValue":"[\"local\",\"parent-example\"]"
+        }]});
+        crate::model_catalog::add_antigravity_models(&mut catalog, true, &["agy-exact-id".into()]);
+        let expected = ModelSelection {
+            executor: ModelExecutor::Antigravity,
+            provider: "antigravity".into(),
+            model: "agy-exact-id".into(),
+        };
+        let selected =
+            subagent_model_selection(&catalog, &expected.value(), crate::i18n::Language::English)
+                .unwrap();
+        assert_eq!(selected, expected);
+        let mut preferences = crate::native::NativeFeaturePreferences::default();
+        set_subagent_model_selection(&mut preferences, Some(&selected));
+        assert_eq!(
+            preferences.subagent_model_executor.as_deref(),
+            Some("antigravity")
+        );
+        assert_eq!(
+            preferences.subagent_model_provider.as_deref(),
+            Some("antigravity")
+        );
+        assert_eq!(preferences.subagent_model.as_deref(), Some("agy-exact-id"));
+        assert_eq!(
+            subagent_preference_scope(&preferences, &catalog),
+            Some(expected.value())
+        );
+        assert_eq!(
+            normalized_model_value(&catalog, &expected.value()),
+            Some(expected.value())
+        );
+        assert_eq!(catalog["provider"], "local");
+        assert_eq!(
+            thread_model_scope(&json!({
+                "model":"agy-exact-id", "modelExecutor":"antigravity", "modelProvider":"host-provider"
+            })),
+            Some(expected.value())
+        );
+        set_subagent_model_selection(&mut preferences, None);
+        assert_eq!(preferences.subagent_model, None);
+        assert_eq!(preferences.subagent_model_provider, None);
+        assert_eq!(preferences.subagent_model_executor, None);
+    }
+
+    #[test]
+    fn main_model_changes_resume_for_executor_provider_and_agy_model_changes() {
+        use crate::model_catalog::{ModelExecutor, ModelSelection};
+        let codex = ModelSelection {
+            executor: ModelExecutor::Codex,
+            provider: "provider-a".into(),
+            model: "next-model".into(),
+        };
+        let agy = ModelSelection {
+            executor: ModelExecutor::Antigravity,
+            provider: "antigravity".into(),
+            model: "agy-model".into(),
+        };
+        assert!(!model_change_requires_resume(
+            ModelExecutor::Codex,
+            "provider-a",
+            Some("old-model"),
+            &codex
+        ));
+        assert!(model_change_requires_resume(
+            ModelExecutor::Codex,
+            "provider-b",
+            Some("next-model"),
+            &codex
+        ));
+        assert!(model_change_requires_resume(
+            ModelExecutor::Antigravity,
+            "provider-a",
+            Some("next-model"),
+            &codex
+        ));
+        assert!(model_change_requires_resume(
+            ModelExecutor::Codex,
+            "provider-a",
+            Some("agy-model"),
+            &agy
+        ));
+        assert!(model_change_requires_resume(
+            ModelExecutor::Antigravity,
+            "provider-a",
+            Some("previous-agy-model"),
+            &agy
+        ));
+        assert!(!model_change_requires_resume(
+            ModelExecutor::Antigravity,
+            "provider-a",
+            Some("agy-model"),
+            &agy
+        ));
+    }
+
+    #[test]
     fn provider_qualified_choices_resolve_current_model_and_subagent_provider() {
         use crate::i18n::Language;
         let catalog = crate::model_catalog::assemble_catalog(
@@ -10190,7 +11625,12 @@ mod native_feature_settings_tests {
             Language::Chinese,
             Language::Japanese,
         ] {
-            assert!(subagent_model_selection(&catalog, &cloud, language).is_err());
+            assert_eq!(
+                subagent_model_selection(&catalog, &cloud, language)
+                    .unwrap()
+                    .provider,
+                "cloud"
+            );
             assert!(ensure_provider_switch_idle(true, false, language).is_ok());
             assert!(ensure_provider_switch_idle(false, false, language).is_err());
             assert!(ensure_provider_switch_idle(true, true, language).is_err());

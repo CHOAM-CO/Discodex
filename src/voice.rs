@@ -2292,6 +2292,20 @@ impl VoiceBridge {
         guild_id: GuildId,
         channel_id: ChannelId,
     ) -> Result<VoiceJoinResult> {
+        if self
+            .native
+            .thread_state()
+            .get("modelExecutor")
+            .and_then(Value::as_str)
+            == Some("antigravity")
+        {
+            bail!("{}", self.config.language.text(
+                "Antigravity does not support Discord voice calls. Select a Codex model first.",
+                "Antigravity는 Discord 음성 통화를 지원하지 않습니다. 먼저 Codex 모델을 선택하세요.",
+                "Antigravity 不支持 Discord 语音通话。请先选择 Codex 模型。",
+                "Antigravity は Discord 音声通話に対応していません。先に Codex モデルを選択してください。",
+            ));
+        }
         let _lifecycle = self.lifecycle.lock().await;
         let language = self.config.language;
         {

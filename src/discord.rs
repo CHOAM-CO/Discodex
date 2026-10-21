@@ -370,7 +370,11 @@ impl ApprovalResults {
                     _ => return Vec::new(),
                 };
                 self.item_targets.remove(&key);
-                (Some((key, item_type)), None, content)
+                (
+                    Some((key, item_type)),
+                    None,
+                    approval_execution_content(content, item, language),
+                )
             }
             "turn/completed" => {
                 let Some(turn) = params.get("turn") else {
@@ -395,12 +399,14 @@ impl ApprovalResults {
                 (
                     None,
                     Some((thread_id, turn_id)),
-                    language.text(
-                        "The task with an approval request was interrupted.",
-                        "승인 요청이 있던 작업의 실행이 중단되었습니다.",
-                        "包含审批请求的任务已中断。",
-                        "承認リクエストを含むタスクが中断されました。",
-                    ),
+                    language
+                        .text(
+                            "The task with an approval request was interrupted.",
+                            "승인 요청이 있던 작업의 실행이 중단되었습니다.",
+                            "包含审批请求的任务已中断。",
+                            "承認リクエストを含むタスクが中断されました。",
+                        )
+                        .to_owned(),
                 )
             }
             _ => return Vec::new(),
@@ -427,12 +433,69 @@ impl ApprovalResults {
         });
         targets
             .into_iter()
-            .map(|target| {
-                let message = assistant_reply_message(&target, content);
-                (target, message)
+            .flat_map(|target| {
+                split_content(&content, 2_000)
+                    .into_iter()
+                    .map(move |chunk| {
+                        let message = assistant_reply_message(&target, chunk);
+                        (target.clone(), message)
+                    })
             })
             .collect()
     }
+}
+
+fn approval_execution_content(
+    summary: &str,
+    item: &serde_json::Value,
+    language: &crate::i18n::Language,
+) -> String {
+    let mut content = summary.to_owned();
+    for (field, label) in [
+        (
+            "exitCode",
+            language.text("Exit code", "종료 코드", "退出代码", "終了コード"),
+        ),
+        (
+            "error",
+            language.text(
+                "Native error",
+                "네이티브 오류",
+                "原生错误",
+                "ネイティブエラー",
+            ),
+        ),
+        ("reason", language.text("Reason", "사유", "原因", "理由")),
+        ("message", language.text("Details", "상세", "详情", "詳細")),
+    ] {
+        if let Some(value) = item.get(field).filter(|value| !value.is_null()) {
+            let value = value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string());
+            if !value.is_empty() {
+                content.push_str(&format!("\n{label}: {value}"));
+            }
+        }
+    }
+    let failed = item.get("status").and_then(serde_json::Value::as_str) == Some("failed")
+        || item
+            .get("exitCode")
+            .and_then(serde_json::Value::as_i64)
+            .is_some_and(|code| code != 0);
+    if failed {
+        if let Some(output) = item
+            .get("aggregatedOutput")
+            .and_then(serde_json::Value::as_str)
+            .filter(|output| !output.is_empty())
+        {
+            content.push_str(&format!(
+                "\n{}:\n{output}",
+                language.text("Command output", "명령 출력", "命令输出", "コマンド出力")
+            ));
+        }
+    }
+    content
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1122,6 +1185,9 @@ pub async fn run(
                 _ = event_state.voice.input_gate.ready.notified() => {
                     if let Err(error) = submit_next_queued_input(&event_state, &event_state.native.thread_id()).await {
                         warn!(%error, "failed to dispatch queued input after voice ended");
+                    }
+                    if let Err(error) = crate::async_questions::recover(&event_http, &event_state).await {
+                        warn!(%error, "could not update async question cards after voice ended");
                     }
                 }
                 result = events.recv() => match result {
@@ -3056,6 +3122,76 @@ fn apply_started_turn_response(
     Ok(())
 }
 
+/// Native child listeners publish lifecycle events on this owned app-server
+/// connection too. Keep their update-interruption state even though their output
+/// is not routed as the profile's ordinary Discord response.
+fn observe_background_turn_lifecycle(
+    current: &mut Option<String>,
+    active_turns: &mut HashMap<String, String>,
+    orders: &mut HashMap<String, (u64, u64)>,
+    current_thread_id: &str,
+    generation: u64,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    let Some(thread_id) = params.get("threadId").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let Some(turn_id) = params
+        .pointer("/turn/id")
+        .or_else(|| params.get("turnId"))
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    match method {
+        "turn/started" => {
+            apply_turn_state_observation(
+                current,
+                active_turns,
+                orders,
+                thread_id,
+                current_thread_id,
+                generation,
+                &Some(turn_id.to_owned()),
+                params,
+            );
+        }
+        "turn/completed" => {
+            apply_completed_turn_observation(
+                current,
+                active_turns,
+                orders,
+                thread_id,
+                current_thread_id,
+                generation,
+                turn_id,
+                params,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn discard_closed_turn_observations(
+    current: &mut Option<String>,
+    active_turns: &mut HashMap<String, String>,
+    orders: &mut HashMap<String, (u64, u64)>,
+    current_thread_id: &str,
+    closed_generation: u64,
+) {
+    orders.retain(|thread_id, (generation, _)| {
+        if *generation != closed_generation {
+            return true;
+        }
+        let removed = active_turns.remove(thread_id);
+        if thread_id == current_thread_id && removed.as_ref() == current.as_ref() {
+            *current = None;
+        }
+        false
+    });
+}
+
 fn load_queue(path: &std::path::Path) -> anyhow::Result<VecDeque<QueuedInput>> {
     match fs::read(path) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
@@ -3242,6 +3378,20 @@ async fn handle_native_event(
     if method != "serverRequest/resolved"
         && crate::task_plan::event_thread_is_foreign(&params, &state.native.thread_id())
     {
+        if matches!(method.as_str(), "turn/started" | "turn/completed") {
+            let mut current = state.current_turn.lock().await;
+            let mut active_turns = state.active_turns.lock().await;
+            let mut orders = state.turn_observation_orders.lock().await;
+            observe_background_turn_lifecycle(
+                &mut current,
+                &mut active_turns,
+                &mut orders,
+                &state.native.thread_id(),
+                state.native.current_generation(),
+                &method,
+                &params,
+            );
+        }
         return;
     }
     match method.as_str() {
@@ -3252,6 +3402,21 @@ async fn handle_native_event(
             }
         }
         "discodex/connection-closed" => {
+            if let Some(generation) = params
+                .get("_discodex_connection_generation")
+                .and_then(serde_json::Value::as_u64)
+            {
+                let mut current = state.current_turn.lock().await;
+                let mut active_turns = state.active_turns.lock().await;
+                let mut orders = state.turn_observation_orders.lock().await;
+                discard_closed_turn_observations(
+                    &mut current,
+                    &mut active_turns,
+                    &mut orders,
+                    &state.native.thread_id(),
+                    generation,
+                );
+            }
             if let Err(error) = commands::mark_connection_closed(http, state, &params).await {
                 warn!(%error, "failed to close pending Discord requests after native connection close");
             }
@@ -3375,6 +3540,9 @@ async fn handle_native_event(
                     if let Err(error) = submit_next_queued_input(state, thread_id).await {
                         warn!(%error, "failed to dispatch next-turn input after completion");
                     }
+                    if let Err(error) = crate::async_questions::recover(http, state).await {
+                        warn!(%error, "could not update async question cards after completion");
+                    }
                 }
             }
         }
@@ -3437,6 +3605,9 @@ async fn handle_native_event(
                             ) {
                                 warn!(%error, "failed to persist native-consumed input acceptance");
                             }
+                        }
+                        if let Err(error) = crate::async_questions::recover(http, state).await {
+                            warn!(%error, "could not update accepted async question card");
                         }
                     }
                 }
@@ -4599,6 +4770,114 @@ mod tests {
     }
 
     #[test]
+    fn background_turn_lifecycle_keeps_children_for_update_without_changing_main() {
+        let mut current = Some("main-turn".to_owned());
+        let original_main = HashMap::from([("main".to_owned(), "main-turn".to_owned())]);
+        let mut active = original_main.clone();
+        let mut orders = HashMap::from([("main".to_owned(), (4, 10))]);
+        let event = |generation, order, thread, turn| {
+            observed(
+                generation,
+                order,
+                serde_json::json!({
+                    "threadId": thread, "turn": {"id": turn},
+                }),
+            )
+        };
+        for (order, thread, turn) in [
+            (11, "child-a", "a-first"),
+            (12, "child-b", "b-turn"),
+            (13, "child-a", "a-next"),
+        ] {
+            let params = event(4, order, thread, turn);
+            let original = params.clone();
+            observe_background_turn_lifecycle(
+                &mut current,
+                &mut active,
+                &mut orders,
+                "main",
+                4,
+                "turn/started",
+                &params,
+            );
+            assert_eq!(params, original);
+        }
+        let expected = HashMap::from([
+            ("main".to_owned(), "main-turn".to_owned()),
+            ("child-a".to_owned(), "a-next".to_owned()),
+            ("child-b".to_owned(), "b-turn".to_owned()),
+        ]);
+        assert_eq!(active, expected);
+        // A delayed completion belongs to the old child response, not a-next.
+        observe_background_turn_lifecycle(
+            &mut current,
+            &mut active,
+            &mut orders,
+            "main",
+            4,
+            "turn/completed",
+            &event(4, 14, "child-a", "a-first"),
+        );
+        assert_eq!(active, expected);
+        let before_orders = orders.clone();
+        for (method, params) in [
+            ("turn/completed", event(3, 99, "child-a", "a-next")),
+            ("item/completed", event(4, 99, "child-a", "a-next")),
+        ] {
+            observe_background_turn_lifecycle(
+                &mut current,
+                &mut active,
+                &mut orders,
+                "main",
+                4,
+                method,
+                &params,
+            );
+            assert_eq!(active, expected);
+            assert_eq!(orders, before_orders);
+        }
+        for (order, thread, turn) in [(15, "child-b", "b-turn"), (16, "child-a", "a-next")] {
+            observe_background_turn_lifecycle(
+                &mut current,
+                &mut active,
+                &mut orders,
+                "main",
+                4,
+                "turn/completed",
+                &event(4, order, thread, turn),
+            );
+        }
+        assert_eq!(active, original_main);
+        assert_eq!(current.as_deref(), Some("main-turn"));
+        assert_eq!(orders.get("main"), Some(&(4, 10)));
+    }
+
+    #[test]
+    fn closed_connection_clears_its_turns_but_keeps_reconnected_main_and_child() {
+        let mut current = Some("main-new".to_owned());
+        let new = HashMap::from([
+            ("main".to_owned(), "main-new".to_owned()),
+            ("child-new".to_owned(), "new-turn".to_owned()),
+        ]);
+        let mut active = new.clone();
+        active.insert("child-old".into(), "old-turn".into());
+        let new_orders = HashMap::from([
+            ("main".to_owned(), (5, 2)),
+            ("child-new".to_owned(), (5, 3)),
+        ]);
+        let mut orders = new_orders.clone();
+        orders.insert("child-old".into(), (4, 19));
+        discard_closed_turn_observations(&mut current, &mut active, &mut orders, "main", 4);
+        assert_eq!(current.as_deref(), Some("main-new"));
+        assert_eq!(active, new);
+        assert_eq!(orders, new_orders);
+        discard_closed_turn_observations(&mut current, &mut active, &mut orders, "main", 5);
+        assert_eq!(current, None);
+        assert!(active.is_empty());
+        assert!(orders.is_empty());
+    }
+
+    #[test]
     fn accepted_start_response_publishes_actual_turn_identity_before_event_dispatch() {
         let mut current = None;
         let mut active_turns = HashMap::new();
@@ -5084,8 +5363,8 @@ mod tests {
             "item": {
                 "id": "private-item", "type": item_type, "status": status,
                 "changes": [{"path": "/PRIVATE_PATH", "kind": {"type": "add"}, "diff": "PRIVATE_DIFF"}],
-                "command": "PRIVATE_COMMAND", "aggregatedOutput": "PRIVATE_OUTPUT",
-                "commandActions": [], "cwd": "/PRIVATE_PATH", "exitCode": 0,
+                "command": "PRIVATE_COMMAND", "aggregatedOutput": null,
+                "commandActions": [], "cwd": "/PRIVATE_PATH", "exitCode": null,
                 "content": [], "text": "PRIVATE_ANSWER", "clientId": "76"
             }
         });
@@ -5234,7 +5513,7 @@ mod tests {
             .remove(0);
         assert_eq!(
             serde_json::to_value(message).unwrap()["content"],
-            "Command execution failed."
+            "Command execution failed.\nExit code: 7"
         );
         assert!(
             results
@@ -5244,6 +5523,103 @@ mod tests {
                 )
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn approval_failures_keep_native_diagnostics_and_only_consume_the_matching_request() {
+        let source = ReplyTarget {
+            source_guild: None,
+            channel_id: ChannelId::new(42),
+            message_id: serenity::all::MessageId::new(76),
+        };
+        for (status, details, expected) in [
+            ("declined", serde_json::json!({"reason":"native reviewer declined this request"}), "Command execution was declined.\nReason: native reviewer declined this request".to_owned()),
+            ("failed", serde_json::json!({"error":{"code":"sandbox_denied","message":"native sandbox refusal","data":{"operation":"example"}}}), format!("Command execution failed.\nNative error: {}", serde_json::json!({"code":"sandbox_denied","message":"native sandbox refusal","data":{"operation":"example"}}))),
+            ("failed", serde_json::json!({"error":"OS error 5: operation failed"}), "Command execution failed.\nNative error: OS error 5: operation failed".to_owned()),
+            ("completed", serde_json::json!({"exitCode":7,"aggregatedOutput":"process diagnostic\nsecond line"}), "Command execution failed.\nExit code: 7\nCommand output:\nprocess diagnostic\nsecond line".to_owned()),
+            ("failed", serde_json::json!({}), "Command execution failed.".to_owned()),
+            ("completed", serde_json::json!({"exitCode":0}), "Command execution completed.\nExit code: 0".to_owned()),
+        ] {
+            let mut results=ApprovalResults::default();
+            let r1=approval_request_params();
+            let mut r2=r1.clone();
+            r2["itemId"]=serde_json::json!("other-item");
+            r2["turnId"]=serde_json::json!("other-turn");
+            results.track_request(1,&serde_json::json!("r1"),"item/commandExecution/requestApproval",&r1,Some(source.clone()));
+            results.track_request(1,&serde_json::json!("r2"),"item/commandExecution/requestApproval",&r2,Some(source.clone()));
+            let r2_key = (1, serde_json::json!("r2").to_string());
+            let r2_before=results.requests[&r2_key].item.clone();
+            let mut event=approval_item_event(1,"commandExecution",status);
+            event["item"].as_object_mut().unwrap().extend(details.as_object().unwrap().clone());
+            let event_before=event.clone();
+            assert!(results.take_replies("serverRequest/resolved",&serde_json::json!({"requestId":"r2","_discodex_connection_generation":1})).is_empty());
+            let mut replies=results.take_replies("item/completed",&event);
+            assert_eq!(replies.len(),1);
+            let (target,message)=replies.remove(0);
+            assert_eq!(target,source);
+            assert_eq!(serde_json::to_value(message).unwrap()["content"],expected);
+            assert_eq!(results.requests.len(),1);
+            assert_eq!(results.requests[&r2_key].item,r2_before);
+            assert_eq!(results.requests[&r2_key].target,Some(source.clone()));
+            assert_eq!(event,event_before);
+            assert!(results.take_replies("item/completed",&event).is_empty());
+        }
+    }
+
+    #[test]
+    fn approval_diagnostics_localize_headings_and_split_long_output_losslessly() {
+        for (language, exit, output) in [
+            (
+                crate::i18n::Language::English,
+                "Exit code",
+                "Command output",
+            ),
+            (crate::i18n::Language::Korean, "종료 코드", "명령 출력"),
+            (crate::i18n::Language::Chinese, "退出代码", "命令输出"),
+            (
+                crate::i18n::Language::Japanese,
+                "終了コード",
+                "コマンド出力",
+            ),
+        ] {
+            let source = ReplyTarget {
+                source_guild: None,
+                channel_id: ChannelId::new(42),
+                message_id: serenity::all::MessageId::new(76),
+            };
+            let mut results = ApprovalResults::default();
+            results.track_request(
+                1,
+                &serde_json::json!(17),
+                "item/commandExecution/requestApproval",
+                &approval_request_params(),
+                Some(source.clone()),
+            );
+            let mut event = approval_item_event(1, "commandExecution", "failed");
+            let native_output = "failure details 日本語 한글\n".repeat(200);
+            event["item"]["exitCode"] = serde_json::json!(7);
+            event["item"]["aggregatedOutput"] = serde_json::json!(native_output);
+            let replies = results.take_replies_localized("item/completed", &event, &language);
+            assert!(replies.len() > 1);
+            let mut joined = String::new();
+            for (target, message) in replies {
+                assert_eq!(target, source);
+                let payload = serde_json::to_value(message).unwrap();
+                let text = payload["content"].as_str().unwrap();
+                assert!(text.chars().count() <= 2_000);
+                joined.push_str(text);
+            }
+            let summary = language.text(
+                "Command execution failed.",
+                "명령 실행에 실패했습니다.",
+                "命令执行失败。",
+                "コマンドの実行に失敗しました。",
+            );
+            assert_eq!(
+                joined,
+                format!("{summary}\n{exit}: 7\n{output}:\n{native_output}")
+            );
+        }
     }
 
     #[test]

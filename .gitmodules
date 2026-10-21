@@ -1,0 +1,3 @@
+[submodule "codex"]
+	path = third_party/codex
+	url = https://github.com/CHOAM-CO/codex.git

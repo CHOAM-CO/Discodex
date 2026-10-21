@@ -109,4 +109,6 @@ fi
 rm -f "$STAGED"
 rm -rf "$TEMP_DIR"
 trap - EXIT HUP INT TERM
+# The prebuilt installer selects a shared or separate Codex data home and fetches
+# the runtime pinned to this worker release. No compiler is required on this host.
 exec "$INSTALLED" install

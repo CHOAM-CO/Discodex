@@ -20,8 +20,11 @@ use tokio_tungstenite::{WebSocketStream, client_async_with_config};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::model_catalog::ModelSelection;
+use crate::model_catalog::{ModelExecutor, ModelSelection};
 use crate::state::StateStore;
+
+#[path = "native_external.rs"]
+mod external;
 
 #[path = "native_features.rs"]
 mod native_features;
@@ -223,7 +226,8 @@ struct Inner {
     next_observation_order: AtomicU64,
     thread_id: Mutex<String>,
     thread_state: Mutex<Value>,
-    applied_subagent_model: Mutex<Option<String>>,
+    applied_subagent_model: Mutex<Value>,
+    external_turns: Mutex<HashMap<String, external::ActiveTurn>>,
     child: AsyncMutex<Option<Child>>,
     reconnect: AsyncMutex<()>,
     endpoint: PathBuf,
@@ -401,6 +405,8 @@ impl Native {
                     "threadId": thread_id,
                     "baseInstructions": crate::instructions::agent_base_instructions(&config.name, config.language)
                 });
+                let approval_policy = native.read_native_feature_preferences()?.approval_policy;
+                params["approvalPolicy"] = approval_policy.clone();
                 let child_model = native.prepare_model_params(&mut params, saved.model_selection.as_ref()).await?;
                 let thread = native.request("thread/resume", params).await
                     .with_context(|| format!("resume saved Codex thread {thread_id}"))?;
@@ -432,6 +438,10 @@ impl Native {
                     .lock()
                     .map_err(|_| anyhow!("thread state lock poisoned"))? =
                     thread_state_summary(&thread);
+                // An already-loaded native thread can ignore resume overrides.
+                if thread_state_summary(&thread).get("approvalPolicy") != Some(&approval_policy) {
+                    native.set_approval_policy_and_confirm(approval_policy).await?;
+                }
             } else {
                 native.start_new_raw().await?;
             }
@@ -703,7 +713,8 @@ impl Native {
             next_observation_order: AtomicU64::new(1),
             thread_id: Mutex::new(initial_thread_id),
             thread_state: Mutex::new(Value::Null),
-            applied_subagent_model: Mutex::new(None),
+            applied_subagent_model: Mutex::new(json!({})),
+            external_turns: Mutex::new(HashMap::new()),
             child: AsyncMutex::new(Some(child)),
             reconnect: AsyncMutex::new(()),
             endpoint,
@@ -781,6 +792,8 @@ impl Native {
             "ephemeral": false,
             "baseInstructions": crate::instructions::agent_base_instructions(&self.inner.config.name, self.inner.config.language)
         });
+        let approval_policy = self.read_native_feature_preferences()?.approval_policy;
+        params["approvalPolicy"] = approval_policy.clone();
         if let Some(model) = &self.inner.config.model {
             params["model"] = Value::String(model.clone());
         }
@@ -833,82 +846,29 @@ impl Native {
             .thread_state
             .lock()
             .map_err(|_| anyhow!("thread state lock poisoned"))? = thread_state_summary(&response);
+        if thread_state_summary(&response).get("approvalPolicy") != Some(&approval_policy) {
+            self.set_approval_policy_and_confirm(approval_policy)
+                .await?;
+        }
         Ok(thread_id)
     }
 
-    /// Prepare native per-thread model overrides. Provider definitions/auth remain in Codex.
+    /// Native provider definitions and credentials remain owned by Codex.
     async fn prepare_model_params(
         &self,
         params: &mut Value,
         selection: Option<&ModelSelection>,
-    ) -> Result<Option<String>> {
-        let response = self
-            .request_raw(
-                "config/read",
-                json!({
-                    "includeLayers": false, "cwd": self.inner.config.project_dir
-                }),
-            )
-            .await?;
-        let config = response.get("config").unwrap_or(&response);
-        let provider = crate::model_catalog::configured_provider(config);
-        let configured_model = config
-            .get("profile")
-            .and_then(Value::as_str)
-            .and_then(|name| config.get("profiles")?.get(name)?.get("model"))
-            .or_else(|| config.get("model"))
-            .and_then(Value::as_str);
-        let target = selection.cloned().or_else(|| {
-            params
-                .get("model")
-                .and_then(Value::as_str)
-                .or(configured_model)
-                .map(|model| ModelSelection {
-                    provider: provider.to_owned(),
-                    model: model.to_owned(),
-                })
-        });
-        if let Some(selection) = selection {
-            apply_model_selection(params, selection);
-        }
+    ) -> Result<Value> {
         let preferences = self.read_native_feature_preferences()?;
-        let child_model = target.as_ref().and_then(|target| {
-            native_features::subagent_model_for_provider(
-                &preferences,
-                target,
-                provider,
-                config
-                    .pointer("/agents/default_subagent_model")
-                    .and_then(Value::as_str),
-            )
-        });
-        // Without an explicit parent model, inherit Codex's default model and
-        // never forward a saved child model belonging to a different provider.
-        let child_model = child_model.or_else(|| {
-            if target.is_none() {
-                native_features::subagent_model_without_parent_override(
-                    &preferences,
-                    provider,
-                    config
-                        .pointer("/agents/default_subagent_model")
-                        .and_then(Value::as_str),
-                )
-            } else {
-                None
-            }
-        });
-        if let Some(model) = child_model.as_ref() {
-            params["config"] = json!({"agents.default_subagent_model": model});
-        }
-        Ok(child_model)
+        prepare_model_params_with_preferences(params, selection, &preferences)
     }
 
-    fn remember_subagent_model(&self, model: Option<String>) -> Result<()> {
+    fn remember_subagent_model(&self, overrides: Value) -> Result<()> {
         *self
             .inner
             .applied_subagent_model
             .lock()
-            .map_err(|_| anyhow!("subagent model lock poisoned"))? = model;
+            .map_err(|_| anyhow!("subagent model lock poisoned"))? = overrides;
         Ok(())
     }
 
@@ -963,6 +923,12 @@ impl Native {
             .and_then(Value::as_str)
             .zip(old.get("model").and_then(Value::as_str))
             .map(|(provider, model)| ModelSelection {
+                executor: if old.get("modelExecutor").and_then(Value::as_str) == Some("antigravity")
+                {
+                    ModelExecutor::Antigravity
+                } else {
+                    ModelExecutor::Codex
+                },
                 provider: provider.into(),
                 model: model.into(),
             })
@@ -974,15 +940,15 @@ impl Native {
             .await?;
         let mut rollback = json!({"threadId":thread_id});
         apply_model_selection(&mut rollback, &previous);
-        if let Some(model) = self
-            .inner
-            .applied_subagent_model
-            .lock()
-            .map_err(|_| anyhow!("subagent model lock poisoned"))?
-            .as_ref()
-        {
-            rollback["config"] = json!({"agents.default_subagent_model":model});
-        }
+        merge_config_overrides(
+            &mut rollback,
+            &self
+                .inner
+                .applied_subagent_model
+                .lock()
+                .map_err(|_| anyhow!("subagent model lock poisoned"))?
+                .clone(),
+        );
         // Subscribe before detach so a fast background unload cannot lose its closing event.
         let mut events = self.subscribe();
         let response = switch_model_thread(
@@ -1244,13 +1210,43 @@ impl Native {
             .context("read native model/provider configuration")?;
         let models =
             crate::model_catalog::read_pages(|params| self.request("model/list", params)).await?;
-        crate::model_catalog::assemble_catalog(
+        let preferences = self.read_native_feature_preferences()?;
+        let mut catalog = crate::model_catalog::assemble_catalog(
             models,
             &native_config,
             &self.thread_state(),
             self.inner.config.model.as_deref(),
             None,
-        )
+        )?;
+        let mut configured_agy_models = preferences.antigravity_models.clone();
+        if preferences.subagent_model_executor.as_deref() == Some("antigravity")
+            && let Some(model) = preferences.subagent_model.as_ref()
+        {
+            configured_agy_models.push(model.clone());
+        }
+        let thread = self.thread_state();
+        if thread.get("modelExecutor").and_then(Value::as_str) == Some("antigravity")
+            && let Some(model) = thread.get("model").and_then(Value::as_str)
+        {
+            configured_agy_models.push(model.to_owned());
+        }
+        crate::model_catalog::add_antigravity_models(
+            &mut catalog,
+            preferences.antigravity_enabled,
+            &configured_agy_models,
+        );
+        if preferences.antigravity_enabled {
+            let executable = Path::new(preferences.antigravity_path.as_deref().unwrap_or("agy"));
+            match crate::agy::discover_catalog(executable).await {
+                Ok(discovered) => {
+                    crate::model_catalog::add_antigravity_catalog(&mut catalog, &discovered)
+                }
+                Err(error) => {
+                    catalog["warnings"] = json!([format!("AGY model discovery failed: {error:#}")]);
+                }
+            }
+        }
+        Ok(catalog)
     }
 
     pub fn list_native_feature_settings(
@@ -1273,14 +1269,18 @@ impl Native {
             )
             .await
             .context("read effective native feature configuration")?;
-        if let Some(model) = self
+        let overrides = self
             .inner
             .applied_subagent_model
             .lock()
             .map_err(|_| anyhow!("subagent model lock poisoned"))?
-            .as_ref()
-        {
-            native_config["config"]["agents"]["default_subagent_model"] = json!(model);
+            .clone();
+        if let Some(entries) = overrides.as_object() {
+            for (key, value) in entries {
+                if let Some(field) = key.strip_prefix("agents.") {
+                    native_config["config"]["agents"][field] = value.clone();
+                }
+            }
         }
         Ok(NativeFeatureSnapshot {
             preferences,
@@ -1298,27 +1298,31 @@ impl Native {
         let previous = self.read_native_feature_preferences()?;
         if preferences.subagent_model != previous.subagent_model
             || preferences.subagent_model_provider != previous.subagent_model_provider
+            || preferences.subagent_model_executor != previous.subagent_model_executor
         {
             if let Some(model) = preferences.subagent_model.as_deref() {
                 let catalog = self.model_catalog().await?;
-                let requested = preferences
-                    .subagent_model_provider
-                    .as_ref()
-                    .map(|provider| {
-                        serde_json::to_string(&[provider.as_str(), model])
-                            .expect("model identity serializes")
-                    })
-                    .unwrap_or_else(|| model.to_owned());
-                let selection = crate::model_catalog::resolve_selection(&catalog, &requested)?;
-                if catalog.get("provider").and_then(Value::as_str)
-                    != Some(selection.provider.as_str())
+                let requested = if let Some(provider) = preferences.subagent_model_provider.as_ref()
                 {
-                    bail!("Codex subagents inherit their parent model provider");
-                }
+                    ModelSelection {
+                        executor: match preferences.subagent_model_executor.as_deref() {
+                            Some("antigravity") => ModelExecutor::Antigravity,
+                            _ => ModelExecutor::Codex,
+                        },
+                        provider: provider.clone(),
+                        model: model.to_owned(),
+                    }
+                    .value()
+                } else {
+                    model.to_owned()
+                };
+                let selection = crate::model_catalog::resolve_selection(&catalog, &requested)?;
                 preferences.subagent_model = Some(selection.model);
                 preferences.subagent_model_provider = Some(selection.provider);
+                preferences.subagent_model_executor = Some(selection.executor.as_str().into());
             } else {
                 preferences.subagent_model_provider = None;
+                preferences.subagent_model_executor = None;
             }
         }
         NativeFeatureStore::new(&self.inner.config.state_dir).apply(&preferences)
@@ -1330,6 +1334,37 @@ impl Native {
             json!({"cwd": self.inner.config.project_dir}),
         )
         .await
+    }
+
+    /// Applies the official per-thread policy and persists the profile choice only
+    /// after native state confirms it. No shared Codex configuration is written.
+    pub async fn set_approval_policy_and_confirm(&self, policy: Value) -> Result<Value> {
+        let mut events = self.subscribe();
+        let summary = update_approval_policy(
+            |method, params| self.request(method, params),
+            &mut events,
+            &self.thread_id(),
+            &policy,
+            |confirmed| {
+                let store = NativeFeatureStore::new(&self.inner.config.state_dir);
+                let mut preferences = store.read()?;
+                preferences.approval_policy = confirmed.clone();
+                store
+                    .apply(&preferences)
+                    .context("save the confirmed profile approval policy")?;
+                Ok(())
+            },
+        )
+        .await?;
+        {
+            let mut state = self
+                .inner
+                .thread_state
+                .lock()
+                .map_err(|_| anyhow!("thread state lock poisoned"))?;
+            merge_thread_state(&mut state, &summary);
+        }
+        Ok(summary)
     }
 
     pub async fn set_permissions(&self, profile_id: &str) -> Result<Value> {
@@ -1454,6 +1489,18 @@ impl Native {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
+        external::cancel_all(&self.inner, None);
+        let external_tasks: Vec<_> = self
+            .inner
+            .external_turns
+            .lock()
+            .map_err(|_| anyhow!("external turn lock poisoned"))?
+            .values_mut()
+            .filter_map(|turn| turn.task.take())
+            .collect();
+        for task in external_tasks {
+            task.await.context("stop external executor")?;
+        }
         let _ = self.inner.voice_ipc_shutdown.send(true);
         if let Some(task) = self.inner.voice_ipc_task.lock().await.take() {
             task.await
@@ -1569,9 +1616,7 @@ impl Native {
                     .lock()
                     .map_err(|_| anyhow!("subagent model lock poisoned"))?
                     .clone();
-                if let Some(model) = child_model.as_ref() {
-                    params["config"] = json!({"agents.default_subagent_model":model});
-                }
+                merge_config_overrides(&mut params, &child_model);
                 let response = self
                     .request_raw("thread/resume", params)
                     .await
@@ -1961,9 +2006,11 @@ async fn serve_voice_tool_ipc(
                 match accepted {
                     Ok(stream) => {
                         let Some(inner) = inner.upgrade() else { return };
-                        if let Err(error) = handle_voice_tool_connection(stream, &inner).await {
-                            tracing::warn!(%error, "voice tool MCP IPC request failed");
-                        }
+                        tokio::spawn(async move {
+                            if let Err(error) = handle_voice_tool_connection(stream, &inner).await {
+                                tracing::warn!(%error, "voice tool MCP IPC request failed");
+                            }
+                        });
                     }
                     Err(error) => {
                         tracing::error!(%error, "voice tool MCP IPC listener stopped");
@@ -2003,6 +2050,28 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
         voice_rpc_error(id, -32600, "JSON-RPC version must be 2.0")
     } else {
         match request.get("method").and_then(Value::as_str) {
+            Some(method @ ("thread/tool/list" | "thread/tool/call")) => {
+                let mut params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+                let result = async {
+                    let binding = external::take_binding(&mut params)?
+                        .context("native tool request omitted external response binding")?;
+                    external::validate_binding(inner, &binding)?;
+                    let receipt = bind_native_tool_run(&mut params, &binding);
+                    let (result, ()) = Native {
+                        inner: inner.clone(),
+                    }
+                    .request_raw_with_commit(method, params, |_| {
+                        external::validate_binding(inner, &binding)
+                    })
+                    .await?;
+                    if let Some(receipt) = receipt {
+                        external::record_native_call(inner, &binding, receipt);
+                    }
+                    Ok::<_, anyhow::Error>(result)
+                }
+                .await;
+                native_tool_rpc_response(id, result)
+            }
             Some("harness/call") => {
                 let args = request.get("params").cloned().unwrap_or_else(|| json!({}));
                 match handle_harness_call(inner, args).await {
@@ -2033,22 +2102,24 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
                 }
             }
             Some(method) if is_discord_tool_method(method) => {
-                let args = request.get("params").cloned().unwrap_or_else(|| json!({}));
+                let mut args = request.get("params").cloned().unwrap_or_else(|| json!({}));
                 if !args.is_object() {
                     voice_rpc_error(id, -32602, "Discord tool parameters must be an object")
                 } else {
-                    let handler = inner
-                        .discord_tool_handler
-                        .read()
-                        .map_err(|_| anyhow!("Discord tool handler lock poisoned"))?
-                        .clone();
-                    match handler {
-                        Some(handler) => match handler(method.to_owned(), args).await {
-                            Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-                            Err(error) => voice_rpc_error(id, -32000, &format!("{error:#}")),
-                        },
-                        None => voice_rpc_error(id, -32000, "Discord tool handler is not attached"),
+                    let result = async {
+                        if let Some(binding) = external::take_binding(&mut args)? {
+                            external::validate_binding(inner, &binding)?;
+                        }
+                        let handler = inner
+                            .discord_tool_handler
+                            .read()
+                            .map_err(|_| anyhow!("Discord tool handler lock poisoned"))?
+                            .clone()
+                            .context("Discord tool handler is not attached")?;
+                        handler(method.to_owned(), args).await
                     }
+                    .await;
+                    native_tool_rpc_response(id, result)
                 }
             }
             Some(method) => voice_rpc_error(id, -32601, &format!("method not found: {method}")),
@@ -2072,7 +2143,12 @@ fn snapshot_belongs_to_primary(response: &Value, primary: &str) -> bool {
     !primary.is_empty() && response.pointer("/thread/id").and_then(Value::as_str) == Some(primary)
 }
 
-async fn handle_harness_call(inner: &Arc<Inner>, params: Value) -> Result<Value> {
+async fn handle_harness_call(inner: &Arc<Inner>, mut params: Value) -> Result<Value> {
+    let binding = external::take_binding(&mut params)?;
+    if let Some(binding) = &binding {
+        external::validate_binding(inner, binding)?;
+        bind_native_tool_run(&mut params, binding);
+    }
     let caller = params
         .get("threadId")
         .and_then(Value::as_str)
@@ -2093,6 +2169,7 @@ async fn handle_harness_call(inner: &Arc<Inner>, params: Value) -> Result<Value>
     let weak = Arc::downgrade(inner);
     let rpc: crate::harness::Rpc = Arc::new(move |method, arguments| {
         let weak = weak.clone();
+        let binding = binding.clone();
         Box::pin(async move {
             let inner = weak.upgrade().context("Codex connection ended")?;
             if inner.connection_generation.load(Ordering::Acquire) != generation {
@@ -2103,6 +2180,9 @@ async fn handle_harness_call(inner: &Arc<Inner>, params: Value) -> Result<Value>
                 .request_raw_with_commit(&method, arguments, |_| {
                     if native.inner.connection_generation.load(Ordering::Acquire) != generation {
                         bail!("Codex reconnected; tool was not sent");
+                    }
+                    if let Some(binding) = &binding {
+                        external::validate_binding(&native.inner, binding)?;
                     }
                     Ok(())
                 })
@@ -2117,11 +2197,13 @@ async fn handle_harness_call(inner: &Arc<Inner>, params: Value) -> Result<Value>
         turn_id: params
             .get("turnId")
             .and_then(Value::as_str)
-            .context("missing caller turnId")?
-            .to_owned(),
+            .map(str::to_owned)
+            .map(Ok)
+            .unwrap_or_else(|| external::active_turn_id(inner, caller))?,
         thread_start: json!({
             "cwd":inner.config.project_dir,
             "ephemeral":false,
+            "approvalPolicy":NativeFeatureStore::new(&inner.config.state_dir).read()?.approval_policy,
             "baseInstructions":crate::instructions::agent_base_instructions(&inner.config.name, inner.config.language)
         }),
     };
@@ -2172,6 +2254,35 @@ fn voice_rpc_error(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
+fn bind_native_tool_run(
+    params: &mut Value,
+    binding: &crate::agy_mcp::NativeRunBinding,
+) -> Option<Value> {
+    params["threadId"] = json!(binding.thread_id);
+    params["turnId"] = json!(binding.turn_id);
+    params["runId"] = json!(binding.run_id);
+    params
+        .as_object_mut()
+        .and_then(|params| params.remove("discodexMcpCall"))
+}
+
+fn native_tool_rpc_response(id: Value, result: Result<Value>) -> Value {
+    match result {
+        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+        Err(error) => {
+            if let Some(native) = error.downcast_ref::<NativeRequestError>() {
+                let message = match native.code {
+                    Some(code) => format!("{error:#} (code {code}): {}", native.message),
+                    None => format!("{error:#}: {}", native.message),
+                };
+                voice_rpc_error(id, native.code.unwrap_or(-32000), &message)
+            } else {
+                voice_rpc_error(id, -32000, &format!("{error:#}"))
+            }
+        }
+    }
+}
+
 fn bridge_websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_message_size(None)
@@ -2200,21 +2311,62 @@ fn initialize_params() -> Value {
     })
 }
 
+fn merge_config_overrides(params: &mut Value, overrides: &Value) {
+    if let Some(entries) = overrides.as_object() {
+        if !entries.is_empty() && !params.get("config").is_some_and(Value::is_object) {
+            params["config"] = json!({});
+        }
+        for (key, value) in entries {
+            params["config"][key] = value.clone();
+        }
+    }
+}
+fn prepare_model_params_with_preferences(
+    params: &mut Value,
+    selection: Option<&ModelSelection>,
+    preferences: &NativeFeaturePreferences,
+) -> Result<Value> {
+    if let Some(selection) = selection {
+        if selection.executor == ModelExecutor::Antigravity && !preferences.antigravity_enabled {
+            bail!(
+                "Antigravity is disabled in this profile; enable it in settings to use this selection"
+            );
+        }
+        apply_model_selection(params, selection);
+    }
+    let overrides = native_features::subagent_model_overrides(preferences);
+    merge_config_overrides(params, &overrides);
+    Ok(overrides)
+}
+
 fn apply_model_selection(params: &mut Value, selection: &ModelSelection) {
     params["model"] = Value::String(selection.model.clone());
-    params["modelProvider"] = Value::String(selection.provider.clone());
+    merge_config_overrides(
+        params,
+        &json!({"model_executor": selection.executor.as_str()}),
+    );
+    if selection.executor == ModelExecutor::Codex {
+        params["modelProvider"] = Value::String(selection.provider.clone());
+    }
 }
 fn validate_model_selection_response(response: &Value, selection: &ModelSelection) -> Result<()> {
     let thread = thread_state_summary(response);
     let model = thread.get("model").and_then(Value::as_str);
     let provider = thread.get("modelProvider").and_then(Value::as_str);
-    if model != Some(selection.model.as_str()) || provider != Some(selection.provider.as_str()) {
+    let executor = thread
+        .get("modelExecutor")
+        .and_then(Value::as_str)
+        .unwrap_or("codex");
+    if model != Some(selection.model.as_str())
+        || executor != selection.executor.as_str()
+        || (selection.executor == ModelExecutor::Codex
+            && provider != Some(selection.provider.as_str()))
+    {
         bail!(
-            "Codex applied model/provider {:?}/{:?}, expected {}/{}",
-            provider,
-            model,
-            selection.provider,
-            selection.model
+            "Codex applied executor/model/provider {executor}/{model:?}/{provider:?}, expected {}/{}/{}",
+            selection.executor.as_str(),
+            selection.model,
+            selection.provider
         );
     }
     Ok(())
@@ -2313,6 +2465,60 @@ fn response_thread_id(response: &Value) -> Result<String> {
         .context("Codex app-server returned no thread ID")
 }
 
+async fn update_approval_policy<R, F, S>(
+    mut request: R,
+    events: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    policy: &Value,
+    save_confirmed: S,
+) -> Result<Value>
+where
+    R: FnMut(&'static str, Value) -> F,
+    F: std::future::Future<Output = Result<Value>>,
+    S: FnOnce(&Value) -> Result<()>,
+{
+    request(
+        "thread/settings/update",
+        json!({
+            "threadId": thread_id, "approvalPolicy": policy
+        }),
+    )
+    .await?;
+    let notified = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let event = events.recv().await.context("native event stream closed")?;
+            if event.get("method").and_then(Value::as_str) != Some("thread/settings/updated")
+                || event.pointer("/params/threadId").and_then(Value::as_str) != Some(thread_id)
+            {
+                continue;
+            }
+            return event
+                .pointer("/params/threadSettings")
+                .cloned()
+                .context("thread/settings/updated omitted threadSettings");
+        }
+    })
+    .await;
+    let response = match notified {
+        Ok(result) => result?,
+        // A no-op update need not emit a change notification; read the actual
+        // native setting rather than treating the empty update response as proof.
+        Err(_) => request("thread/resume", json!({"threadId": thread_id}))
+            .await
+            .context("read actual approval policy after thread/settings/update")?,
+    };
+    let summary = thread_state_summary(&response);
+    if summary.get("approvalPolicy") != Some(policy) {
+        bail!(
+            "Codex reported approval policy {}, expected {}",
+            summary.get("approvalPolicy").unwrap_or(&Value::Null),
+            policy
+        );
+    }
+    save_confirmed(policy)?;
+    Ok(summary)
+}
+
 fn thread_state_summary(response: &Value) -> Value {
     let thread = response.get("thread").unwrap_or(response);
     let fields = [
@@ -2321,6 +2527,7 @@ fn thread_state_summary(response: &Value) -> Value {
         "ephemeral",
         "model",
         "modelProvider",
+        "modelExecutor",
         "serviceTier",
         "permissionProfile",
         "activePermissionProfile",
@@ -2461,6 +2668,25 @@ fn spawn_reader(
                         );
                     }
                 }
+                external::observe_completion(&inner, &value);
+                if method == "turn/external/run" && value.get("id").is_some() {
+                    if let Err(error) = external::spawn(inner.clone(), value.clone(), generation) {
+                        let native = Native {
+                            inner: inner.clone(),
+                        };
+                        let id = value["id"].clone();
+                        tokio::spawn(async move {
+                            let _ = native
+                                .respond_for_generation(
+                                    generation,
+                                    id,
+                                    json!({"success":false,"error":format!("{error:#}")}),
+                                )
+                                .await;
+                        });
+                    }
+                    continue;
+                }
                 if method == "serverRequest/resolved" {
                     if let Some(params) = value.get_mut("params").and_then(Value::as_object_mut) {
                         params.insert(
@@ -2581,6 +2807,7 @@ fn spawn_reader(
             }
         }
         if let Some(inner) = inner.upgrade() {
+            external::cancel_all(&inner, Some(generation));
             let connection_closed = json!({
                 "jsonrpc": "2.0",
                 "method": "discodex/connection-closed",
@@ -2756,6 +2983,186 @@ mod thread_state_tests {
     use super::*;
     use std::io::{self, Write};
     use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn approval_policy_update_waits_for_matching_native_confirmation() {
+        let (sender, mut events) = broadcast::channel(8);
+        let mut calls = Vec::new();
+        let result = update_approval_policy(
+            |method, params| {
+                calls.push((method.to_owned(), params));
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"other-thread","threadSettings":{"approvalPolicy":"never"}
+                    }}))
+                    .unwrap();
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-example","threadSettings":{
+                            "approvalPolicy":"on-request", "approvalsReviewer":"user"
+                        }
+                    }}))
+                    .unwrap();
+                std::future::ready(Ok(json!({})))
+            },
+            &mut events,
+            "thread-example",
+            &json!("on-request"),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["approvalPolicy"], "on-request");
+        assert_eq!(result["approvalsReviewer"], "user");
+        assert_eq!(
+            calls,
+            vec![(
+                "thread/settings/update".to_owned(),
+                json!({
+                    "threadId":"thread-example", "approvalPolicy":"on-request"
+                })
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_policy_readback_confirms_an_unchanged_explicit_never() {
+        let (_sender, mut events) = broadcast::channel(8);
+        let mut calls = Vec::new();
+        let result = update_approval_policy(
+            |method, params| {
+                calls.push((method.to_owned(), params));
+                std::future::ready(Ok(match method {
+                    "thread/settings/update" => json!({}),
+                    "thread/resume" => {
+                        json!({"thread":{"id":"thread-example"},"approvalPolicy":"never"})
+                    }
+                    _ => panic!("unexpected method"),
+                }))
+            },
+            &mut events,
+            "thread-example",
+            &json!("never"),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["approvalPolicy"], "never");
+        assert_eq!(
+            calls[1],
+            (
+                "thread/resume".to_owned(),
+                json!({"threadId":"thread-example"})
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_policy_rejection_and_mismatch_are_not_reported_as_success() {
+        let (sender, mut events) = broadcast::channel(8);
+        let error = update_approval_policy(
+            |_, _| {
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-example","threadSettings":{"approvalPolicy":"never"}
+                    }}))
+                    .unwrap();
+                std::future::ready(Ok(json!({})))
+            },
+            &mut events,
+            "thread-example",
+            &json!("on-request"),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("never"));
+        let mut calls = 0;
+        let error = update_approval_policy(
+            |_, _| {
+                calls += 1;
+                std::future::ready(Err(anyhow!("native requirements reject this policy")))
+            },
+            &mut events,
+            "thread-example",
+            &json!("never"),
+            |_| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert!(error.to_string().contains("native requirements"));
+    }
+
+    #[tokio::test]
+    async fn approval_policy_saves_only_matching_confirmation_to_the_selected_profile() {
+        for (requested, effective, request_error, should_save) in [
+            (json!("on-request"), json!("on-request"), None, true),
+            (json!("never"), json!("never"), None, true),
+            (json!("on-request"), json!("never"), None, false),
+            (
+                json!("never"),
+                Value::Null,
+                Some("native requirements rejected policy"),
+                false,
+            ),
+        ] {
+            let original = json!({"p":{"approvalPolicy":"untrusted","subagentModel":"p-child","codeMode":false},"q":{"approvalPolicy":"never","subagentModel":"q-child"},"shared":{"approval_policy":"never","model":"shared-model"}});
+            let mut profiles = original.clone();
+            let (sender, mut events) = broadcast::channel(8);
+            let sequence = std::cell::RefCell::new(Vec::new());
+            let result = update_approval_policy(
+                |method, params| {
+                    sequence.borrow_mut().push("request");
+                    assert_eq!(method,"thread/settings/update");
+                    assert_eq!(params,json!({"threadId":"thread-p","approvalPolicy":requested}));
+                    if let Some(error) = request_error {
+                        return std::future::ready(Err(anyhow!(error)));
+                    }
+                    sender.send(json!({"method":"thread/settings/updated","params":{"threadId":"thread-q","threadSettings":{"approvalPolicy":"never"}}})).unwrap();
+                    sender.send(json!({"method":"thread/settings/updated","params":{"threadId":"thread-p","threadSettings":{"approvalPolicy":effective,"activePermissionProfile":{"id":"workspace-write"}}}})).unwrap();
+                    std::future::ready(Ok(json!({})))
+                },
+                &mut events,"thread-p",&requested,
+                |confirmed| {
+                    sequence.borrow_mut().push("save");
+                    profiles["p"]["approvalPolicy"] = confirmed.clone();
+                    Ok(())
+                },
+            ).await;
+            if should_save {
+                let summary = result.unwrap();
+                assert_eq!(summary["approvalPolicy"], requested);
+                assert_eq!(summary["activePermissionProfile"]["id"], "workspace-write");
+                assert_eq!(*sequence.borrow(), vec!["request", "save"]);
+                let restored: NativeFeaturePreferences =
+                    serde_json::from_value(profiles["p"].clone()).unwrap();
+                assert_eq!(restored.approval_policy, requested);
+                assert_eq!(restored.subagent_model.as_deref(), Some("p-child"));
+                assert_eq!(restored.code_mode, Some(false));
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(request_error.unwrap_or("Codex reported approval policy")));
+                assert_eq!(*sequence.borrow(), vec!["request"]);
+                assert_eq!(profiles, original);
+            }
+            assert_eq!(profiles["q"], original["q"]);
+            assert_eq!(profiles["shared"], original["shared"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_policy_save_failure_is_not_success_and_keeps_the_native_cause() {
+        let (sender, mut events) = broadcast::channel(4);
+        let error=update_approval_policy(
+            |_,_| {
+                sender.send(json!({"method":"thread/settings/updated","params":{"threadId":"thread-p","threadSettings":{"approvalPolicy":"never"}}})).unwrap();
+                std::future::ready(Ok(json!({})))
+            }, &mut events,"thread-p",&json!("never"),
+            |_| Err(anyhow!("profile persistence rejected the update")),
+        ).await.unwrap_err();
+        assert_eq!(error.to_string(), "profile persistence rejected the update");
+    }
 
     #[test]
     fn history_fallback_requires_a_structured_unsupported_history_error() {
@@ -2947,6 +3354,61 @@ mod thread_state_tests {
         assert_eq!(summary["status"]["type"], "idle");
         assert_eq!(summary["turns"][0]["id"], "turn-1");
         assert!(summary.get("unmodeledField").is_none());
+    }
+
+    #[test]
+    fn native_tool_rpc_response_preserves_typed_and_untyped_causes() {
+        let typed = anyhow::Error::new(NativeRequestError::from_response(
+            "thread/tool/call".into(),
+            &json!({"code":-32602,"message":"tool argument `target` is missing"}),
+        ))
+        .context("execute native delegation tool");
+        assert_eq!(
+            native_tool_rpc_response(json!("request-a"), Err(typed)),
+            json!({"jsonrpc":"2.0","id":"request-a","error":{
+                "code":-32602,
+                "message":"execute native delegation tool: native thread/tool/call request failed (code -32602): tool argument `target` is missing"
+            }})
+        );
+        let untyped = anyhow!("connection closed").context("read native tool response");
+        assert_eq!(
+            native_tool_rpc_response(json!(2), Err(untyped)),
+            json!({"jsonrpc":"2.0","id":2,"error":{
+                "code":-32000,"message":"read native tool response: connection closed"
+            }})
+        );
+        let result = json!({"output":{"type":"function_call_output","call_id":"call-a","output":"done"},"isError":false});
+        assert_eq!(
+            native_tool_rpc_response(json!("request-c"), Ok(result.clone())),
+            json!({"jsonrpc":"2.0","id":"request-c","result":result})
+        );
+    }
+
+    #[test]
+    fn native_tool_run_binding_keeps_original_response_and_each_parent() {
+        let arguments = json!({"threadId":"target-child","turnId":"tool-argument-turn"});
+        for (parent, turn) in [("parent-a", "turn-a"), ("parent-b", "turn-b")] {
+            let binding = crate::agy_mcp::NativeRunBinding {
+                thread_id: parent.into(),
+                turn_id: turn.into(),
+                run_id: format!("{parent}-run"),
+                generation: 3,
+            };
+            let receipt = json!({"name":"agent__send_message","arguments":arguments});
+            let mut params = json!({
+                "threadId":parent,"turnId":"model-supplied-turn","callId":"call-id",
+                "namespace":"agent","name":"send_message","arguments":arguments,
+                "discodexMcpCall":receipt
+            });
+            assert_eq!(bind_native_tool_run(&mut params, &binding), Some(receipt));
+            assert_eq!(
+                params,
+                json!({
+                    "threadId":parent,"turnId":turn,"runId":format!("{parent}-run"),"callId":"call-id",
+                    "namespace":"agent","name":"send_message","arguments":arguments
+                })
+            );
+        }
     }
 
     #[test]

@@ -42,23 +42,52 @@ jobs:
             runner: windows-11-arm
             suffix: '.exe'
     steps:
+      - name: Enable Git long paths on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: git config --global core.longpaths true
       - name: Check out requested release tag
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
-      - name: Enable Git long paths on Windows
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: git config --global core.longpaths true
+          submodules: recursive
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Configure the official MSVC environment
+        if: runner.os == 'Windows'
+        uses: ./third_party/codex/.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
+      - name: Confirm release tag matches the worker runtime version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          with open("Cargo.toml", "rb") as source:
+              version = tomllib.load(source)["package"]["version"]
+          expected = f"v{version}"
+          if os.environ["RELEASE_TAG"] != expected:
+              raise SystemExit(f"Release tag must be {expected} for this worker and runtime")
+          PY
+      - name: Install official Linux package dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils pkg-config libcap-dev libssl-dev
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          workspaces: |
+            . -> target
+            third_party/codex/codex-rs -> target
       - name: Parse PowerShell scripts with Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell
@@ -80,6 +109,23 @@ jobs:
       - name: Build release binary
         shell: bash
         run: cargo build --locked --release --target '${{ matrix.target }}'
+      - name: Build the pinned Codex package with official packaging
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          CODEX_REPO_ROOT: ${{ github.workspace }}/third_party/codex
+        run: |
+          python -m unittest discover -s scripts -p 'test_runtime_manifest.py'
+          STABLE_GIT_COMMIT="$(git -C third_party/codex rev-parse HEAD)"
+          export STABLE_GIT_COMMIT
+          if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
+            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+          fi
+          python third_party/codex/scripts/build_codex_package.py \
+            --variant codex --target "$TARGET" --cargo-profile release \
+            --package-dir "runtime-package" \
+            --archive-output "discodex-runtime-${TARGET}.tar.gz"
+          python scripts/runtime-manifest.py --target "$TARGET" --package runtime-package
       - name: Prepare release assets
         shell: bash
         env:
@@ -104,6 +150,8 @@ jobs:
           path: |
             discodex-${{ matrix.target }}${{ matrix.suffix }}
             discodex-${{ matrix.target }}${{ matrix.suffix }}.sha256
+            discodex-runtime-${{ matrix.target }}.tar.gz
+            discodex-runtime-${{ matrix.target }}.json
           if-no-files-found: error
           retention-days: 7
 
