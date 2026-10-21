@@ -1240,7 +1240,7 @@ async fn build_settings_menu(
                 .iter()
                 .map(|id| SettingsChoice {
                     value: id.to_string(),
-                    label: format!("ID: {id}"),
+                    label: String::new(),
                 })
                 .collect::<Vec<_>>();
             for (index, id) in ids.get(start..end).unwrap_or_default().iter().enumerate() {
@@ -1250,50 +1250,32 @@ async fn build_settings_menu(
                             .guild()
                             .map(|channel| channel.name.clone())
                             .unwrap_or_else(|| {
-                                format!(
-                                    "{} (ID: {})",
-                                    language.text(
+                                language
+                                    .text(
                                         "Unavailable",
                                         "사용할 수 없음",
                                         "不可用",
-                                        "利用できません"
-                                    ),
-                                    id
-                                )
+                                        "利用できません",
+                                    )
+                                    .to_owned()
                             }),
-                        Err(_) => format!(
-                            "{} (ID: {})",
-                            language.text(
+                        Err(_) => language
+                            .text(
                                 "Unavailable in this server",
                                 "이 서버에서 사용할 수 없음",
                                 "在此服务器中不可用",
-                                "このサーバーでは利用できません"
-                            ),
-                            id
-                        ),
+                                "このサーバーでは利用できません",
+                            )
+                            .to_owned(),
                     }
                 } else {
-                    match GuildId::new(state.config.guild_id)
-                        .member(ctx, UserId::new(*id))
-                        .await
-                    {
-                        Ok(member) => member_display_name(
-                            member.nick.as_deref(),
-                            member.user.global_name.as_deref(),
-                            &member.user.name,
-                        )
-                        .to_owned(),
-                        Err(_) => format!(
-                            "{} (ID: {})",
-                            language.text(
-                                "Unavailable or not a current server member",
-                                "조회할 수 없거나 현재 서버 구성원이 아님",
-                                "无法查询或不是当前服务器成员",
-                                "取得できないか、現在のサーバーメンバーではありません"
-                            ),
-                            id
-                        ),
-                    }
+                    account_display_name(
+                        &ctx.http,
+                        GuildId::new(state.config.guild_id),
+                        UserId::new(*id),
+                        language,
+                    )
+                    .await
                 };
                 choices[start + index].label = label;
             }
@@ -2217,6 +2199,33 @@ fn access_list_kind(key: &str) -> Option<SettingsKind> {
     }
 }
 
+async fn account_display_name(
+    http: &serenity::http::Http,
+    guild: GuildId,
+    user: UserId,
+    language: crate::i18n::Language,
+) -> String {
+    if let Ok(member) = http.get_member(guild, user).await {
+        return member_display_name(
+            member.nick.as_deref(),
+            member.user.global_name.as_deref(),
+            &member.user.name,
+        )
+        .to_owned();
+    }
+    match http.get_user(user).await {
+        Ok(user) => member_display_name(None, user.global_name.as_deref(), &user.name).to_owned(),
+        Err(_) => language
+            .text(
+                "Account unavailable",
+                "계정을 조회할 수 없음",
+                "无法查询账号",
+                "アカウントを取得できません",
+            )
+            .to_owned(),
+    }
+}
+
 fn member_display_name<'a>(
     nick: Option<&'a str>,
     global_name: Option<&'a str>,
@@ -2511,28 +2520,36 @@ fn antigravity_settings_values(
     } else {
         preferences.antigravity_models.join("\n")
     };
-    let current = format!("{status}\n{}: {}\n{}:\n{models}\n{}",
-        language.text("CLI executable", "CLI 실행파일", "CLI 可执行文件", "CLI 実行ファイル"),
-        preferences.antigravity_path.as_deref().unwrap_or("agy"),
+    let sharing = match preferences.antigravity_share_settings {
+        Some(true) => language.text(
+            "Shared existing settings",
+            "기존 설정 공유",
+            "共享现有设置",
+            "既存の設定を共有",
+        ),
+        Some(false) => language.text("Separate settings", "별도 설정", "独立设置", "個別の設定"),
+        None => language.text(
+            "Choose during setup",
+            "활성화 시 선택",
+            "启用时选择",
+            "セットアップ時に選択",
+        ),
+    };
+    let current = format!("{status}\n{sharing}\n{}:\n{models}\n{}",
         language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
         language.text(
-            "Uses your locally signed-in Antigravity CLI. Changes apply when you next select a model or start an AGY session.",
-            "로컬에 로그인된 Antigravity CLI를 사용합니다. 변경은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
-            "使用本机已登录的 Antigravity CLI。更改将在下次选择模型或启动 AGY 会话时生效。",
-            "ローカルでログイン済みの Antigravity CLI を使用します。変更は次のモデル選択または AGY セッション開始時に適用されます。",
+            "Discodex manages its own AGY CLI. Enabling it starts installation and sign-in when needed. Settings changes apply to the next AGY session.",
+            "Discodex 전용 AGY CLI를 관리합니다. 활성화하면 필요한 설치와 로그인을 시작합니다. 설정 변경은 다음 AGY 세션에 적용됩니다.",
+            "Discodex 管理独立的 AGY CLI。启用时会按需启动安装和登录。设置更改将在下次 AGY 会话中生效。",
+            "Discodex 専用の AGY CLI を管理します。有効にすると必要なインストールとログインを開始します。設定変更は次の AGY セッションに適用されます。",
         ),
     );
     let choices = [
         ("on", language.text("On", "켜기", "开启", "オン")),
         ("off", language.text("Off", "끄기", "关闭", "オフ")),
         (
-            "path",
-            language.text(
-                "CLI executable",
-                "CLI 실행파일",
-                "CLI 可执行文件",
-                "CLI 実行ファイル",
-            ),
+            "sharing",
+            language.text("Settings sharing", "설정 공유", "设置共享", "設定の共有"),
         ),
         (
             "models",
@@ -2554,7 +2571,7 @@ fn antigravity_text_field<'a>(menu: &'a SettingsMenuState, action: &str) -> Opti
     }
     let index = action.strip_prefix('c')?.parse::<usize>().ok()?;
     let value = menu.choices.get(index)?.value.as_str();
-    matches!(value, "path" | "models").then_some(value)
+    (value == "models").then_some(value)
 }
 
 fn antigravity_text_modal(
@@ -2564,28 +2581,6 @@ fn antigravity_text_modal(
     language: crate::i18n::Language,
 ) -> anyhow::Result<CreateModal> {
     let (title, label, placeholder, value, style) = match field {
-        "path" => (
-            language.text(
-                "Antigravity CLI",
-                "Antigravity CLI",
-                "Antigravity CLI",
-                "Antigravity CLI",
-            ),
-            language.text(
-                "Executable path",
-                "실행파일 경로",
-                "可执行文件路径",
-                "実行ファイルのパス",
-            ),
-            language.text(
-                "Leave blank to use agy from PATH",
-                "비우면 PATH의 agy 사용",
-                "留空则使用 PATH 中的 agy",
-                "空欄なら PATH の agy を使用",
-            ),
-            preferences.antigravity_path.clone().unwrap_or_default(),
-            InputTextStyle::Short,
-        ),
         "models" => (
             language.text(
                 "Antigravity models",
@@ -2628,10 +2623,6 @@ fn set_antigravity_text_preference(
     value: &str,
 ) -> anyhow::Result<()> {
     match field {
-        "path" => {
-            preferences.antigravity_path =
-                (!value.trim().is_empty()).then(|| value.trim().to_owned())
-        }
         "models" => {
             preferences.antigravity_models = value
                 .lines()
@@ -2948,6 +2939,22 @@ async fn handle_claimed_settings_action(
             .get(index)
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
+        if menu.kind == SettingsKind::Antigravity {
+            if matches!(selected.value.as_str(), "on" | "sharing") {
+                return crate::discord_agy_setup::begin(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    menu,
+                    selected.value == "sharing",
+                )
+                .await;
+            }
+            if selected.value == "off" {
+                state.agy_setup.cancel().await;
+            }
+        }
         if menu.kind == SettingsKind::NativeFeatures {
             menu.kind = if selected.value == "antigravity" {
                 SettingsKind::Antigravity
@@ -3129,6 +3136,24 @@ async fn update_settings_panel(
     update_settings_panel_with_notice(ctx, interaction, state, previous_id, menu, "").await
 }
 
+pub(crate) async fn return_from_agy_setup(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    previous: &SettingsMenuState,
+) -> anyhow::Result<()> {
+    let menu = build_settings_menu(
+        ctx,
+        state,
+        SettingsKind::Antigravity,
+        0,
+        previous.requester_id,
+        state.native.current_generation(),
+    )
+    .await?;
+    update_settings_panel(ctx, interaction, state, "", menu).await
+}
+
 async fn update_settings_panel_with_notice(
     ctx: &Context,
     interaction: &ComponentInteraction,
@@ -3210,7 +3235,6 @@ async fn apply_setting_choice(
         SettingsKind::Antigravity => {
             let mut preferences = state.native.read_native_feature_preferences()?;
             preferences.antigravity_enabled = match requested {
-                "on" => true,
                 "off" => false,
                 _ => bail!("unknown Antigravity switch"),
             };
@@ -3617,6 +3641,13 @@ pub(crate) async fn handle_component(
     )?;
     if interaction.data.custom_id.starts_with("asyncq:") {
         return crate::async_questions::handle_component(ctx, interaction, &state).await;
+    }
+    if interaction
+        .data
+        .custom_id
+        .starts_with("discodex:agy-setup:")
+    {
+        return crate::discord_agy_setup::handle_component(ctx, interaction, &state).await;
     }
     if interaction
         .data
@@ -4083,6 +4114,9 @@ pub(crate) async fn handle_modal(
     )?;
     if interaction.data.custom_id.starts_with("asyncq:") {
         return crate::async_questions::handle_modal(ctx, interaction, &state).await;
+    }
+    if interaction.data.custom_id.starts_with("discodex:agy-code:") {
+        return crate::discord_agy_setup::handle_modal(ctx, interaction, &state).await;
     }
     if interaction.data.custom_id.starts_with("codex:access:") {
         return handle_message_access_modal(ctx, interaction, &state).await;
@@ -9407,27 +9441,27 @@ mod display_tests {
     fn antigravity_settings_are_opt_in_and_localized_with_text_modals() {
         use crate::i18n::Language;
         let preferences = crate::native::NativeFeaturePreferences::default();
-        for (language, off, path, models) in [
-            (Language::English, "Off", "CLI executable", "Model IDs"),
-            (Language::Korean, "끄기", "CLI 실행파일", "모델 ID"),
-            (Language::Chinese, "关闭", "CLI 可执行文件", "模型 ID"),
-            (Language::Japanese, "オフ", "CLI 実行ファイル", "モデル ID"),
+        for (language, off, sharing, models) in [
+            (Language::English, "Off", "Settings sharing", "Model IDs"),
+            (Language::Korean, "끄기", "설정 공유", "모델 ID"),
+            (Language::Chinese, "关闭", "设置共享", "模型 ID"),
+            (Language::Japanese, "オフ", "設定の共有", "モデル ID"),
         ] {
             let mut menu = menu_fixture();
             menu.kind = SettingsKind::Antigravity;
             (menu.current_value, menu.current, menu.choices) =
                 antigravity_settings_values(&preferences, language);
             assert_eq!(menu.current_value.as_deref(), Some("off"));
-            assert!(menu.current.contains("agy"));
+            assert!(menu.current.contains("AGY"));
             let (_, rows) = render_settings_menu("agy-example", &menu, language);
             let payload = serde_json::to_value(rows).unwrap();
             assert_eq!(payload[0]["components"][1]["label"], format!("✓ {off}"));
-            assert_eq!(payload[0]["components"][2]["label"], path);
+            assert_eq!(payload[0]["components"][2]["label"], sharing);
             assert_eq!(payload[0]["components"][3]["label"], models);
             assert_eq!(antigravity_text_field(&menu, "c0"), None);
-            assert_eq!(antigravity_text_field(&menu, "c2"), Some("path"));
+            assert_eq!(antigravity_text_field(&menu, "c2"), None);
             assert_eq!(antigravity_text_field(&menu, "c3"), Some("models"));
-            for field in ["path", "models"] {
+            for field in ["models"] {
                 let modal =
                     antigravity_text_modal("agy-example", field, &preferences, language).unwrap();
                 let value = serde_json::to_value(modal).unwrap();
@@ -9450,14 +9484,14 @@ mod display_tests {
         preferences.subagent_model = Some("child-example".into());
         preferences.subagent_model_provider = Some("provider-example".into());
         preferences.subagent_model_executor = Some("codex".into());
-        set_antigravity_text_preference(&mut preferences, "path", "  agy-preview  ").unwrap();
+        preferences.antigravity_share_settings = Some(false);
         set_antigravity_text_preference(
             &mut preferences,
             "models",
             "  exact/id-v2\n\nother:model+custom \n",
         )
         .unwrap();
-        assert_eq!(preferences.antigravity_path.as_deref(), Some("agy-preview"));
+        assert_eq!(preferences.antigravity_share_settings, Some(false));
         assert_eq!(
             preferences.antigravity_models,
             vec!["exact/id-v2", "other:model+custom"]
@@ -9471,7 +9505,7 @@ mod display_tests {
         let before = preferences.clone();
         assert!(set_antigravity_text_preference(&mut preferences, "unknown", "anything").is_err());
         assert_eq!(preferences, before);
-        set_antigravity_text_preference(&mut preferences, "path", "").unwrap();
+        assert!(set_antigravity_text_preference(&mut preferences, "path", "agy").is_err());
         set_antigravity_text_preference(&mut preferences, "models", "").unwrap();
         assert_eq!(preferences.antigravity_path, None);
         assert!(preferences.antigravity_models.is_empty());
@@ -11366,6 +11400,57 @@ mod display_tests {
             member_display_name(Some("New Nick"), Some("Global"), "User"),
             "New Nick"
         );
+    }
+
+    #[tokio::test]
+    async fn accounts_outside_server_use_discord_display_name_and_one_id() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v10/guilds/10/members/42"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({"code":10007,"message":"Unknown Member"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut user = serenity::all::User::default();
+        user.id = UserId::new(42);
+        user.name = "test-account".into();
+        user.global_name = Some("Display Name".into());
+        Mock::given(method("GET"))
+            .and(path("/api/v10/users/42"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(user))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let http = serenity::http::HttpBuilder::new("test-token")
+            .proxy(server.uri())
+            .ratelimiter_disabled(true)
+            .build();
+        let label = account_display_name(
+            &http,
+            GuildId::new(10),
+            UserId::new(42),
+            crate::i18n::Language::English,
+        )
+        .await;
+        assert_eq!(label, "Display Name");
+        let mut menu = menu_fixture();
+        menu.kind = SettingsKind::PairedAccounts;
+        menu.choices = vec![SettingsChoice {
+            value: "42".into(),
+            label,
+        }];
+        let (content, _) =
+            render_settings_menu("test-panel", &menu, crate::i18n::Language::English);
+        assert!(content.contains("Display Name (ID: 42)"));
+        assert_eq!(content.matches("ID: 42").count(), 1);
+        server.verify().await;
     }
 
     #[test]

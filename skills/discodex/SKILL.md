@@ -9,8 +9,8 @@ This guide is bundled with Discodex **{{version}}**. Use the references for this
 
 Read the relevant sections only:
 
-- [Installation and configuration](references/installation.md): profile settings, languages, providers and models, approval settings, updating, platform services, and removal.
-- [Behavior and architecture](references/design.md): home-channel and source-channel replies, attachments and tables, voice inbox and transcripts, persistent context, task tools, memory, and update lifecycle.
+- [Installation and configuration](references/installation.md): profile settings, languages, providers and models, AGY installation and sign-in, approval settings, updating, platform services, and removal.
+- [Behavior and architecture](references/design.md): home-channel, source-channel and DM replies, attachments and tables, voice inbox and transcripts, persistent context, task tools, memory, and update lifecycle.
 
 Discodex connects Discord to the native Codex runtime. Distinguish Discord delivery, worker behavior, native model or tool execution, provider responses, and host OS behavior when diagnosing a problem. Use the actual error and current settings to identify the responsible component; a running worker alone does not prove delivery or voice is working.
 

@@ -22,12 +22,16 @@ pub struct NativeFeaturePreferences {
     /// Native per-thread policy; deliberately separate from shared Codex config.
     #[serde(default = "default_approval_policy")]
     pub approval_policy: Value,
-    /// Opt-in to the locally installed subscription-authenticated AGY CLI.
+    /// Opt-in to the managed subscription-authenticated AGY CLI.
     #[serde(default)]
     pub antigravity_enabled: bool,
-    /// None uses the `agy` executable on PATH.
+    /// Legacy executable preference, retained when reading older profiles.
+    /// Managed AGY execution no longer uses a globally installed binary.
     #[serde(default)]
     pub antigravity_path: Option<String>,
+    /// Whether to reuse existing AGY settings; None asks during setup.
+    #[serde(default)]
+    pub antigravity_share_settings: Option<bool>,
     /// Exact IDs obtained from AGY or entered by the user.
     #[serde(default)]
     pub antigravity_models: Vec<String>,
@@ -65,6 +69,7 @@ impl Default for NativeFeaturePreferences {
             approval_policy: default_approval_policy(),
             antigravity_enabled: false,
             antigravity_path: None,
+            antigravity_share_settings: None,
             antigravity_models: Vec::new(),
             code_mode: Some(true),
             code_mode_host: Some(true),
@@ -361,6 +366,7 @@ mod tests {
             approval_policy: default_approval_policy(),
             antigravity_enabled: false,
             antigravity_path: None,
+            antigravity_share_settings: None,
             antigravity_models: Vec::new(),
             code_mode: None,
             code_mode_host: None,
@@ -432,11 +438,26 @@ mod tests {
         preferences.approval_policy = json!("never");
         preferences.antigravity_enabled = true;
         preferences.antigravity_path = Some("agy-preview".to_owned());
+        preferences.antigravity_share_settings = Some(true);
         preferences.antigravity_models = vec!["model-exact-a".into(), "model-exact-b".into()];
 
         let encoded = serde_json::to_vec_pretty(&preferences).unwrap();
         let restored: NativeFeaturePreferences = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(restored, preferences);
+    }
+
+    #[test]
+    fn agy_settings_sharing_preserves_unset_separate_and_shared_choices() {
+        for choice in [None, Some(false), Some(true)] {
+            let preferences = NativeFeaturePreferences {
+                antigravity_share_settings: choice,
+                ..Default::default()
+            };
+            let encoded = serde_json::to_value(&preferences).unwrap();
+            assert_eq!(encoded["antigravityShareSettings"], json!(choice));
+            let restored: NativeFeaturePreferences = serde_json::from_value(encoded).unwrap();
+            assert_eq!(restored.antigravity_share_settings, choice);
+        }
     }
 
     #[test]
@@ -519,6 +540,7 @@ mod tests {
         assert_eq!(legacy.code_mode, Some(false));
         assert!(!legacy.antigravity_enabled);
         assert_eq!(legacy.antigravity_path, None);
+        assert_eq!(legacy.antigravity_share_settings, None);
         assert!(legacy.antigravity_models.is_empty());
         assert_eq!(legacy.subagent_model_executor, None);
         for policy in [

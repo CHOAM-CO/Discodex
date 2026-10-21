@@ -2292,20 +2292,6 @@ impl VoiceBridge {
         guild_id: GuildId,
         channel_id: ChannelId,
     ) -> Result<VoiceJoinResult> {
-        if self
-            .native
-            .thread_state()
-            .get("modelExecutor")
-            .and_then(Value::as_str)
-            == Some("antigravity")
-        {
-            bail!("{}", self.config.language.text(
-                "Antigravity does not support Discord voice calls. Select a Codex model first.",
-                "Antigravity는 Discord 음성 통화를 지원하지 않습니다. 먼저 Codex 모델을 선택하세요.",
-                "Antigravity 不支持 Discord 语音通话。请先选择 Codex 模型。",
-                "Antigravity は Discord 音声通話に対応していません。先に Codex モデルを選択してください。",
-            ));
-        }
         let _lifecycle = self.lifecycle.lock().await;
         let language = self.config.language;
         {
@@ -3807,6 +3793,7 @@ fn realtime_start_params(
         "version": "v3",
         "outputModality": "audio",
         "transport": {"type": "webrtc", "sdp": offer_sdp},
+        "flushTranscriptTailOnSessionEnd": true,
         "realtimeStartInstructions": call_context.start_instructions,
         "initialItems": [{
             "role": "developer",
@@ -5826,6 +5813,32 @@ mod tests {
         );
         assert!(ledger.observe_flat_done("user", raw_text).is_none());
         assert_eq!(ledger.items.len(), 1);
+    }
+
+    #[test]
+    fn realtime_start_requests_remaining_transcript_commit_on_the_same_thread() {
+        let thread_id = "persistent-native-thread";
+        let call_id = Uuid::from_u128(1);
+        let params = realtime_start_params(
+            thread_id,
+            call_id,
+            Some("cedar"),
+            "voice-offer",
+            &realtime_call_start_context(call_id, thread_id, Language::English),
+        );
+
+        assert_eq!(params["threadId"], thread_id);
+        assert_eq!(params["realtimeSessionId"], call_id.to_string());
+        assert_eq!(
+            params["transport"],
+            json!({"type": "webrtc", "sdp": "voice-offer"})
+        );
+        assert_eq!(params["voice"], "cedar");
+        assert_eq!(params["flushTranscriptTailOnSessionEnd"], true);
+        assert!(params.get("model").is_none());
+        assert!(params.get("modelProvider").is_none());
+        assert!(params.get("modelExecutor").is_none());
+        assert!(params.get("clientManagedHandoffs").is_none());
     }
 
     #[test]

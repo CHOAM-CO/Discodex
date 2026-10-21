@@ -83,8 +83,8 @@ impl MessageAccess {
         Ok(())
     }
 
-    /// Apply precedence: self and blacklist always deny, whitelist always allows,
-    /// then the selected source policy is evaluated.
+    /// Apply precedence: self and blacklist always deny; whitelist and paired
+    /// direct messages allow; then the selected source policy is evaluated.
     pub fn allows(
         &self,
         author_id: u64,
@@ -97,7 +97,9 @@ impl MessageAccess {
         if is_self || self.blacklist.contains(&author_id) {
             return false;
         }
-        if self.whitelist.contains(&author_id) {
+        if self.whitelist.contains(&author_id)
+            || (guild_id.is_none() && self.paired_user_ids.contains(&author_id))
+        {
             return true;
         }
         match self.policy {
@@ -207,6 +209,53 @@ mod tests {
         access.paired_user_ids = vec![4];
         assert!(check(&access, 4, false, None, 90, None));
         assert!(!check(&access, 5, false, Some(10), 90, None));
+    }
+
+    #[test]
+    fn paired_and_whitelisted_direct_messages_are_allowed_under_every_policy() {
+        for policy in [
+            MessagePolicy::Everyone,
+            MessagePolicy::RegisteredServer,
+            MessagePolicy::RegisteredChannels,
+            MessagePolicy::Paired,
+        ] {
+            let access = MessageAccess {
+                policy,
+                paired_user_ids: vec![4, 7],
+                whitelist: vec![5, 6],
+                blacklist: vec![6, 7],
+                channel_ids: vec![20],
+            };
+            assert!(
+                access.allows(4, false, None, 90, None, 10),
+                "paired DM must be admitted with {policy:?}"
+            );
+            assert!(access.allows(5, false, None, 90, None, 10));
+            assert!(!access.allows(6, false, None, 90, None, 10));
+            assert!(!access.allows(7, false, None, 90, None, 10));
+            assert!(!access.allows(4, true, None, 90, None, 10));
+            assert_eq!(
+                access.allows(8, false, None, 90, None, 10),
+                policy == MessagePolicy::Everyone
+            );
+        }
+    }
+
+    #[test]
+    fn paired_direct_message_access_does_not_expand_guild_channel_scope() {
+        let mut access = MessageAccess {
+            policy: MessagePolicy::RegisteredServer,
+            paired_user_ids: vec![4],
+            channel_ids: vec![20],
+            ..MessageAccess::default()
+        };
+        assert!(access.allows(4, false, Some(10), 90, None, 10));
+        assert!(!access.allows(4, false, Some(11), 90, None, 10));
+
+        access.policy = MessagePolicy::RegisteredChannels;
+        assert!(access.allows(4, false, Some(10), 20, None, 10));
+        assert!(access.allows(4, false, Some(10), 21, Some(20), 10));
+        assert!(!access.allows(4, false, Some(10), 90, None, 10));
     }
 
     #[test]
