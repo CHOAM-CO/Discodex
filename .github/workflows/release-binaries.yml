@@ -59,6 +59,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Configure the official MSVC environment
+        if: runner.os == 'Windows'
+        uses: ./third_party/codex/.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
       - name: Confirm release tag matches the worker runtime version
         shell: bash
         env:
@@ -113,6 +118,9 @@ jobs:
           python -m unittest discover -s scripts -p 'test_runtime_manifest.py'
           STABLE_GIT_COMMIT="$(git -C third_party/codex rev-parse HEAD)"
           export STABLE_GIT_COMMIT
+          if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
+            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+          fi
           python third_party/codex/scripts/build_codex_package.py \
             --variant codex --target "$TARGET" --cargo-profile release \
             --package-dir "runtime-package" \
