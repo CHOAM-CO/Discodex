@@ -273,6 +273,12 @@ fn startup_overrides(preferences: &NativeFeaturePreferences) -> Result<Vec<(Stri
         "features.token_budget.use_history_notes_extension",
         preferences.history_notes,
     );
+    // The fork extends spawn_agent with provider/executor selection. Use Codex's
+    // namespace setting instead of changing the model's reserved collaboration schema.
+    result.push((
+        "features.multi_agent_v2.tool_namespace".to_owned(),
+        serde_json::to_string("discodex_agents")?,
+    ));
     Ok(result)
 }
 
@@ -327,6 +333,9 @@ mod tests {
             })
         );
         assert!(overrides.iter().any(|(key, value)| {
+            key == "features.multi_agent_v2.tool_namespace" && value == "\"discodex_agents\""
+        }));
+        assert!(overrides.iter().any(|(key, value)| {
             key == "tools.experimental_request_user_input.enabled" && value == "true"
         }));
         assert!(overrides.iter().any(|(key, value)| {
@@ -347,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn unset_preferences_produce_no_startup_overrides() {
+    fn unset_preferences_only_select_the_discodex_tool_contract() {
         let preferences = NativeFeaturePreferences {
             approval_policy: default_approval_policy(),
             antigravity_enabled: false,
@@ -367,7 +376,13 @@ mod tests {
             subagent_model_executor: None,
         };
         let overrides = startup_overrides(&preferences).expect("build native config overrides");
-        assert!(overrides.is_empty());
+        assert_eq!(
+            overrides,
+            vec![(
+                "features.multi_agent_v2.tool_namespace".to_owned(),
+                "\"discodex_agents\"".to_owned(),
+            )]
+        );
     }
 
     #[test]

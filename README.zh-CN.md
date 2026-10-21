@@ -82,6 +82,7 @@ Antigravity 设置在下次模型选择或 AGY 会话启动时生效；原生进
 - `/discodex voice-join channel:<允许的语音频道>`：加入允许的语音频道
 - `/discodex voice-leave`：结束语音通话
 - `/discodex interrupt`：请求停止当前响应
+- `/discodex compact`：手动压缩当前对话上下文
 - `/discodex update`：检查并应用更新
 - `/discodex new`：开始新对话
 

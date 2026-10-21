@@ -73,6 +73,7 @@ Antigravity 설정은 다음 모델 선택 또는 AGY 세션 시작 때 적용�
 - `/discodex voice-join channel:<허용 음성 채널>`: 음성 입장
 - `/discodex voice-leave`: 음성 통화 종료
 - `/discodex interrupt`: 진행 중 응답 중단 요청
+- `/discodex compact`: 현재 대화 문맥을 수동 압축
 - `/discodex update`: 업데이트 확인 및 적용
 - `/discodex new`: 새 대화 시작
 

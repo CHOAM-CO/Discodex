@@ -78,6 +78,7 @@ workerと対応するビルド済みCodexパッケージを取得します。マ
 - `/discodex voice-join channel:<許可された音声チャンネル>`：音声チャンネルに参加する
 - `/discodex voice-leave`：通話を終了する
 - `/discodex interrupt`：現在の応答の停止を依頼する
+- `/discodex compact`：現在の会話のコンテキストを手動で圧縮する
 - `/discodex update`：更新を確認して適用する
 - `/discodex new`：新しい会話を開始する
 

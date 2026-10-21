@@ -241,10 +241,10 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
             CommandOptionType::SubCommand,
             "update",
             language.text(
-                "Check for and queue the latest Discodex update",
-                "최신 Discodex 업데이트를 확인하고 대기열에 추가합니다",
-                "检查并加入最新 Discodex 更新",
-                "最新の Discodex 更新を確認して予約します",
+                "Check for the latest Discodex update and confirm installation",
+                "최신 Discodex 업데이트를 확인하고 설치 여부를 선택합니다",
+                "检查最新 Discodex 更新并确认安装",
+                "最新の Discodex 更新を確認し、インストールを選択します",
             ),
         ))
         .add_option(CreateCommandOption::new(
@@ -285,6 +285,16 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
                 "현재 진행 중인 응답을 중단합니다",
                 "中断当前回复",
                 "現在の応答を中断します",
+            ),
+        ))
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "compact",
+            language.text(
+                "Compact conversation context, replacing any active response",
+                "진행 중인 응답을 중단하고 대화 문맥을 압축합니다",
+                "压缩对话上下文，替换正在进行的回复",
+                "進行中の応答を中断して会話のコンテキストを圧縮します",
             ),
         ))
         .add_option(
@@ -729,6 +739,13 @@ async fn handle_authorized(
                 )
                 .to_owned();
         }
+        "compact" => {
+            let _settings_change = state.settings_change_lock.lock().await;
+            output = request_compaction(&state.native.thread_id(), language, |method, params| {
+                state.native.request(method, params)
+            })
+            .await;
+        }
         "new" => {
             let active_turn = state.current_turn.lock().await.clone();
             let expected_active_turn = active_turn.clone();
@@ -880,6 +897,39 @@ async fn handle_authorized(
         ),
     }
     Ok(output)
+}
+
+async fn request_compaction<F, Fut>(
+    thread_id: &str,
+    language: crate::i18n::Language,
+    request: F,
+) -> String
+where
+    F: FnOnce(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Value>>,
+{
+    match request("thread/compact/start", json!({ "threadId": thread_id })).await {
+        Ok(_) => language
+            .text(
+                "Requested compaction of the current conversation.",
+                "현재 대화의 문맥 압축을 요청했습니다.",
+                "已请求压缩当前对话的上下文。",
+                "現在の会話のコンテキスト圧縮を要求しました。",
+            )
+            .to_owned(),
+        Err(error) => {
+            tracing::warn!(error = ?error, "could not request native conversation compaction");
+            format!(
+                "{}\n{error:#}",
+                language.text(
+                    "Could not request conversation compaction:",
+                    "대화 문맥 압축을 요청하지 못했습니다:",
+                    "无法请求压缩对话上下文：",
+                    "会話のコンテキスト圧縮を要求できませんでした：",
+                )
+            )
+        }
+    }
 }
 
 const SETTINGS_PAGE_SIZE: usize = 20;
@@ -11083,12 +11133,99 @@ mod display_tests {
                 "voice",
                 "status",
                 "interrupt",
+                "compact",
                 "new",
                 "voice-leave",
                 "voice-join",
                 "plugins"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn compact_command_sends_native_request_and_localizes_acceptance() {
+        use crate::i18n::Language;
+        for (language, expected) in [
+            (
+                Language::English,
+                "Requested compaction of the current conversation.",
+            ),
+            (Language::Korean, "현재 대화의 문맥 압축을 요청했습니다."),
+            (Language::Chinese, "已请求压缩当前对话的上下文。"),
+            (
+                Language::Japanese,
+                "現在の会話のコンテキスト圧縮を要求しました。",
+            ),
+        ] {
+            let mut requests = Vec::new();
+            let response =
+                request_compaction("conversation-example", language, |method, params| {
+                    requests.push((method, params));
+                    std::future::ready(Ok(json!({})))
+                })
+                .await;
+            assert_eq!(response, expected);
+            assert_eq!(
+                requests,
+                vec![(
+                    "thread/compact/start",
+                    json!({"threadId":"conversation-example"}),
+                )]
+            );
+
+            let commands = serde_json::to_value(definitions(language)).unwrap();
+            let compact = commands[0]["options"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|option| option["name"] == "compact")
+                .unwrap();
+            assert_eq!(compact["type"], 1);
+            assert_eq!(
+                compact["description"],
+                language.text(
+                    "Compact conversation context, replacing any active response",
+                    "진행 중인 응답을 중단하고 대화 문맥을 압축합니다",
+                    "压缩对话上下文，替换正在进行的回复",
+                    "進行中の応答を中断して会話のコンテキストを圧縮します",
+                )
+            );
+            assert!(compact["options"].as_array().is_none_or(Vec::is_empty));
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_command_preserves_native_failure_without_retry_or_success_notice() {
+        use crate::i18n::Language;
+        for (language, expected_prefix) in [
+            (
+                Language::English,
+                "Could not request conversation compaction:",
+            ),
+            (Language::Korean, "대화 문맥 압축을 요청하지 못했습니다:"),
+            (Language::Chinese, "无法请求压缩对话上下文："),
+            (
+                Language::Japanese,
+                "会話のコンテキスト圧縮を要求できませんでした：",
+            ),
+        ] {
+            let mut calls = 0;
+            let response =
+                request_compaction("conversation-example", language, |method, params| {
+                    calls += 1;
+                    assert_eq!(method, "thread/compact/start");
+                    assert_eq!(params, json!({"threadId":"conversation-example"}));
+                    std::future::ready(Err(
+                        anyhow!("provider rejected compaction").context("native request")
+                    ))
+                })
+                .await;
+            assert_eq!(calls, 1);
+            assert_eq!(
+                response,
+                format!("{expected_prefix}\nnative request: provider rejected compaction")
+            );
+        }
     }
 
     #[test]
