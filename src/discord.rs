@@ -1122,7 +1122,10 @@ pub async fn run(
     for thread_id in recovery_threads {
         if thread_id != primary_thread {
             match native
-                .request("thread/resume", serde_json::json!({"threadId":thread_id}))
+                .request(
+                    "thread/resume",
+                    serde_json::json!({"threadId":thread_id,"excludeTurns":true}),
+                )
                 .await
             {
                 Ok(_) => native.retain_thread(&thread_id)?,

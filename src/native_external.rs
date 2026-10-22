@@ -761,9 +761,14 @@ async fn run(
         Some(&invocation.model),
         invocation.effort.as_deref(),
         &context,
-        saved.conversation_id.as_deref(),
+        saved.conversation_id.as_deref().filter(|id| !id.is_empty()),
         instructions,
         Box::new(move |conversation_id| {
+            // Official startup failures can report an empty ID when no
+            // conversation was created. Keep any existing actual mapping.
+            if conversation_id.is_empty() {
+                return Ok(());
+            }
             mapping_store
                 .update_agy_thread(&mapping_thread, |saved| {
                     saved.conversation_id = Some(conversation_id.to_owned());
@@ -818,7 +823,9 @@ async fn run(
             }
             match event {
                 crate::agy::Event::Init { conversation_id:Some(conversation_id), .. } => {
-                    store.update_agy_thread(thread_id, |saved| { saved.conversation_id = Some(conversation_id); Ok(()) })?;
+                    if !conversation_id.is_empty() {
+                        store.update_agy_thread(thread_id, |saved| { saved.conversation_id = Some(conversation_id); Ok(()) })?;
+                    }
                 }
                 crate::agy::Event::Init { conversation_id:None, .. } => {
                     bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalInitIdMissing));
@@ -826,7 +833,7 @@ async fn run(
                 crate::agy::Event::Result { conversation_id, status, response, error, result } => {
                     terminal_observed = true;
                     terminal_status = status.clone();
-                    if let Some(conversation_id) = conversation_id {
+                    if let Some(conversation_id) = conversation_id.filter(|id| !id.is_empty()) {
                         store.update_agy_thread(thread_id, |saved| { saved.conversation_id = Some(conversation_id); Ok(()) })?;
                     }
                     tracing::info!(status = status.as_deref(), response_bytes = response.as_deref().map(str::len), error_present = result.get("error").is_some(), "AGY turn completed");

@@ -1227,6 +1227,7 @@ impl Native {
             } else if let Some(thread_id) = saved.thread_id.as_ref() {
                 let mut params = json!({
                     "threadId": thread_id,
+                    "excludeTurns": true,
                     "baseInstructions": native.base_instructions_with_history()?
                 });
                 let approval_policy = native.read_native_feature_preferences()?.approval_policy;
@@ -1844,6 +1845,7 @@ impl Native {
             }
             "thread/start"
         } else {
+            params["excludeTurns"] = json!(true);
             "thread/fork"
         };
         let response = self.request_raw(method, params.clone()).await.context(
@@ -2758,7 +2760,10 @@ impl Native {
             Ok(Err(error)) => return Err(error),
             Err(_) => {
                 let response = self
-                    .request("thread/resume", json!({ "threadId": thread_id }))
+                    .request(
+                        "thread/resume",
+                        json!({ "threadId": thread_id, "excludeTurns": true }),
+                    )
                     .await
                     .context(
                         "read actual native permission settings after thread/settings/update",
@@ -2945,7 +2950,7 @@ impl Native {
             let saved = StateStore::new(&self.inner.config.state_dir).load()?;
             let active_thread_id = self.thread_id();
             if !active_thread_id.is_empty() {
-                let mut params = json!({"threadId":active_thread_id});
+                let mut params = json!({"threadId":active_thread_id,"excludeTurns":true});
                 if let Some(selection) = saved.model_selection.as_ref() {
                     apply_model_selection(&mut params, selection);
                 }
@@ -2974,14 +2979,17 @@ impl Native {
             }
             for thread_id in self.retained_thread_ids()? {
                 if thread_id != active_thread_id {
-                    self.request_raw("thread/resume", json!({"threadId":thread_id}))
-                        .await
-                        .context(
-                            self.inner
-                                .config
-                                .language
-                                .message(MessageKey::NativeRetainedThreadRestore),
-                        )?;
+                    self.request_raw(
+                        "thread/resume",
+                        json!({"threadId":thread_id,"excludeTurns":true}),
+                    )
+                    .await
+                    .context(
+                        self.inner
+                            .config
+                            .language
+                            .message(MessageKey::NativeRetainedThreadRestore),
+                    )?;
                 }
             }
             Ok::<(), anyhow::Error>(())
@@ -3919,9 +3927,12 @@ where
         Ok(result) => result?,
         // A no-op update need not emit a change notification; read the actual
         // native setting rather than treating the empty update response as proof.
-        Err(_) => request("thread/resume", json!({"threadId": thread_id}))
-            .await
-            .context("read actual approval policy after thread/settings/update")?,
+        Err(_) => request(
+            "thread/resume",
+            json!({"threadId": thread_id,"excludeTurns":true}),
+        )
+        .await
+        .context("read actual approval policy after thread/settings/update")?,
     };
     let summary = thread_state_summary(&response);
     if summary.get("approvalPolicy") != Some(policy) {
