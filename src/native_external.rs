@@ -377,7 +377,7 @@ fn prepare_prompt_with_stager(
     let items = input
         .as_array_mut()
         .context("external history is not an array")?;
-    for item in items {
+    for item in items.iter_mut() {
         if item.get("type").and_then(Value::as_str) != Some("message") {
             continue;
         }
@@ -402,11 +402,36 @@ fn prepare_prompt_with_stager(
             *content = json!({"type":"input_text", "text":image_label});
         }
     }
-    Ok(format!(
+    let latest_user_text = items
+        .iter()
+        .rev()
+        .find(|item| {
+            item.get("type").and_then(Value::as_str) == Some("message")
+                && item.get("role").and_then(Value::as_str) == Some("user")
+        })
+        .and_then(|item| item.get("content").and_then(Value::as_array))
+        .map(|contents| {
+            contents
+                .iter()
+                .filter(|content| content.get("type").and_then(Value::as_str) == Some("input_text"))
+                .filter_map(|content| content.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
+    let mut prompt = format!(
         "{}\n{}",
         language.message(crate::i18n::MessageKey::NativeExternalConversationHistory),
         serde_json::to_string(&input)?
-    ))
+    );
+    if let Some(text) = latest_user_text.filter(|text| !text.is_empty()) {
+        prompt.push_str("\n\n");
+        prompt.push_str(
+            &language
+                .message(crate::i18n::MessageKey::NativeExternalLatestUserMessage)
+                .replace("{text}", &text),
+        );
+    }
+    Ok(prompt)
 }
 
 fn current_native_execution_guidance(params: &Value) -> Option<String> {
@@ -1064,9 +1089,13 @@ mod tests {
             crate::i18n::Language::English,
         )
         .unwrap();
-        let replay: Value =
-            serde_json::from_str(prompt.text.split_once("Conversation history:\n").unwrap().1)
-                .unwrap();
+        let replay = serde_json::Deserializer::from_str(
+            prompt.text.split_once("Conversation history:\n").unwrap().1,
+        )
+        .into_iter::<Value>()
+        .next()
+        .unwrap()
+        .unwrap();
         assert_eq!(replay, history);
         assert!(!prompt.text.contains("Agent instructions"));
         let encoded = crate::agy::encode_prompt(&prompt.text).unwrap();
@@ -1101,9 +1130,13 @@ mod tests {
         assert!(!system_instructions.contains("untrusted"));
 
         let prompt = prepare_prompt(&params, crate::i18n::Language::English).unwrap();
-        let replay: Value =
-            serde_json::from_str(prompt.text.split_once("Conversation history:\n").unwrap().1)
-                .unwrap();
+        let replay = serde_json::Deserializer::from_str(
+            prompt.text.split_once("Conversation history:\n").unwrap().1,
+        )
+        .into_iter::<Value>()
+        .next()
+        .unwrap()
+        .unwrap();
         assert_eq!(replay, history);
         assert!(prompt.text.contains("old mode"));
         assert!(prompt.text.contains("current proactive mode"));
@@ -1170,7 +1203,7 @@ mod tests {
         assert_eq!(
             prompt,
             format!(
-                "Conversation history:\n{}",
+                "Conversation history:\n{}\n\nLatest user message in this conversation:\nLook at this\nAttached image file: example/staged-image.png\n\nContinue this request using the complete ordered context above, including subsequent developer instructions and tool results. Earlier requests are conversation history, not new tasks to restart.",
                 serde_json::to_string(&json!([{
                     "type":"message",
                     "role":"user",

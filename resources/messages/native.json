@@ -47,6 +47,12 @@
     "zh": "对话历史：",
     "ja": "会話履歴："
   },
+  "native.external_latest_user_message": {
+    "en": "Latest user message in this conversation:\n{text}\n\nContinue this request using the complete ordered context above, including subsequent developer instructions and tool results. Earlier requests are conversation history, not new tasks to restart.",
+    "ko": "이 대화의 가장 최근 사용자 메시지:\n{text}\n\n이후의 개발자 지침과 도구 결과를 포함한 위의 전체 대화 맥락을 사용해 이 요청을 이어가세요. 더 이전의 요청은 대화 기록이며 새로 시작할 작업이 아닙니다.",
+    "zh": "此对话中最新的用户消息：\n{text}\n\n使用上方完整、有序的上下文继续此请求，包括后续的开发者指令和工具结果。更早的请求是对话历史，不是需要重新开始的新任务。",
+    "ja": "この会話の最新のユーザーメッセージ：\n{text}\n\nその後の開発者指示とツール結果も含め、上記の順序を保った会話全体を文脈としてこの依頼を続けてください。それ以前の依頼は会話履歴であり、新たにやり直すタスクではありません。"
+  },
   "native.external_attached_image_file": {
     "en": "Attached image file: {path}",
     "ko": "첨부 이미지 파일: {path}",
