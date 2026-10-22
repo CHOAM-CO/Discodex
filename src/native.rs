@@ -1421,6 +1421,8 @@ impl Native {
             command.arg("--config").arg(format!("{key}={value}"));
         }
         command
+            .arg("-c")
+            .arg("suppress_unstable_features_warning=true")
             .arg("app-server")
             .arg("--listen")
             .arg(listen)
@@ -2385,14 +2387,19 @@ impl Native {
         if !preferences.antigravity_enabled {
             anyhow::bail!("AGY is not enabled for this profile");
         }
-        let runtime = crate::agy::Runtime::for_preferences(&self.inner.config, &preferences)?;
+        let share = preferences
+            .antigravity_share_settings
+            .context("choose whether to share existing AGY settings in Discodex settings")?;
+        crate::agy_settings::prepare(&self.inner.config, share)?;
+        let runtime = crate::agy::Runtime::for_config(&self.inner.config)?;
         let context = format!(
-            "profile={}\nexecutable={}\narguments={}",
+            "profile={}\nexecutable={}\narguments={}\nsharing={}",
             std::path::absolute(&self.inner.config.state_dir)
                 .context("resolve AGY catalog profile state directory")?
                 .display(),
             runtime.executable.display(),
-            runtime.arguments.join("\0")
+            runtime.arguments.join("\0"),
+            share
         );
         let context_key = context;
         let cache = agy_catalog_cache::CatalogCache::new(&self.inner.config.state_dir, context_key);

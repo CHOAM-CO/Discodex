@@ -3799,7 +3799,8 @@ fn configure_antigravity_install(
         store.apply(&preferences)?;
         return Ok(());
     };
-    let runtime = crate::agy::Runtime::for_config(config, share_settings)?;
+    crate::agy_settings::prepare(config, share_settings)?;
+    let runtime = crate::agy::Runtime::for_config(config)?;
     run_async(prepare_antigravity_at_console(
         crate::agy_setup::SetupConfig {
             executable: runtime.executable,
@@ -4090,6 +4091,7 @@ fn remove_owned_antigravity(state_dir: &Path) -> Result<()> {
         crate::i18n::Language::English
             .message(crate::i18n::MessageKey::InstallDiagnosticE00affd05477)
     );
+    crate::agy_mcp::remove_owned_registration(&crate::agy_settings::root(state_dir)?)?;
     fs::remove_dir_all(directory).context(
         crate::i18n::Language::English
             .message(crate::i18n::MessageKey::InstallDiagnostic12a998ef8bc8),

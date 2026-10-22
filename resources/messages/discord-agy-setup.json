@@ -90,10 +90,10 @@
     "ja": "以下の Antigravity のログイン案内に従ってください。"
   },
   "discord.agy_setup.install_discodex_managed_antigravity_cli_choose": {
-    "en": "Install a Discodex-managed Antigravity CLI. Choose separate settings or share your existing AGY settings. AGY's OS credential store is used in either case. Browser sign-in may require your confirmation.",
-    "ko": "Discodex 전용 Antigravity CLI를 설치합니다. 별도 설정 또는 기존 AGY 설정 공유를 선택하세요. 로그인은 두 경우 모두 AGY의 OS 자격증명 저장소를 사용합니다. 브라우저 로그인 시 직접 확인이 필요할 수 있습니다.",
-    "zh": "安装由 Discodex 管理的 Antigravity CLI。请选择独立设置或共享现有 AGY 设置。两种方式均使用 AGY 的操作系统凭据存储。浏览器登录可能需要您确认。",
-    "ja": "Discodex 管理の Antigravity CLI をインストールします。個別の設定か既存の AGY 設定の共有を選んでください。どちらも AGY の OS 資格情報ストアを使います。ブラウザーでのログインには確認が必要な場合があります。"
+    "en": "Install a Discodex-managed Antigravity CLI. Choose separate preferences or read-only use of existing AGY preferences. Discodex MCP settings stay private to this profile. AGY uses its OS credential store in either case. Browser sign-in may require your confirmation.",
+    "ko": "Discodex 전용 Antigravity CLI를 설치합니다. 별도 설정을 사용하거나 기존 AGY 설정을 읽기 전용으로 가져올 수 있습니다. Discodex MCP 설정은 이 프로필에만 저장됩니다. 두 경우 모두 AGY의 OS 자격 증명 저장소를 사용합니다. 브라우저 로그인에는 확인이 필요할 수 있습니다.",
+    "zh": "安装 Discodex 托管的 Antigravity CLI。可使用独立设置，或只读导入现有 AGY 设置。Discodex MCP 设置仅保存在此配置中。两种方式都使用 AGY 的操作系统凭据存储。浏览器登录可能需要确认。",
+    "ja": "Discodex 管理の Antigravity CLI をインストールします。個別の設定、または既存の AGY 設定の読み取り専用取り込みを選択できます。Discodex MCP の設定はこのプロファイル内だけに保存します。どちらも AGY の OS 資格情報ストアを使用します。ブラウザーでのログインに確認が必要な場合があります。"
   },
   "discord.agy_setup.installing_official_prebuilt_cli": {
     "en": "Installing the official prebuilt CLI…",
@@ -144,10 +144,10 @@
     "ja": "セットアップを終了中です。終了後に設定を開き直してください。"
   },
   "discord.agy_setup.share_existing_settings": {
-    "en": "Share existing settings",
-    "ko": "기존 설정 공유",
-    "zh": "共享现有设置",
-    "ja": "既存の設定を共有"
+    "en": "Use existing preferences",
+    "ko": "기존 설정 사용",
+    "zh": "使用现有设置",
+    "ja": "既存の設定を使用"
   },
   "discord.agy_setup.sign_attempt_ended_use_current_setup": {
     "en": "This sign-in attempt has ended. Use the current setup panel.",

@@ -1,0 +1,80 @@
+{
+  "agy_settings.read": {
+    "en": "Read AGY settings: {path}",
+    "ko": "AGY 설정 읽기: {path}",
+    "zh": "读取 AGY 设置：{path}",
+    "ja": "AGY 設定の読み取り: {path}"
+  },
+  "agy_settings.parse": {
+    "en": "Parse AGY settings: {path}",
+    "ko": "AGY 설정 해석: {path}",
+    "zh": "解析 AGY 设置：{path}",
+    "ja": "AGY 設定の解析: {path}"
+  },
+  "agy_settings.object": {
+    "en": "AGY settings must be a JSON object: {path}",
+    "ko": "AGY 설정은 JSON 객체여야 합니다: {path}",
+    "zh": "AGY 设置必须是 JSON 对象：{path}",
+    "ja": "AGY 設定は JSON オブジェクトである必要があります: {path}"
+  },
+  "agy_settings.write": {
+    "en": "Write private AGY settings: {path}",
+    "ko": "전용 AGY 설정 쓰기: {path}",
+    "zh": "写入专用 AGY 设置：{path}",
+    "ja": "専用 AGY 設定の書き込み: {path}"
+  },
+  "agy_settings.permissions_object": {
+    "en": "AGY permissions must be a JSON object.",
+    "ko": "AGY permissions는 JSON 객체여야 합니다.",
+    "zh": "AGY permissions 必须是 JSON 对象。",
+    "ja": "AGY permissions は JSON オブジェクトである必要があります。"
+  },
+  "agy_settings.allow_array": {
+    "en": "AGY permissions.allow must be a JSON array.",
+    "ko": "AGY permissions.allow는 JSON 배열이어야 합니다.",
+    "zh": "AGY permissions.allow 必须是 JSON 数组。",
+    "ja": "AGY permissions.allow は JSON 配列である必要があります。"
+  },
+  "agy_settings.state_parent": {
+    "en": "AGY state directory has no parent.",
+    "ko": "AGY 상태 디렉터리의 상위 경로가 없습니다.",
+    "zh": "AGY 状态目录没有父目录。",
+    "ja": "AGY 状態ディレクトリの親ディレクトリがありません。"
+  },
+  "agy_settings.user_home": {
+    "en": "AGY user home is unavailable.",
+    "ko": "AGY 사용자 홈 경로를 확인할 수 없습니다.",
+    "zh": "无法获取 AGY 用户主目录。",
+    "ja": "AGY のユーザーホームを取得できません。"
+  },
+  "agy_settings.root_object": {
+    "en": "AGY settings must be a JSON object.",
+    "ko": "AGY 설정은 JSON 객체여야 합니다.",
+    "zh": "AGY 设置必须是 JSON 对象。",
+    "ja": "AGY の設定は JSON オブジェクトである必要があります。"
+  },
+  "agy_settings.metadata": {
+    "en": "Inspect AGY settings metadata: {path}",
+    "ko": "AGY 설정 파일 메타데이터 확인: {path}",
+    "zh": "检查 AGY 设置文件元数据：{path}",
+    "ja": "AGY 設定ファイルのメタデータの確認: {path}"
+  },
+  "agy_settings.file_parent": {
+    "en": "AGY settings path has no parent: {path}",
+    "ko": "AGY 설정 파일의 상위 경로가 없습니다: {path}",
+    "zh": "AGY 设置路径没有父目录：{path}",
+    "ja": "AGY 設定パスの親ディレクトリがありません: {path}"
+  },
+  "agy_settings.lock": {
+    "en": "AGY settings lock is poisoned.",
+    "ko": "AGY 설정 잠금 상태가 손상되었습니다.",
+    "zh": "AGY 设置锁已损坏。",
+    "ja": "AGY 設定のロックが破損しています。"
+  },
+  "agy_settings.field_parent": {
+    "en": "AGY setting parent must be a JSON object.",
+    "ko": "AGY 설정의 상위 항목은 JSON 객체여야 합니다.",
+    "zh": "AGY 设置的父项必须是 JSON 对象。",
+    "ja": "AGY 設定の親項目は JSON オブジェクトである必要があります。"
+  }
+}

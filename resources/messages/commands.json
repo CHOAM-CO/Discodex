@@ -648,10 +648,10 @@
     "ja": "登録サーバーの全メンバー"
   },
   "commands.shared_existing_settings_afa9effe": {
-    "en": "Shared existing settings",
-    "ko": "기존 설정 공유",
-    "zh": "共享现有设置",
-    "ja": "既存の設定を共有"
+    "en": "Use existing preferences (read-only)",
+    "ko": "기존 설정 사용 (읽기 전용)",
+    "zh": "使用现有设置（只读）",
+    "ja": "既存の設定を使用（読み取り専用）"
   },
   "commands.separate_settings_016de9e5": {
     "en": "Separate settings",

@@ -354,10 +354,10 @@
     "ja": "1、2、q のいずれかを選んでください。"
   },
   "install.antigravity_settings_1_share_existing_settings_2": {
-    "en": "Antigravity settings: 1) Share existing settings; 2) Separate Discodex settings. The CLI still uses the operating system's account keyring. Shared settings are preserved on uninstall. Enter q to exit.",
-    "ko": "Antigravity 설정: 1) 기존 설정 공유; 2) Discodex 전용 설정. 로그인 계정은 CLI의 운영체제 키링을 사용합니다. 공유 설정은 삭제할 때 보존합니다. q를 입력하면 종료합니다.",
-    "zh": "Antigravity 设置：1) 共享现有设置；2) Discodex 独立设置。CLI 仍使用操作系统账户密钥环。卸载时保留共享设置。输入 q 退出。",
-    "ja": "Antigravity 設定：1) 既存の設定を共有; 2) Discodex 専用の設定。CLI は引き続き OS のアカウントキーチェーンを使用します。共有設定はアンインストール時も保持します。q で終了します。"
+    "en": "Antigravity settings: 1) Read existing CLI preferences; 2) Use separate preferences. Discodex always uses private MCP/settings files and native AGY sign-in. Personal settings are never modified. Enter q to exit.",
+    "ko": "Antigravity 설정: 1) 기존 CLI 설정 읽어오기; 2) 별도 설정 사용. MCP와 실행 설정은 항상 Discodex 전용 파일에 두고 AGY 기본 로그인을 사용합니다. 개인 설정은 변경하지 않습니다. q를 입력하면 종료합니다.",
+    "zh": "Antigravity 设置：1) 读取现有 CLI 偏好；2) 使用独立偏好。Discodex 始终使用专用 MCP/设置文件和 AGY 原生登录，不修改个人设置。输入 q 退出。",
+    "ja": "Antigravity 設定：1) 既存の CLI 設定を読み込む; 2) 独立した設定を使う。MCP と実行設定には常に Discodex 専用ファイルを使い、AGY の標準ログインを利用します。個人設定は変更しません。q で終了します。"
   },
   "install.antigravity_is_installed_signed_in_and_enabled": {
     "en": "Antigravity is installed, signed in, and enabled.",

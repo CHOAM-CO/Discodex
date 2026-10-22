@@ -532,15 +532,11 @@ async fn run(
     let turn_id = required_string(params, "turnId")?;
     let run_id = required_string(params, "runId")?;
     let cwd = Path::new(required_string(params, "cwd")?);
-    let worker = native
-        .inner
-        .config
-        .worker_path
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(std::env::current_exe)?;
-    let entry = crate::agy_mcp::native_server_entry(&worker, cwd)?;
-    crate::agy_mcp::write_workspace_config(cwd, entry)?;
+    let share = preferences
+        .antigravity_share_settings
+        .context("choose whether to share existing AGY settings in Discodex settings")?;
+    crate::agy_settings::prepare(&native.inner.config, share)?;
+    crate::agy_mcp::remove_workspace_registration(cwd)?;
     let prompt = prepare_prompt(params, language)?;
     let agent =
         crate::agy::TemporaryAgent::create(cwd, &agent_system_instructions(params, language))?;

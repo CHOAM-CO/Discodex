@@ -547,48 +547,42 @@ pub fn managed_executable(state_dir: &Path) -> Result<PathBuf> {
 }
 
 impl Runtime {
-    pub fn for_config(config: &crate::config::Config, share_settings: bool) -> Result<Self> {
+    pub fn for_config(config: &crate::config::Config) -> Result<Self> {
         let mut environment = HashMap::new();
         // The managed package is updated only through Discodex's verified
         // manifest installer, so disable the CLI's self-replacing updater.
         environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
-        Self::with_environment(
-            &config.state_dir,
-            share_settings,
-            cfg!(windows),
-            environment,
-        )
+        Self::with_environment(&config.state_dir, cfg!(windows), environment)
     }
 
     pub fn for_preferences(
         config: &crate::config::Config,
         preferences: &crate::native::NativeFeaturePreferences,
     ) -> Result<Self> {
-        Self::for_config(
-            config,
-            preferences
-                .antigravity_share_settings
-                .context("choose whether to share existing AGY settings in Discodex settings")?,
-        )
+        preferences
+            .antigravity_share_settings
+            .context("choose whether to share existing AGY settings in Discodex settings")?;
+        let mut runtime = Self::for_config(config)?;
+        if preferences.antigravity_auto_approve {
+            runtime
+                .arguments
+                .push("--dangerously-skip-permissions".to_owned());
+        }
+        Ok(runtime)
     }
 
     fn with_environment(
         state_dir: &Path,
-        share_settings: bool,
         windows: bool,
         mut environment: HashMap<String, String>,
     ) -> Result<Self> {
         environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
         let executable = managed_root(state_dir)?.join(if windows { "agy.exe" } else { "agy" });
-        let arguments = if share_settings {
-            Vec::new()
-        } else {
-            let settings_root = profile_data_root(state_dir)?.join("agy-settings");
-            vec![
-                format!("--gemini_dir={}", settings_root.display()),
-                "--app_data_dir=antigravity-cli".to_owned(),
-            ]
-        };
+        let settings_root = crate::agy_settings::root(state_dir)?;
+        let arguments = vec![
+            format!("--gemini_dir={}", settings_root.display()),
+            "--app_data_dir=antigravity-cli".to_owned(),
+        ];
         Ok(Self {
             executable,
             arguments,
@@ -1051,7 +1045,6 @@ mod tests {
             for windows in [false, true] {
                 let runtime = Runtime::with_environment(
                     &data_root.join("state"),
-                    true,
                     windows,
                     environment.clone(),
                 )
@@ -1062,7 +1055,13 @@ mod tests {
                         .join("runtime/agy")
                         .join(if windows { "agy.exe" } else { "agy" })
                 );
-                assert!(runtime.arguments.is_empty());
+                assert_eq!(
+                    runtime.arguments,
+                    [
+                        format!("--gemini_dir={}", data_root.join("agy-settings").display()),
+                        "--app_data_dir=antigravity-cli".to_owned(),
+                    ]
+                );
                 assert_eq!(runtime.environment, environment);
             }
         }
@@ -1080,7 +1079,6 @@ mod tests {
         for windows in [false, true] {
             let runtime = Runtime::with_environment(
                 &directory.path().join("state"),
-                false,
                 windows,
                 environment.clone(),
             )
@@ -1149,7 +1147,16 @@ mod tests {
                 runtime.executable,
                 managed_executable(&config.state_dir).unwrap()
             );
-            assert_eq!(runtime.arguments.is_empty(), share_settings);
+            assert_eq!(
+                runtime.arguments,
+                [
+                    format!(
+                        "--gemini_dir={}",
+                        directory.path().join("agy-settings").display()
+                    ),
+                    "--app_data_dir=antigravity-cli".to_owned(),
+                ]
+            );
         }
     }
 

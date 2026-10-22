@@ -1,0 +1,104 @@
+{
+  "agy_mcp.executable_utf8": {
+    "en": "Discodex MCP executable path is not valid UTF-8",
+    "ko": "Discodex MCP 실행 파일 경로가 올바른 UTF-8이 아닙니다",
+    "zh": "Discodex MCP 可执行文件路径不是有效的 UTF-8",
+    "ja": "Discodex MCP 実行ファイルのパスが有効な UTF-8 ではありません"
+  },
+  "agy_mcp.ownership_marker": {
+    "en": "requested Discodex MCP entry lacks its ownership marker",
+    "ko": "요청한 Discodex MCP 항목에 소유권 표식이 없습니다",
+    "zh": "请求的 Discodex MCP 条目缺少所有权标记",
+    "ja": "要求された Discodex MCP エントリに所有権マーカーがありません"
+  },
+  "agy_mcp.parse": {
+    "en": "parse Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 해석",
+    "zh": "解析 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の解析"
+  },
+  "agy_mcp.root_object": {
+    "en": "Antigravity MCP configuration root must be an object",
+    "ko": "Antigravity MCP 설정의 최상위 항목은 객체여야 합니다",
+    "zh": "Antigravity MCP 配置的根节点必须是对象",
+    "ja": "Antigravity MCP 設定のルートはオブジェクトである必要があります"
+  },
+  "agy_mcp.servers_object": {
+    "en": "Antigravity mcpServers must be an object",
+    "ko": "Antigravity mcpServers는 객체여야 합니다",
+    "zh": "Antigravity mcpServers 必须是对象",
+    "ja": "Antigravity mcpServers はオブジェクトである必要があります"
+  },
+  "agy_mcp.server_conflict": {
+    "en": "MCP server name `{server}` is already used by an unowned entry",
+    "ko": "MCP 서버 이름 `{server}`를 Discodex 소유가 아닌 항목이 이미 사용 중입니다",
+    "zh": "MCP 服务器名称 `{server}` 已被不属于 Discodex 的条目使用",
+    "ja": "MCP サーバー名 `{server}` は Discodex が所有していないエントリで使用されています"
+  },
+  "agy_mcp.lock": {
+    "en": "AGY MCP config lock poisoned",
+    "ko": "AGY MCP 설정 잠금 상태가 손상되었습니다",
+    "zh": "AGY MCP 配置锁已损坏",
+    "ja": "AGY MCP 設定のロックが破損しています"
+  },
+  "agy_mcp.read": {
+    "en": "read Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 읽기",
+    "zh": "读取 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の読み取り"
+  },
+  "agy_mcp.read_legacy": {
+    "en": "read legacy Antigravity MCP configuration",
+    "ko": "이전 Antigravity MCP 설정 읽기",
+    "zh": "读取旧版 Antigravity MCP 配置",
+    "ja": "旧 Antigravity MCP 設定の読み取り"
+  },
+  "agy_mcp.file_parent": {
+    "en": "MCP config path has no parent",
+    "ko": "MCP 설정 파일의 상위 경로가 없습니다",
+    "zh": "MCP 配置路径没有父目录",
+    "ja": "MCP 設定パスの親ディレクトリがありません"
+  },
+  "agy_mcp.create_directory": {
+    "en": "create Antigravity managed config directory",
+    "ko": "Antigravity 관리형 설정 디렉터리 생성",
+    "zh": "创建 Antigravity 托管配置目录",
+    "ja": "Antigravity 管理設定ディレクトリの作成"
+  },
+  "agy_mcp.metadata": {
+    "en": "inspect existing Antigravity MCP configuration metadata",
+    "ko": "기존 Antigravity MCP 설정 파일의 메타데이터 확인",
+    "zh": "检查现有 Antigravity MCP 配置的元数据",
+    "ja": "既存の Antigravity MCP 設定のメタデータの確認"
+  },
+  "agy_mcp.stage": {
+    "en": "stage Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 임시 파일 생성",
+    "zh": "暂存 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の一時保存"
+  },
+  "agy_mcp.write": {
+    "en": "write Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 쓰기",
+    "zh": "写入 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の書き込み"
+  },
+  "agy_mcp.sync": {
+    "en": "sync Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 동기화",
+    "zh": "同步 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の同期"
+  },
+  "agy_mcp.permissions": {
+    "en": "preserve Antigravity MCP configuration permissions",
+    "ko": "Antigravity MCP 설정 파일 권한 유지",
+    "zh": "保留 Antigravity MCP 配置的文件权限",
+    "ja": "Antigravity MCP 設定のファイル権限の維持"
+  },
+  "agy_mcp.replace": {
+    "en": "replace Antigravity MCP configuration",
+    "ko": "Antigravity MCP 설정 파일 교체",
+    "zh": "替换 Antigravity MCP 配置",
+    "ja": "Antigravity MCP 設定の置き換え"
+  }
+}

@@ -1,16 +1,18 @@
-//! Merge Discodex's MCP server into Antigravity CLI workspace configuration.
-//! The merge is intentionally scoped to a single marked entry so project MCP
-//! servers owned by the user remain unchanged.
+//! Register Discodex MCP inside its private AGY configuration root.
+//! Legacy workspace cleanup removes only our marked entry.
 
 use anyhow::{Context, Result, bail};
+use jsonc_parser::{ParseOptions, cst::CstRootNode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::Mutex,
 };
+
+use crate::i18n::{Language, MessageKey};
 
 pub const SERVER_NAME: &str = "discodex_tasks";
 pub const NATIVE_ENDPOINT_ENV: &str = "DISCODEX_NATIVE_ENDPOINT";
@@ -28,26 +30,27 @@ pub struct NativeRunBinding {
 }
 const OWNER_KEY: &str = "DISCODEX_MANAGED_MCP";
 const OWNER_VALUE: &str = "discodex-v1";
+static CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
 /// Location of the documented Antigravity CLI project-level MCP config.
 pub fn workspace_config_path(project_dir: &Path) -> std::path::PathBuf {
     project_dir.join(".agents").join("mcp_config.json")
 }
 
+pub fn managed_config_path(settings_root: &Path) -> PathBuf {
+    settings_root.join("config").join("mcp_config.json")
+}
+
 /// Stable MCP entry. The AGY process passes its private endpoint and bound
 /// thread identity through inherited environment variables, avoiding shared
 /// project-config races between concurrent main and child AGY sessions.
-pub fn native_server_entry(command: &Path, cwd: &Path) -> Result<Value> {
+pub fn native_server_entry(command: &Path) -> Result<Value> {
     let command = command
         .to_str()
-        .context("Discodex MCP executable path is not valid UTF-8")?;
-    let cwd = cwd
-        .to_str()
-        .context("Discodex MCP working directory is not valid UTF-8")?;
+        .context(Language::English.message(MessageKey::AgyMcpExecutableUtf8))?;
     Ok(json!({
         "command": command,
         "args": ["harness-tools", "--native"],
-        "cwd": cwd,
         "env": { OWNER_KEY: OWNER_VALUE }
     }))
 }
@@ -74,78 +77,142 @@ fn is_owned_entry(entry: &Value) -> bool {
 /// unrelated top-level and MCP server property.
 pub fn merge_config(existing: Option<&str>, desired_entry: Value) -> Result<String> {
     if !is_owned_entry(&desired_entry) {
-        bail!("requested Discodex MCP entry lacks its ownership marker");
+        bail!(Language::English.message(MessageKey::AgyMcpOwnershipMarker));
     }
     let mut config = match existing {
         Some(text) => {
-            serde_json::from_str::<Value>(text).context("parse Antigravity MCP configuration")?
+            serde_json::from_str::<Value>(text)
+                .context(Language::English.message(MessageKey::AgyMcpParse))?
         }
         None => json!({}),
     };
     let root = config
         .as_object_mut()
-        .context("Antigravity MCP configuration root must be an object")?;
+        .context(Language::English.message(MessageKey::AgyMcpRootObject))?;
     if !root.contains_key("mcpServers") {
         root.insert("mcpServers".into(), Value::Object(Map::new()));
     }
     let servers = root
         .get_mut("mcpServers")
         .and_then(Value::as_object_mut)
-        .context("Antigravity mcpServers must be an object")?;
+        .context(Language::English.message(MessageKey::AgyMcpServersObject))?;
     if servers
         .get(SERVER_NAME)
         .is_some_and(|current| !is_owned_entry(current))
     {
-        bail!("MCP server name `{SERVER_NAME}` is already used by an unowned entry")
+        bail!(
+            Language::English
+                .message(MessageKey::AgyMcpServerConflict)
+                .replace("{server}", SERVER_NAME)
+        )
     }
     servers.insert(SERVER_NAME.into(), desired_entry);
     Ok(serde_json::to_string_pretty(&config)?)
 }
 
-/// Atomically update just the owned project MCP server entry. A malformed
-/// existing file or an unowned name collision is left untouched.
-pub fn write_workspace_config(project_dir: &Path, desired_entry: Value) -> Result<PathBuf> {
-    static CONFIG_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+/// Atomically update the server in the profile-private global MCP config.
+pub fn write_managed_config(settings_root: &Path, desired_entry: Value) -> Result<PathBuf> {
     let _guard = CONFIG_LOCK
-        .get_or_init(|| Mutex::new(()))
         .lock()
-        .map_err(|_| anyhow::anyhow!("AGY MCP config lock poisoned"))?;
-    let path = workspace_config_path(project_dir);
-    let parent = path.parent().context("MCP config path has no parent")?;
-    fs::create_dir_all(parent).context("create Antigravity project config directory")?;
+        .map_err(|_| anyhow::anyhow!(Language::English.message(MessageKey::AgyMcpLock)))?;
+    let path = managed_config_path(settings_root);
     let original = match fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).context("read Antigravity MCP configuration"),
+        Err(error) => {
+            return Err(error).context(Language::English.message(MessageKey::AgyMcpRead));
+        }
     };
     let merged = merge_config(original.as_deref(), desired_entry)?;
+    if original.as_deref() != Some(merged.as_str()) {
+        write_config(&path, &merged)?;
+    }
+    Ok(path)
+}
+
+/// Remove a registration written by older Discodex versions, preserving users' MCP entries.
+pub fn remove_workspace_registration(project_dir: &Path) -> Result<()> {
+    let _guard = CONFIG_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!(Language::English.message(MessageKey::AgyMcpLock)))?;
+    remove_registration(&workspace_config_path(project_dir))?;
+    Ok(())
+}
+
+fn remove_registration(path: &Path) -> Result<bool> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).context(Language::English.message(MessageKey::AgyMcpReadLegacy));
+        }
+    };
+    let document = CstRootNode::parse(
+        text.strip_prefix('\u{feff}').unwrap_or(&text),
+        &ParseOptions::default(),
+    )
+    .context(Language::English.message(MessageKey::AgyMcpParse))?;
+    let Some(entry) = document
+        .object_value()
+        .and_then(|root| root.object_value("mcpServers"))
+        .and_then(|servers| servers.get(SERVER_NAME))
+    else {
+        return Ok(false);
+    };
+    if !entry.to_serde_value().as_ref().is_some_and(is_owned_entry) {
+        return Ok(false);
+    }
+    entry.remove();
+    let mut updated = document.to_string();
+    if text.starts_with('\u{feff}') {
+        updated.insert(0, '\u{feff}');
+    }
+    write_config(path, &updated)?;
+    Ok(true)
+}
+
+/// Unregister the owned server. Configuration and conversation data remain intact.
+pub fn remove_owned_registration(settings_root: &Path) -> Result<()> {
+    let _guard = CONFIG_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!(Language::English.message(MessageKey::AgyMcpLock)))?;
+    remove_registration(&managed_config_path(settings_root))?;
+    Ok(())
+}
+
+fn write_config(path: &Path, content: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .context(Language::English.message(MessageKey::AgyMcpFileParent))?;
+    fs::create_dir_all(parent)
+        .context(Language::English.message(MessageKey::AgyMcpCreateDirectory))?;
     let prior_permissions = match fs::metadata(&path) {
         Ok(metadata) => Some(metadata.permissions()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
-            return Err(error).context("inspect existing Antigravity MCP configuration metadata");
+            return Err(error).context(Language::English.message(MessageKey::AgyMcpMetadata));
         }
     };
-    let mut staged =
-        tempfile::NamedTempFile::new_in(parent).context("stage Antigravity MCP configuration")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent)
+        .context(Language::English.message(MessageKey::AgyMcpStage))?;
     staged
-        .write_all(merged.as_bytes())
-        .context("write Antigravity MCP configuration")?;
+        .write_all(content.as_bytes())
+        .context(Language::English.message(MessageKey::AgyMcpWrite))?;
     staged
         .as_file()
         .sync_all()
-        .context("sync Antigravity MCP configuration")?;
+        .context(Language::English.message(MessageKey::AgyMcpSync))?;
     if let Some(permissions) = prior_permissions {
         staged
             .as_file()
             .set_permissions(permissions)
-            .context("preserve Antigravity MCP configuration permissions")?;
+            .context(Language::English.message(MessageKey::AgyMcpPermissions))?;
     }
     staged
         .persist(&path)
         .map_err(|error| error.error)
-        .context("replace Antigravity MCP configuration")?;
-    Ok(path)
+        .context(Language::English.message(MessageKey::AgyMcpReplace))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -154,7 +221,7 @@ mod tests {
     use std::path::Path;
 
     fn entry(command: &str) -> Value {
-        native_server_entry(Path::new(command), Path::new("/project")).unwrap()
+        native_server_entry(Path::new(command)).unwrap()
     }
 
     #[test]
@@ -201,7 +268,7 @@ mod tests {
 
     #[test]
     fn native_entry_is_stable_and_uses_inherited_session_context() {
-        let entry = native_server_entry(Path::new("/app/discodex"), Path::new("/project")).unwrap();
+        let entry = native_server_entry(Path::new("/app/discodex")).unwrap();
         assert!(is_owned_entry(&entry));
         assert_eq!(entry["args"][0], "harness-tools");
         assert_eq!(entry["args"][1], "--native");

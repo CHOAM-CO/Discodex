@@ -49,7 +49,72 @@ pub(crate) enum SettingsKind {
     RegisteredChannels,
     NativeFeatures,
     Antigravity,
+    AntigravityAutoApprove,
+    AntigravitySetting(AgySettingKey),
     NativeFeature(NativeFeatureKey),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgySettingKey {
+    ToolPermission,
+    ArtifactReview,
+    TerminalSandbox,
+    NonWorkspaceAccess,
+    Allow,
+    Ask,
+    Deny,
+}
+
+impl AgySettingKey {
+    const ALL: [Self; 7] = [
+        Self::ToolPermission,
+        Self::ArtifactReview,
+        Self::TerminalSandbox,
+        Self::NonWorkspaceAccess,
+        Self::Allow,
+        Self::Ask,
+        Self::Deny,
+    ];
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::ToolPermission => "tool-permission",
+            Self::ArtifactReview => "artifact-review",
+            Self::TerminalSandbox => "sandbox",
+            Self::NonWorkspaceAccess => "non-workspace",
+            Self::Allow => "allow",
+            Self::Ask => "ask",
+            Self::Deny => "deny",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::ToolPermission => "toolPermission",
+            Self::ArtifactReview => "artifactReviewPolicy",
+            Self::TerminalSandbox => "enableTerminalSandbox",
+            Self::NonWorkspaceAccess => "allowNonWorkspaceAccess",
+            Self::Allow => "/permissions/allow",
+            Self::Ask => "/permissions/ask",
+            Self::Deny => "/permissions/deny",
+        }
+    }
+
+    fn label(self, language: crate::i18n::Language) -> &'static str {
+        language.message(match self {
+            Self::ToolPermission => MessageKey::CommandsAgyToolPermission,
+            Self::ArtifactReview => MessageKey::CommandsAgyArtifactReview,
+            Self::TerminalSandbox => MessageKey::CommandsAgyTerminalSandbox,
+            Self::NonWorkspaceAccess => MessageKey::CommandsAgyNonWorkspaceAccess,
+            Self::Allow => MessageKey::CommandsAgyAllowRules,
+            Self::Ask => MessageKey::CommandsAgyAskRules,
+            Self::Deny => MessageKey::CommandsAgyDenyRules,
+        })
+    }
+
+    fn is_rule_list(self) -> bool {
+        matches!(self, Self::Allow | Self::Ask | Self::Deny)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -902,7 +967,14 @@ async fn build_settings_menu_with_catalog(
         bail!("Codex connection changed while settings were opening");
     }
     let target_thread_id = state.native.thread_id();
-    let thread = if kind == SettingsKind::MessageAccess || is_access_list(kind) {
+    let thread = if kind == SettingsKind::MessageAccess
+        || is_access_list(kind)
+        || matches!(
+            kind,
+            SettingsKind::Antigravity
+                | SettingsKind::AntigravityAutoApprove
+                | SettingsKind::AntigravitySetting(_)
+        ) {
         json!({})
     } else {
         state.native.refresh_thread_state().await?
@@ -933,6 +1005,40 @@ async fn build_settings_menu_with_catalog(
         SettingsKind::Antigravity => {
             let preferences = state.native.read_native_feature_preferences()?;
             antigravity_settings_values(&preferences, language)
+        }
+        SettingsKind::AntigravityAutoApprove => {
+            let preferences = state.native.read_native_feature_preferences()?;
+            (
+                Some(
+                    if preferences.antigravity_auto_approve {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                    .to_owned(),
+                ),
+                language
+                    .message(MessageKey::CommandsAgyAutoApproveDescription)
+                    .to_owned(),
+                vec![
+                    SettingsChoice {
+                        value: "on".to_owned(),
+                        label: language.message(MessageKey::CommandsOn65845774).to_owned(),
+                    },
+                    SettingsChoice {
+                        value: "off".to_owned(),
+                        label: language.message(MessageKey::CommandsOff5677591d).to_owned(),
+                    },
+                ],
+            )
+        }
+        SettingsKind::AntigravitySetting(key) => {
+            let preferences = state.native.read_native_feature_preferences()?;
+            let settings = crate::agy_settings::read(
+                &state.config,
+                preferences.antigravity_share_settings.unwrap_or(false),
+            )?;
+            agy_setting_values(key, &settings, language)?
         }
         SettingsKind::NativeFeature(key) => {
             let snapshot = state.native.read_native_feature_snapshot().await?;
@@ -1533,6 +1639,7 @@ fn settings_home_values(
             MessageKey::CommandsSettingsHomeMessageAccess,
         ),
         ("voice", MessageKey::CommandsSettingsHomeVoice),
+        ("antigravity", MessageKey::CommandsAgyTitle),
         (
             "native-features",
             MessageKey::CommandsSettingsHomeNativeFeatures,
@@ -1629,15 +1736,7 @@ fn advanced_settings_values(
             native_preference_label(value.as_ref(), language)
         ));
     }
-    current.push_str(&format!(
-        "\n• Antigravity: {}",
-        if preferences.antigravity_enabled {
-            language.message(MessageKey::CommandsOn2666c335)
-        } else {
-            language.message(MessageKey::CommandsOff38c695fb)
-        }
-    ));
-    let mut choices = descriptors
+    let choices = descriptors
         .into_iter()
         .filter_map(|(descriptor, _)| {
             NativeFeatureKey::from_key(descriptor.key).map(|key| SettingsChoice {
@@ -1646,10 +1745,6 @@ fn advanced_settings_values(
             })
         })
         .collect::<Vec<_>>();
-    choices.push(SettingsChoice {
-        value: "antigravity".to_owned(),
-        label: "Antigravity".to_owned(),
-    });
     (None, current, choices)
 }
 
@@ -1660,7 +1755,11 @@ fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &
             language.message(MessageKey::CommandsAdvancedSettingsC1402b86)
         }
         SettingsKind::NativeFeature(key) => key.label(language),
-        SettingsKind::Antigravity => "Antigravity",
+        SettingsKind::Antigravity => language.message(MessageKey::CommandsAgyTitle),
+        SettingsKind::AntigravityAutoApprove => {
+            language.message(MessageKey::CommandsAgyAutoApprove)
+        }
+        SettingsKind::AntigravitySetting(key) => key.label(language),
         SettingsKind::Updates => language.message(MessageKey::CommandsUpdateNotifications6a160463),
         SettingsKind::Model => language.message(MessageKey::CommandsModel704caa01),
         SettingsKind::SubagentModel => {
@@ -2205,13 +2304,12 @@ fn set_subagent_model_selection(
 }
 
 fn settings_back_target(kind: SettingsKind) -> SettingsKind {
-    if matches!(
-        kind,
-        SettingsKind::NativeFeature(_) | SettingsKind::Antigravity
-    ) {
-        SettingsKind::NativeFeatures
-    } else {
-        SettingsKind::Hub
+    match kind {
+        SettingsKind::NativeFeature(_) => SettingsKind::NativeFeatures,
+        SettingsKind::AntigravityAutoApprove | SettingsKind::AntigravitySetting(_) => {
+            SettingsKind::Antigravity
+        }
+        _ => SettingsKind::Hub,
     }
 }
 
@@ -2264,7 +2362,7 @@ fn antigravity_settings_values(
         language.message(MessageKey::CommandsModelIdsF17651aa),
         language.message(MessageKey::CommandsDiscodexManagesItsOwnAgyCliEnablingItSta9ab1e631),
     );
-    let choices = [
+    let mut choices = [
         ("on", language.message(MessageKey::CommandsOn65845774)),
         ("off", language.message(MessageKey::CommandsOff5677591d)),
         (
@@ -2285,8 +2383,154 @@ fn antigravity_settings_values(
         value: value.to_owned(),
         label: label.to_owned(),
     })
-    .collect();
+    .collect::<Vec<_>>();
+    choices.push(SettingsChoice {
+        value: "auto-approve".to_owned(),
+        label: language
+            .message(MessageKey::CommandsAgyAutoApprove)
+            .to_owned(),
+    });
+    choices.extend(AgySettingKey::ALL.into_iter().map(|key| SettingsChoice {
+        value: format!("agy-setting:{}", key.id()),
+        label: key.label(language).to_owned(),
+    }));
     (Some(enabled.to_owned()), current, choices)
+}
+
+fn agy_setting_values(
+    key: AgySettingKey,
+    settings: &Value,
+    language: crate::i18n::Language,
+) -> anyhow::Result<(Option<String>, String, Vec<SettingsChoice>)> {
+    let choices = match key {
+        AgySettingKey::ToolPermission => vec![
+            ("request-review", MessageKey::CommandsAgyRequestReview),
+            (
+                "proceed-in-sandbox",
+                MessageKey::CommandsAgyProceedInSandbox,
+            ),
+            ("strict", MessageKey::CommandsAgyStrict),
+            ("always-proceed", MessageKey::CommandsAgyAlwaysProceed),
+        ],
+        AgySettingKey::ArtifactReview => vec![
+            ("asks-for-review", MessageKey::CommandsAgyAsksForReview),
+            ("agent-decides", MessageKey::CommandsAgyAgentDecides),
+            ("always-proceed", MessageKey::CommandsAgyAlwaysProceed),
+        ],
+        AgySettingKey::TerminalSandbox | AgySettingKey::NonWorkspaceAccess => vec![
+            ("true", MessageKey::CommandsOn65845774),
+            ("false", MessageKey::CommandsOff5677591d),
+        ],
+        AgySettingKey::Allow | AgySettingKey::Ask | AgySettingKey::Deny => vec![
+            ("add", MessageKey::CommandsAgyAddRule),
+            ("remove", MessageKey::CommandsAgyRemoveRule),
+        ],
+    }
+    .into_iter()
+    .map(|(value, label)| SettingsChoice {
+        value: value.to_owned(),
+        label: language.message(label).to_owned(),
+    })
+    .collect::<Vec<_>>();
+    if key.is_rule_list() {
+        let rules = agy_permission_rules(settings, key, language)?;
+        let mut current = if rules.is_empty() {
+            language.message(MessageKey::CommandsAgyNoRules).to_owned()
+        } else {
+            rules
+                .iter()
+                .map(|rule| {
+                    format!(
+                        "• {}",
+                        rule.as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| rule.to_string())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        current.push_str(&format!(
+            "\n{}",
+            language.message(MessageKey::CommandsAgyRulePrecedence)
+        ));
+        if key == AgySettingKey::Allow {
+            current.push_str(&format!(
+                "\n{} `{}`",
+                language.message(MessageKey::CommandsAgyManagedRule),
+                crate::agy_settings::MANAGED_MCP_ALLOW_RULE,
+            ));
+        }
+        return Ok((None, current, choices));
+    }
+    let default = match key {
+        AgySettingKey::ToolPermission => json!("request-review"),
+        AgySettingKey::ArtifactReview => json!("asks-for-review"),
+        _ => json!(false),
+    };
+    let saved = settings.get(key.key()).filter(|value| !value.is_null());
+    let effective = saved.unwrap_or(&default);
+    let value = effective
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| effective.to_string());
+    let label = choices
+        .iter()
+        .find(|choice| choice.value == value)
+        .map(|choice| choice.label.as_str())
+        .unwrap_or(&value);
+    let current = format!(
+        "{}: {label}\n{}\n{}",
+        if saved.is_some() {
+            language.message(MessageKey::CommandsAgyEffectivePreference)
+        } else {
+            language.message(MessageKey::CommandsAgyInheritedDefault)
+        },
+        language.message(MessageKey::CommandsAgyNativePolicyNotice),
+        language.message(MessageKey::CommandsAgyAppliesNextSession),
+    );
+    Ok((Some(value), current, choices))
+}
+
+fn agy_permission_rules(
+    settings: &Value,
+    key: AgySettingKey,
+    language: crate::i18n::Language,
+) -> anyhow::Result<Vec<Value>> {
+    match settings.pointer(key.key()) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(rules)) => Ok(rules.clone()),
+        Some(_) => bail!(
+            "{}: {}",
+            language.message(MessageKey::CommandsAgyInvalidRuleList),
+            key.key()
+        ),
+    }
+}
+
+fn agy_permission_rule_modal(
+    menu_id: &str,
+    key: AgySettingKey,
+    action: &str,
+    language: crate::i18n::Language,
+) -> CreateModal {
+    CreateModal::new(
+        format!("codex:agy-settings:{menu_id}:{action}"),
+        key.label(language),
+    )
+    .components(vec![CreateActionRow::InputText(
+        serenity::builder::CreateInputText::new(
+            InputTextStyle::Short,
+            language.message(if action == "add" {
+                MessageKey::CommandsAgyRuleToAdd
+            } else {
+                MessageKey::CommandsAgyRuleToRemove
+            }),
+            "value",
+        )
+        .required(true)
+        .placeholder(language.message(MessageKey::CommandsAgyRulePlaceholder)),
+    )])
 }
 
 async fn refresh_agy_catalog_notice<F, Fut>(
@@ -2313,12 +2557,17 @@ where
 }
 
 fn antigravity_text_field<'a>(menu: &'a SettingsMenuState, action: &str) -> Option<&'a str> {
-    if menu.kind != SettingsKind::Antigravity {
-        return None;
-    }
     let index = action.strip_prefix('c')?.parse::<usize>().ok()?;
     let value = menu.choices.get(index)?.value.as_str();
-    (value == "models").then_some(value)
+    match menu.kind {
+        SettingsKind::Antigravity if value == "models" => Some(value),
+        SettingsKind::AntigravitySetting(key)
+            if key.is_rule_list() && matches!(value, "add" | "remove") =>
+        {
+            Some(value)
+        }
+        _ => None,
+    }
 }
 
 fn antigravity_text_modal(
@@ -2544,9 +2793,12 @@ async fn handle_settings_component(
     };
     if let Some(field) = antigravity_text_field(&menu, action) {
         let response = async {
-            let preferences = state.native.read_native_feature_preferences()?;
-            let modal =
-                antigravity_text_modal(menu_id, field, &preferences, state.config.language)?;
+            let modal = if let SettingsKind::AntigravitySetting(key) = menu.kind {
+                agy_permission_rule_modal(menu_id, key, field, state.config.language)
+            } else {
+                let preferences = state.native.read_native_feature_preferences()?;
+                antigravity_text_modal(menu_id, field, &preferences, state.config.language)?
+            };
             interaction
                 .create_response(ctx, CreateInteractionResponse::Modal(modal))
                 .await?;
@@ -2763,6 +3015,43 @@ async fn handle_claimed_settings_action(
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
         if menu.kind == SettingsKind::Antigravity {
+            if selected.value == "auto-approve" {
+                let refreshed = build_settings_menu(
+                    ctx,
+                    state,
+                    SettingsKind::AntigravityAutoApprove,
+                    0,
+                    menu.requester_id,
+                    menu.connection_generation,
+                )
+                .await?;
+                return update_settings_panel(ctx, interaction, state, menu_id, refreshed).await;
+            }
+            if let Some(key) = selected.value.strip_prefix("agy-setting:") {
+                menu.kind = SettingsKind::AntigravitySetting(
+                    AgySettingKey::ALL
+                        .into_iter()
+                        .find(|candidate| candidate.id() == key)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                state
+                                    .config
+                                    .language
+                                    .message(MessageKey::CommandsAgyUnknownSetting)
+                            )
+                        })?,
+                );
+                let refreshed = build_settings_menu(
+                    ctx,
+                    state,
+                    menu.kind,
+                    0,
+                    menu.requester_id,
+                    menu.connection_generation,
+                )
+                .await?;
+                return update_settings_panel(ctx, interaction, state, menu_id, refreshed).await;
+            }
             if selected.value == "refresh-models" {
                 let (_catalog, notice) = {
                     let _settings_change = state.settings_change_lock.lock().await;
@@ -2807,16 +3096,12 @@ async fn handle_claimed_settings_action(
             }
         }
         if menu.kind == SettingsKind::NativeFeatures {
-            menu.kind = if selected.value == "antigravity" {
-                SettingsKind::Antigravity
-            } else {
-                let feature = selected
-                    .value
-                    .strip_prefix("native-feature:")
-                    .and_then(NativeFeatureKey::from_key)
-                    .ok_or_else(|| anyhow!("unknown native feature choice"))?;
-                SettingsKind::NativeFeature(feature)
-            };
+            let feature = selected
+                .value
+                .strip_prefix("native-feature:")
+                .and_then(NativeFeatureKey::from_key)
+                .ok_or_else(|| anyhow!("unknown native feature choice"))?;
+            menu.kind = SettingsKind::NativeFeature(feature);
             let refreshed = build_settings_menu(
                 ctx,
                 state,
@@ -3230,6 +3515,52 @@ async fn apply_setting_choice(
         .unwrap_or_else(|| state.native.thread_id());
     let language = state.config.language;
     match kind {
+        SettingsKind::AntigravityAutoApprove => {
+            let mut preferences = state.native.read_native_feature_preferences()?;
+            preferences.antigravity_auto_approve = match requested {
+                "on" => true,
+                "off" => false,
+                _ => bail!(
+                    "{}",
+                    language.message(MessageKey::CommandsAgyUnknownSetting)
+                ),
+            };
+            state
+                .native
+                .apply_native_feature_preferences(&preferences)
+                .await?;
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(MessageKey::CommandsAgyAppliesNextSession)
+                    .to_owned(),
+            ))
+        }
+        SettingsKind::AntigravitySetting(key) => {
+            let preferences = state.native.read_native_feature_preferences()?;
+            let value = match key {
+                AgySettingKey::TerminalSandbox | AgySettingKey::NonWorkspaceAccess => {
+                    Value::Bool(requested.parse::<bool>()?)
+                }
+                AgySettingKey::ToolPermission | AgySettingKey::ArtifactReview => {
+                    Value::String(requested.to_owned())
+                }
+                _ => bail!(
+                    "{}",
+                    language.message(MessageKey::CommandsAgyUseRuleButtons)
+                ),
+            };
+            crate::agy_settings::set(
+                &state.config,
+                preferences.antigravity_share_settings.unwrap_or(false),
+                key.key(),
+                value,
+            )?;
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(MessageKey::CommandsAgyAppliesNextSession)
+                    .to_owned(),
+            ))
+        }
         SettingsKind::Antigravity => {
             let mut preferences = state.native.read_native_feature_preferences()?;
             preferences.antigravity_enabled = match requested {
@@ -3805,7 +4136,17 @@ async fn handle_antigravity_settings_modal(
     )
     .map_err(|_| anyhow!("This settings panel is no longer available to this user"))?;
     let result = async {
-        if menu.kind != SettingsKind::Antigravity
+        interaction
+            .create_response(ctx, CreateInteractionResponse::Acknowledge)
+            .await?;
+        let valid_field = match menu.kind {
+            SettingsKind::Antigravity => field == "models",
+            SettingsKind::AntigravitySetting(key) => {
+                key.is_rule_list() && matches!(field, "add" | "remove")
+            }
+            _ => false,
+        };
+        if !valid_field
             || menu.connection_generation != state.native.current_generation()
             || menu.thread_id != state.native.thread_id()
         {
@@ -3816,9 +4157,6 @@ async fn handle_antigravity_settings_modal(
                     .message(MessageKey::CommandsThisSettingsPanelIsNoLongerActiveOpenSet7d065fd5)
             );
         }
-        interaction
-            .create_response(ctx, CreateInteractionResponse::Acknowledge)
-            .await?;
         let mut values = serde_json::Map::new();
         collect_modal_values(
             &serde_json::to_value(&interaction.data.components)?,
@@ -3827,23 +4165,65 @@ async fn handle_antigravity_settings_modal(
         {
             let _settings_change = state.settings_change_lock.lock().await;
             let mut preferences = state.native.read_native_feature_preferences()?;
-            set_antigravity_text_preference(
-                &mut preferences,
-                field,
-                values
-                    .get("value")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            )?;
-            state
-                .native
-                .apply_native_feature_preferences(&preferences)
-                .await?;
+            let value = values
+                .get("value")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let SettingsKind::AntigravitySetting(key) = menu.kind {
+                let value = value.trim();
+                if value.is_empty() {
+                    bail!(
+                        "{}",
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsAgyRuleRequired)
+                    );
+                }
+                if field == "remove"
+                    && key == AgySettingKey::Allow
+                    && value == crate::agy_settings::MANAGED_MCP_ALLOW_RULE
+                {
+                    bail!(
+                        "{}",
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsAgyManagedRuleRequired)
+                    );
+                }
+                let sharing = preferences.antigravity_share_settings.unwrap_or(false);
+                let settings = crate::agy_settings::read(&state.config, sharing)?;
+                let mut rules = agy_permission_rules(&settings, key, state.config.language)?;
+                if field == "add" {
+                    if !rules.iter().any(|rule| rule.as_str() == Some(value)) {
+                        rules.push(Value::String(value.to_owned()));
+                    }
+                } else {
+                    if !rules.iter().any(|rule| rule.as_str() == Some(value)) {
+                        bail!(
+                            "{}",
+                            state
+                                .config
+                                .language
+                                .message(MessageKey::CommandsAgyRuleNotFound)
+                        );
+                    }
+                    rules.retain(|rule| rule.as_str() != Some(value));
+                }
+                crate::agy_settings::set(&state.config, sharing, key.key(), Value::Array(rules))?;
+            } else {
+                set_antigravity_text_preference(&mut preferences, field, value)?;
+                state
+                    .native
+                    .apply_native_feature_preferences(&preferences)
+                    .await?;
+            }
         }
         let mut fresh = build_settings_menu(
             ctx,
             state,
-            SettingsKind::Antigravity,
+            menu.kind,
             0,
             menu.requester_id,
             menu.connection_generation,
@@ -3881,7 +4261,28 @@ async fn handle_antigravity_settings_modal(
     }
     .await;
     release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
-    result
+    if let Err(error) = result {
+        let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
+        tracing::warn!(%detail, "Antigravity settings modal failed");
+        for chunk in split_discord_content(&format!(
+            "{}\n{detail}",
+            state
+                .config
+                .language
+                .message(MessageKey::CommandsAgyCouldNotSaveSetting),
+        )) {
+            interaction
+                .create_followup(
+                    ctx,
+                    serenity::builder::CreateInteractionResponseFollowup::new()
+                        .content(chunk)
+                        .ephemeral(true)
+                        .allowed_mentions(no_mentions()),
+                )
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn handle_message_access_modal(

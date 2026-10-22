@@ -1,0 +1,212 @@
+{
+  "commands_agy.title": {
+    "en": "Antigravity",
+    "ko": "Antigravity",
+    "zh": "Antigravity",
+    "ja": "Antigravity"
+  },
+  "commands_agy.tool_permission": {
+    "en": "Tool permissions",
+    "ko": "도구 권한",
+    "zh": "工具权限",
+    "ja": "ツールの権限"
+  },
+  "commands_agy.artifact_review": {
+    "en": "Artifact review",
+    "ko": "아티팩트 검토",
+    "zh": "工件审核",
+    "ja": "アーティファクトの確認"
+  },
+  "commands_agy.terminal_sandbox": {
+    "en": "Terminal sandbox",
+    "ko": "터미널 샌드박스",
+    "zh": "终端沙盒",
+    "ja": "ターミナルサンドボックス"
+  },
+  "commands_agy.non_workspace_access": {
+    "en": "Access outside workspace",
+    "ko": "작업 공간 외부 접근",
+    "zh": "工作区外访问",
+    "ja": "ワークスペース外へのアクセス"
+  },
+  "commands_agy.allow_rules": {
+    "en": "Allow rules",
+    "ko": "허용 규칙",
+    "zh": "允许规则",
+    "ja": "許可ルール"
+  },
+  "commands_agy.ask_rules": {
+    "en": "Ask rules",
+    "ko": "확인 규칙",
+    "zh": "询问规则",
+    "ja": "確認ルール"
+  },
+  "commands_agy.deny_rules": {
+    "en": "Deny rules",
+    "ko": "거부 규칙",
+    "zh": "拒绝规则",
+    "ja": "拒否ルール"
+  },
+  "commands_agy.request_review": {
+    "en": "Request review",
+    "ko": "검토 요청",
+    "zh": "请求审核",
+    "ja": "確認を要求"
+  },
+  "commands_agy.proceed_in_sandbox": {
+    "en": "Proceed in sandbox",
+    "ko": "샌드박스 안에서 진행",
+    "zh": "在沙盒中执行",
+    "ja": "サンドボックス内で実行"
+  },
+  "commands_agy.strict": {
+    "en": "Strict",
+    "ko": "엄격",
+    "zh": "严格",
+    "ja": "厳格"
+  },
+  "commands_agy.always_proceed": {
+    "en": "Always proceed",
+    "ko": "항상 진행",
+    "zh": "始终执行",
+    "ja": "常に実行"
+  },
+  "commands_agy.asks_for_review": {
+    "en": "Ask for review",
+    "ko": "검토 요청",
+    "zh": "请求审核",
+    "ja": "確認を要求"
+  },
+  "commands_agy.agent_decides": {
+    "en": "Agent decides",
+    "ko": "에이전트가 결정",
+    "zh": "由代理决定",
+    "ja": "エージェントが判断"
+  },
+  "commands_agy.add_rule": {
+    "en": "Add rule",
+    "ko": "규칙 추가",
+    "zh": "添加规则",
+    "ja": "ルールを追加"
+  },
+  "commands_agy.remove_rule": {
+    "en": "Remove rule",
+    "ko": "규칙 삭제",
+    "zh": "删除规则",
+    "ja": "ルールを削除"
+  },
+  "commands_agy.no_rules": {
+    "en": "No rules configured.",
+    "ko": "설정된 규칙이 없습니다.",
+    "zh": "未配置规则。",
+    "ja": "ルールは設定されていません。"
+  },
+  "commands_agy.rule_precedence": {
+    "en": "AGY rule priority: Deny > Ask > Allow.",
+    "ko": "AGY 규칙 우선순위: 거부 > 확인 > 허용.",
+    "zh": "AGY 规则优先级：拒绝 > 询问 > 允许。",
+    "ja": "AGY のルール優先順位：拒否 > 確認 > 許可。"
+  },
+  "commands_agy.managed_rule": {
+    "en": "Managed Discodex connection rule:",
+    "ko": "Discodex가 관리하는 연결 규칙:",
+    "zh": "Discodex 管理的连接规则：",
+    "ja": "Discodex が管理する接続ルール："
+  },
+  "commands_agy.effective_preference": {
+    "en": "Effective preference",
+    "ko": "현재 적용 설정",
+    "zh": "有效设置",
+    "ja": "有効な設定"
+  },
+  "commands_agy.inherited_default": {
+    "en": "Inherited AGY default",
+    "ko": "상속한 AGY 기본값",
+    "zh": "继承的 AGY 默认值",
+    "ja": "継承する AGY の既定値"
+  },
+  "commands_agy.native_policy_notice": {
+    "en": "AGY evaluates these settings and permission rules.",
+    "ko": "이 설정과 권한 규칙은 AGY가 적용합니다.",
+    "zh": "这些设置和权限规则由 AGY 执行。",
+    "ja": "これらの設定と権限ルールは AGY が適用します。"
+  },
+  "commands_agy.applies_next_session": {
+    "en": "Saved preferences apply to the next AGY CLI session.",
+    "ko": "저장한 설정은 다음 AGY CLI 세션에 적용됩니다.",
+    "zh": "保存的设置将在下次 AGY CLI 会话生效。",
+    "ja": "保存した設定は次の AGY CLI セッションで適用されます。"
+  },
+  "commands_agy.invalid_rule_list": {
+    "en": "AGY permission rules must be a list",
+    "ko": "AGY 권한 규칙은 목록이어야 합니다",
+    "zh": "AGY 权限规则必须为列表",
+    "ja": "AGY の権限ルールはリストで指定してください"
+  },
+  "commands_agy.rule_to_add": {
+    "en": "Rule to add",
+    "ko": "추가할 규칙",
+    "zh": "要添加的规则",
+    "ja": "追加するルール"
+  },
+  "commands_agy.rule_to_remove": {
+    "en": "Exact rule to remove",
+    "ko": "삭제할 규칙 원문",
+    "zh": "要删除的完整规则",
+    "ja": "削除するルールの全文"
+  },
+  "commands_agy.rule_placeholder": {
+    "en": "action(target), for example mcp(example-server/*)",
+    "ko": "action(target), 예: mcp(example-server/*)",
+    "zh": "action(target)，例如 mcp(example-server/*)",
+    "ja": "action(target)、例：mcp(example-server/*)"
+  },
+  "commands_agy.unknown_setting": {
+    "en": "Unknown AGY setting.",
+    "ko": "알 수 없는 AGY 설정입니다.",
+    "zh": "未知的 AGY 设置。",
+    "ja": "不明な AGY 設定です。"
+  },
+  "commands_agy.use_rule_buttons": {
+    "en": "Use Add rule or Remove rule to edit this list.",
+    "ko": "규칙 추가 또는 규칙 삭제 버튼으로 목록을 편집하세요.",
+    "zh": "请使用添加规则或删除规则按钮编辑此列表。",
+    "ja": "追加・削除ボタンでルールを編集してください。"
+  },
+  "commands_agy.rule_required": {
+    "en": "Enter a permission rule.",
+    "ko": "권한 규칙을 입력하세요.",
+    "zh": "请输入权限规则。",
+    "ja": "権限ルールを入力してください。"
+  },
+  "commands_agy.managed_rule_required": {
+    "en": "The Discodex MCP connection rule is managed automatically.",
+    "ko": "Discodex MCP 연결 규칙은 자동으로 관리됩니다.",
+    "zh": "Discodex MCP 连接规则由系统自动管理。",
+    "ja": "Discodex MCP の接続ルールは自動的に管理されます。"
+  },
+  "commands_agy.could_not_save_setting": {
+    "en": "Could not save the AGY setting.",
+    "ko": "AGY 설정을 저장하지 못했습니다.",
+    "zh": "无法保存 AGY 设置。",
+    "ja": "AGY の設定を保存できませんでした。"
+  },
+  "commands_agy.rule_not_found": {
+    "en": "That exact rule is not in this list.",
+    "ko": "이 목록에 해당 규칙이 없습니다.",
+    "zh": "此列表中没有该完整规则。",
+    "ja": "このリストに一致するルールはありません。"
+  },
+  "commands_agy.auto_approve": {
+    "en": "Allow all permissions",
+    "ko": "모든 권한 허용",
+    "zh": "允许所有权限",
+    "ja": "すべての権限を許可"
+  },
+  "commands_agy.auto_approve_description": {
+    "en": "When enabled, AGY automatically approves tool permission requests, including file reads, file writes, and commands, using its official --dangerously-skip-permissions option. Applies to the next AGY run. Existing allow, ask, and deny lists are preserved.",
+    "ko": "켜면 AGY의 공식 --dangerously-skip-permissions 옵션으로 파일 읽기·쓰기와 명령 실행을 포함한 도구 권한 요청을 자동 승인합니다. 다음 AGY 실행부터 적용됩니다. 기존 허용·확인·거부 규칙 목록은 유지합니다.",
+    "zh": "启用后，AGY 使用官方 --dangerously-skip-permissions 选项自动批准工具权限请求，包括文件读写和命令执行。将在下次 AGY 运行时生效。保留现有允许、询问和拒绝规则列表。",
+    "ja": "有効にすると、AGY の公式 --dangerously-skip-permissions オプションで、ファイルの読み書きやコマンド実行を含むツールの権限要求を自動承認します。次回の AGY 実行から適用します。既存の許可・確認・拒否ルールのリストは保持します。"
+  }
+}

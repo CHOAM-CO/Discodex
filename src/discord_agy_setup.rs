@@ -181,7 +181,13 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
         language.message(MessageKey::DiscordAgySetupExit),
     ));
     rows.push(CreateActionRow::Buttons(controls));
-    (format!("**Antigravity**\n{body}"), rows)
+    (
+        format!(
+            "**{}**\n{body}",
+            language.message(MessageKey::CommandsAgyTitle)
+        ),
+        rows,
+    )
 }
 
 async fn render(
@@ -313,7 +319,8 @@ pub(crate) async fn begin(
 }
 
 fn setup_config(state: &BridgeState, share: bool) -> Result<SetupConfig> {
-    let runtime = crate::agy::Runtime::for_config(&state.config, share)?;
+    crate::agy_settings::prepare(&state.config, share)?;
+    let runtime = crate::agy::Runtime::for_config(&state.config)?;
     Ok(SetupConfig {
         executable: runtime.executable,
         arguments: runtime.arguments,

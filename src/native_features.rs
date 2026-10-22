@@ -43,6 +43,9 @@ pub struct NativeFeaturePreferences {
     /// Opt-in to the managed subscription-authenticated AGY CLI.
     #[serde(default)]
     pub antigravity_enabled: bool,
+    /// Explicit opt-in to AGY's native permission auto-approval CLI flag.
+    #[serde(default)]
+    pub antigravity_auto_approve: bool,
     /// Legacy executable preference, retained when reading older profiles.
     /// Managed AGY execution no longer uses a globally installed binary.
     #[serde(default)]
@@ -86,6 +89,7 @@ impl Default for NativeFeaturePreferences {
         Self {
             approval_policy: default_approval_policy(),
             antigravity_enabled: false,
+            antigravity_auto_approve: false,
             antigravity_path: None,
             antigravity_share_settings: None,
             antigravity_models: Vec::new(),
@@ -357,6 +361,7 @@ mod tests {
         let preferences = NativeFeaturePreferences {
             approval_policy: default_approval_policy(),
             antigravity_enabled: false,
+            antigravity_auto_approve: false,
             antigravity_path: None,
             antigravity_share_settings: None,
             antigravity_models: Vec::new(),
