@@ -2978,82 +2978,107 @@ async fn handle_claimed_settings_action(
                 .await;
             }
         };
-        let (result, pending) = match outcome {
-            SettingChoiceOutcome::Applied(notice) => (notice, None),
-            SettingChoiceOutcome::Pending {
-                ticket,
-                requested,
-                model_selection,
-                live_notice,
-                current_applied,
-            } => (
-                format_pending_settings_update(&requested, &live_notice, state.config.language),
-                Some((
-                    ticket,
+        match outcome {
+            SettingChoiceOutcome::OperationStarted { request, requested } => {
+                let pending_notice = format!(
+                    "{}: `{requested}`\n{}",
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::CommandsRequestedValue9eb15821),
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::SettingsOperationPending),
+                );
+                let (panel_result_tx, panel_result_rx) = tokio::sync::oneshot::channel();
+                spawn_settings_confirmation(
+                    ctx.clone(),
+                    interaction.clone(),
+                    state.clone(),
+                    menu.kind,
+                    menu.page,
+                    menu.requester_id,
+                    menu.connection_generation,
+                    menu.thread_id.clone(),
+                    model_catalog.clone(),
+                    request,
                     requested,
-                    model_selection,
-                    live_notice,
-                    current_applied,
-                )),
-            ),
-        };
-        let refreshed = build_settings_menu_with_catalog(
-            ctx,
-            state,
-            menu.kind,
-            menu.page,
-            menu.requester_id,
-            menu.connection_generation,
-            model_catalog.as_ref(),
-        )
-        .await?;
-        if let Some((ticket, requested, model_selection, live_notice, current_applied)) = pending {
-            let panel_update = update_settings_panel_with_notice_and_id(
-                ctx,
-                interaction,
-                state,
-                menu_id,
-                refreshed.clone(),
-                &result,
-            )
-            .await;
-            let (pending_menu_id, panel_was_delivered) = match &panel_update {
-                Ok(pending_menu_id) => (pending_menu_id.clone(), true),
-                Err(_) => (menu_id.to_owned(), false),
-            };
-            spawn_settings_confirmation(
-                ctx.clone(),
-                interaction.clone(),
-                state.clone(),
-                pending_menu_id,
-                menu.kind,
-                menu.page,
-                menu.requester_id,
-                menu.connection_generation,
-                menu.thread_id.clone(),
-                model_catalog,
-                ticket,
-                requested,
-                model_selection,
-                live_notice,
-                current_applied,
-                interaction.id.get(),
-                panel_was_delivered,
-            );
-            if let Err(error) = panel_update {
-                return Err(error);
+                    interaction.id.get(),
+                    panel_result_rx,
+                );
+                let refreshed = match build_settings_menu_with_catalog(
+                    ctx,
+                    state,
+                    menu.kind,
+                    menu.page,
+                    menu.requester_id,
+                    menu.connection_generation,
+                    model_catalog.as_ref(),
+                )
+                .await
+                {
+                    Ok(menu) => menu,
+                    Err(error) => {
+                        let detail = settings_error_detail(
+                            &error,
+                            state.config.language,
+                            Some(&state.config),
+                        );
+                        let _ = panel_result_tx.send(PanelDelivery::Failed(detail));
+                        return Err(error);
+                    }
+                };
+                let panel_update = update_settings_panel_with_notice_and_id(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    refreshed.clone(),
+                    &pending_notice,
+                )
+                .await;
+                match &panel_update {
+                    Ok(pending_menu_id) => {
+                        let _ =
+                            panel_result_tx.send(PanelDelivery::Delivered(pending_menu_id.clone()));
+                    }
+                    Err(error) => {
+                        let detail = settings_error_detail(
+                            error,
+                            state.config.language,
+                            Some(&state.config),
+                        );
+                        let _ = panel_result_tx.send(PanelDelivery::Failed(detail));
+                    }
+                }
+                if let Err(error) = panel_update {
+                    return Err(error);
+                }
+                return Ok(());
             }
-            return Ok(());
+            SettingChoiceOutcome::Applied(notice) => {
+                let refreshed = build_settings_menu_with_catalog(
+                    ctx,
+                    state,
+                    menu.kind,
+                    menu.page,
+                    menu.requester_id,
+                    menu.connection_generation,
+                    model_catalog.as_ref(),
+                )
+                .await?;
+                return update_settings_panel_with_notice(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    refreshed,
+                    &notice,
+                )
+                .await;
+            }
         }
-        return update_settings_panel_with_notice(
-            ctx,
-            interaction,
-            state,
-            menu_id,
-            refreshed,
-            &result,
-        )
-        .await;
     } else {
         bail!("unknown settings action");
     }
@@ -3170,12 +3195,9 @@ async fn update_settings_panel_with_notice_and_id(
 
 enum SettingChoiceOutcome {
     Applied(String),
-    Pending {
-        ticket: crate::native::ThreadSettingUpdateTicket,
+    OperationStarted {
+        request: crate::settings_operation::SettingRequest,
         requested: String,
-        model_selection: Option<crate::model_catalog::ModelSelection>,
-        live_notice: String,
-        current_applied: bool,
     },
 }
 
@@ -3372,66 +3394,29 @@ async fn apply_setting_choice(
                     ),
                 ));
             }
-            let update = state
-                .native
-                .request_thread_setting_update(
-                    &thread_id,
-                    json!({"threadId":thread_id,"model":selection.model}),
-                    "model",
-                    Value::String(selection.model.clone()),
-                )
-                .await?;
-            let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
-                Some(
-                    state
-                        .native
-                        .request(
-                            "turn/settings/update",
-                            json!({
-                                "threadId":thread_id,"turnId":turn_id,"model":selection.model
-                            }),
-                        )
-                        .await,
-                )
-            } else {
-                None
-            };
             let requested = format!("{} — {}", selection.model, selection.provider);
-            let live_notice =
-                current_turn_notice(live_result.as_ref(), language, Some(&state.config));
-            let current_applied = live_result.as_ref().is_none_or(|result| {
-                result
-                    .as_ref()
-                    .ok()
-                    .and_then(|result| result.get("status"))
-                    .and_then(Value::as_str)
-                    == Some("applied")
+            let expected = Value::String(selection.model.clone());
+            let current_turn_params = state.current_turn.lock().await.clone().map(|turn_id| {
+                json!({
+                    "threadId":thread_id,
+                    "turnId":turn_id,
+                    "model":selection.model
+                })
             });
-            match update {
-                crate::native::ThreadSettingUpdate::Confirmed(snapshot) => {
-                    state
-                        .native
-                        .save_model_selection(&selection)
-                        .context("native conversation model was applied, but its saved selection could not be persisted")?;
-                    Ok(SettingChoiceOutcome::Applied(
-                        format_settings_update_result_with_language(
-                            &requested,
-                            Some(&snapshot),
-                            live_result.as_ref(),
-                            language,
-                        ),
-                    ))
-                }
-                crate::native::ThreadSettingUpdate::Pending(ticket) => {
-                    Ok(SettingChoiceOutcome::Pending {
-                        ticket,
-                        requested,
-                        model_selection: Some(selection),
-                        live_notice,
-                        current_applied,
-                    })
-                }
-            }
+            Ok(SettingChoiceOutcome::OperationStarted {
+                request: crate::settings_operation::SettingRequest {
+                    generation: expected_generation
+                        .unwrap_or_else(|| state.native.current_generation()),
+                    thread_id: thread_id.clone(),
+                    field: "model",
+                    params: json!({"threadId":thread_id,"model":selection.model}),
+                    expected,
+                    expected_model_scope: None,
+                    model_selection: Some(selection),
+                    current_turn_params,
+                },
+                requested,
+            })
         }
         SettingsKind::SubagentModel | SettingsKind::Effort | SettingsKind::Fast => {
             let sub = match kind {
@@ -3497,91 +3482,32 @@ async fn apply_setting_choice(
             };
             let mut params = json!({"threadId":thread_id});
             params[field] = value.clone();
-            let update = state
-                .native
-                .request_thread_setting_update(&thread_id, params, field, value.clone())
-                .await?;
-            let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
-                let mut live = json!({"threadId":thread_id,"turnId":turn_id});
-                live[field] = if kind == SettingsKind::Fast && requested.eq_ignore_ascii_case("off")
-                {
-                    Value::Null
-                } else {
-                    Value::String(requested.to_owned())
-                };
-                Some(state.native.request("turn/settings/update", live).await)
+            let live_value = if kind == SettingsKind::Fast && requested.eq_ignore_ascii_case("off")
+            {
+                Value::Null
             } else {
-                None
+                Value::String(requested.to_owned())
             };
-            let snapshot = match update {
-                crate::native::ThreadSettingUpdate::Confirmed(snapshot) => Ok(snapshot),
-                crate::native::ThreadSettingUpdate::Pending(ticket) => {
-                    let live_notice =
-                        current_turn_notice(live_result.as_ref(), language, Some(&state.config));
-                    let current_applied = live_result.as_ref().is_none_or(|result| {
-                        result
-                            .as_ref()
-                            .ok()
-                            .and_then(|result| result.get("status"))
-                            .and_then(Value::as_str)
-                            == Some("applied")
-                    });
-                    return Ok(SettingChoiceOutcome::Pending {
-                        ticket,
-                        requested: requested.to_owned(),
-                        model_selection: None,
-                        live_notice,
-                        current_applied,
-                    });
-                }
-            };
-            if let Some(Err(error)) = live_result.as_ref() {
-                tracing::warn!(error = ?error, "failed to update settings for active native turn");
-            }
-            if let Err(error) = snapshot.as_ref() {
-                tracing::warn!(error = ?error, "failed to refresh settings for Discord response");
-            }
-            if let Some(checks) = &state.installation_checks {
-                let defaults_match =
-                    snapshot.as_ref().ok().and_then(|value| value.get(field)) == Some(&value);
-                let current_applied = live_result.as_ref().is_none_or(|result| {
-                    result
-                        .as_ref()
-                        .ok()
-                        .and_then(|result| result.get("status"))
-                        .and_then(Value::as_str)
-                        == Some("applied")
-                });
-                let error = snapshot
-                    .as_ref()
-                    .err()
-                    .map(|error| format!("{error:#}"))
-                    .or_else(|| {
-                        live_result
-                            .as_ref()
-                            .and_then(|result| result.as_ref().err())
-                            .map(|error| format!("{error:#}"))
-                    });
-                checks.settings_confirmed(
-                    interaction_id,
-                    &state.native.thread_id(),
-                    defaults_match,
-                    current_applied,
-                    error.as_deref(),
-                );
-            }
-            let mut notice = format_settings_update_result_with_config(
-                requested,
-                snapshot.as_ref().ok(),
-                live_result.as_ref(),
-                language,
-                Some(&state.config),
-            );
-            if let Err(error) = &snapshot {
-                notice.push('\n');
-                notice.push_str(&settings_error_detail(error, language, Some(&state.config)));
-            }
-            Ok(SettingChoiceOutcome::Applied(notice))
+            let current_turn_params = state.current_turn.lock().await.clone().map(|turn_id| {
+                let mut live = json!({"threadId":thread_id,"turnId":turn_id});
+                live[field] = live_value;
+                live
+            });
+            Ok(SettingChoiceOutcome::OperationStarted {
+                request: crate::settings_operation::SettingRequest {
+                    generation: expected_generation
+                        .unwrap_or_else(|| state.native.current_generation()),
+                    thread_id: thread_id.clone(),
+                    field,
+                    params,
+                    expected: value,
+                    expected_model_scope: matches!(kind, SettingsKind::Effort | SettingsKind::Fast)
+                        .then_some(expected_model_scope.clone()),
+                    model_selection: None,
+                    current_turn_params,
+                },
+                requested: requested.to_owned(),
+            })
         }
         SettingsKind::NativeFeatures => bail!(
             "{}",
@@ -5059,17 +4985,7 @@ fn thread_model_provider(thread: &Value) -> Option<&str> {
 }
 
 fn thread_model_scope(thread: &Value) -> Option<String> {
-    let model = thread.get("model")?.as_str()?;
-    let executor = thread_model_executor(thread)?;
-    Some(match thread_model_provider(thread) {
-        Some(provider) => crate::model_catalog::ModelSelection {
-            executor,
-            provider: provider.to_owned(),
-            model: model.to_owned(),
-        }
-        .value(),
-        None => model.to_owned(),
-    })
+    crate::settings_operation::model_scope(thread)
 }
 
 fn normalized_model_value(catalog: &Value, value: &str) -> Option<String> {
@@ -5610,110 +5526,372 @@ fn format_confirmed_settings_update(
     )
 }
 
+fn format_setting_operation_result(
+    requested: &str,
+    outcome: &crate::settings_operation::SettingOutcome,
+    state: &BridgeState,
+) -> (String, bool, bool) {
+    let language = state.config.language;
+    let current_response = match &outcome.current_turn {
+        crate::settings_operation::CurrentTurnOutcome::NotRequested => {
+            current_turn_notice(None, language, Some(&state.config))
+        }
+        crate::settings_operation::CurrentTurnOutcome::Applied(response)
+        | crate::settings_operation::CurrentTurnOutcome::Unconfirmed(response) => {
+            let result: anyhow::Result<Value> = Ok(response.clone());
+            current_turn_notice(Some(&result), language, Some(&state.config))
+        }
+        crate::settings_operation::CurrentTurnOutcome::Failed(error) => {
+            let result: anyhow::Result<Value> = Err(anyhow!("{error:#}"));
+            current_turn_notice(Some(&result), language, Some(&state.config))
+        }
+    };
+    let confirmed = matches!(
+        &outcome.application,
+        crate::settings_operation::ApplicationOutcome::Applied(_)
+    );
+    let terminal_only = outcome.superseded
+        || !outcome.target_current
+        || matches!(
+            &outcome.application,
+            crate::settings_operation::ApplicationOutcome::Superseded
+                | crate::settings_operation::ApplicationOutcome::StaleTarget
+        );
+    let mut notice = match &outcome.application {
+        crate::settings_operation::ApplicationOutcome::Applied(snapshot) => {
+            format_confirmed_settings_update(requested, snapshot, &current_response, language)
+        }
+        crate::settings_operation::ApplicationOutcome::Superseded => language
+            .message(MessageKey::SettingsOperationSuperseded)
+            .to_owned(),
+        crate::settings_operation::ApplicationOutcome::StaleTarget => language
+            .message(MessageKey::SettingsOperationStaleTarget)
+            .to_owned(),
+        crate::settings_operation::ApplicationOutcome::Failed(error) => localized_failure_message(
+            language.message(MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396),
+            &settings_error_detail(error, language, Some(&state.config)),
+        ),
+    };
+    if let crate::settings_operation::PersistenceOutcome::Failed(error) = &outcome.persistence {
+        notice = format!(
+            "{}\n{}\n{}",
+            language.message(MessageKey::CommandsModelDefaultConfirmedButSavedSelectionFailed),
+            notice,
+            settings_error_detail(error, language, Some(&state.config))
+        );
+    }
+    if outcome.superseded {
+        notice.push('\n');
+        notice.push_str(language.message(MessageKey::SettingsOperationSuperseded));
+    } else if !outcome.target_current && confirmed {
+        notice.push('\n');
+        notice.push_str(language.message(MessageKey::SettingsOperationStaleTarget));
+    }
+    if let crate::settings_operation::CurrentTurnOutcome::Failed(error) = &outcome.current_turn {
+        tracing::error!(
+            error = %settings_error_detail(error, language, Some(&state.config)),
+            "current-turn settings update failed"
+        );
+    }
+    (notice, confirmed, terminal_only)
+}
+
+async fn deliver_settings_operation_fallback(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &BridgeState,
+    notice: &str,
+) -> SettingsFallbackDelivery {
+    let mut delivery = SettingsFallbackDelivery::default();
+    for chunk in split_discord_content(notice) {
+        if let Err(error) = interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(chunk)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await
+        {
+            let error = anyhow::Error::new(error);
+            let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
+            delivery.record_failure(detail.clone());
+            tracing::error!(
+                error = %detail,
+                "settings terminal result follow-up delivery failed"
+            );
+            let fallback = localized_failure_message(
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsDiscordErrorLabel),
+                &format!("{notice}\n{detail}"),
+            );
+            crate::discord::report_discord_failure(
+                &ctx.http,
+                &state.config,
+                ChannelId::new(state.config.home_channel_id),
+                &fallback,
+            )
+            .await;
+            break;
+        }
+        delivery.record_success();
+    }
+    delivery
+}
+
+enum PanelDelivery {
+    Delivered(String),
+    Failed(String),
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SettingsFallbackDelivery {
+    delivered_chunks: usize,
+    failure: Option<String>,
+}
+
+impl SettingsFallbackDelivery {
+    fn record_success(&mut self) {
+        self.delivered_chunks += 1;
+    }
+
+    fn record_failure(&mut self, diagnostic: String) {
+        self.failure = Some(diagnostic);
+    }
+
+    fn is_fully_delivered(&self, expected_chunks: usize) -> bool {
+        self.failure.is_none() && self.delivered_chunks == expected_chunks
+    }
+}
+
+enum SettingsPanelDecision {
+    Update(String),
+    Fallback {
+        notice: String,
+        panel_failure: Option<String>,
+        observer_ended: bool,
+    },
+}
+
+fn settings_panel_decision(
+    panel: Result<PanelDelivery, ()>,
+    completed_notice: &str,
+    update_allowed: bool,
+    language: crate::i18n::Language,
+) -> SettingsPanelDecision {
+    match panel {
+        Ok(PanelDelivery::Delivered(menu_id)) if update_allowed => {
+            SettingsPanelDecision::Update(menu_id)
+        }
+        Ok(PanelDelivery::Delivered(_)) => SettingsPanelDecision::Fallback {
+            notice: completed_notice.to_owned(),
+            panel_failure: None,
+            observer_ended: false,
+        },
+        Ok(PanelDelivery::Failed(panel_error)) => {
+            let notice = format!(
+                "{completed_notice}\n{}: {panel_error}",
+                language.message(MessageKey::CommandsDiscordErrorLabel)
+            );
+            SettingsPanelDecision::Fallback {
+                notice,
+                panel_failure: Some(panel_error),
+                observer_ended: false,
+            }
+        }
+        Err(()) => {
+            let observer_error = language.message(MessageKey::SettingsOperationPanelObserverEnded);
+            let notice = format!(
+                "{completed_notice}\n{}: {observer_error}",
+                language.message(MessageKey::CommandsDiscordErrorLabel)
+            );
+            SettingsPanelDecision::Fallback {
+                notice,
+                panel_failure: None,
+                observer_ended: true,
+            }
+        }
+    }
+}
+
 fn spawn_settings_confirmation(
     ctx: Context,
     interaction: ComponentInteraction,
     state: Arc<BridgeState>,
-    pending_menu_id: String,
     kind: SettingsKind,
     page: usize,
     requester_id: u64,
     generation: u64,
     thread_id: String,
     model_catalog: Option<Value>,
-    mut ticket: crate::native::ThreadSettingUpdateTicket,
+    request: crate::settings_operation::SettingRequest,
     requested: String,
-    model_selection: Option<crate::model_catalog::ModelSelection>,
-    current_response: String,
-    current_applied: bool,
     interaction_id: u64,
-    panel_was_delivered: bool,
+    panel_result: tokio::sync::oneshot::Receiver<PanelDelivery>,
 ) {
     tokio::spawn(async move {
-        let result = ticket.wait().await;
-        let update_confirmed = matches!(
-            &result,
-            Ok(crate::native::ThreadSettingUpdateOutcome::Applied(_))
+        let requested_field = request.field;
+        let expected_value = request.expected.clone();
+        let _input_phase = if kind == SettingsKind::Model {
+            Some(state.voice.input_gate.state.lock().await)
+        } else {
+            None
+        };
+        let _settings_change = state.settings_change_lock.lock().await;
+        let (dispatched_tx, dispatched_rx) = tokio::sync::oneshot::channel();
+        let apply = state.settings_operations.apply_setting_with_dispatch(
+            &state.native,
+            request,
+            Some(dispatched_tx),
         );
-        let is_current = ticket.is_current();
-        if !is_current
-            || state.native.current_generation() != generation
-            || state.native.thread_id() != thread_id
-            || matches!(
-                &result,
-                Ok(crate::native::ThreadSettingUpdateOutcome::Superseded)
-            )
-        {
-            return;
-        }
-
-        let notice = match result {
-            Ok(crate::native::ThreadSettingUpdateOutcome::Applied(snapshot)) => {
-                if let Some(checks) = &state.installation_checks {
-                    checks.settings_confirmed(
-                        interaction_id,
-                        &thread_id,
-                        true,
-                        current_applied,
-                        None,
-                    );
-                }
-                if let Some(selection) = model_selection.as_ref()
-                    && let Err(error) = state.native.save_model_selection(selection)
-                {
-                    let detail =
-                        settings_error_detail(&error, state.config.language, Some(&state.config));
-                    format!(
-                        "{}\n{}",
-                        format!(
-                            "{}\n{}",
-                            state.config.language.message(
-                                MessageKey::CommandsModelDefaultConfirmedButSavedSelectionFailed
-                            ),
-                            format_confirmed_settings_update(
-                                &requested,
-                                &snapshot,
-                                &current_response,
-                                state.config.language,
-                            ),
-                        ),
-                        detail
-                    )
-                } else {
-                    format_confirmed_settings_update(
-                        &requested,
-                        &snapshot,
-                        &current_response,
-                        state.config.language,
-                    )
-                }
+        tokio::pin!(apply);
+        let outcome = tokio::select! {
+            outcome = &mut apply => {
+                drop(_input_phase);
+                drop(_settings_change);
+                outcome
             }
-            Ok(crate::native::ThreadSettingUpdateOutcome::Superseded) => return,
-            Err(error) => {
-                let detail =
-                    settings_error_detail(&error, state.config.language, Some(&state.config));
-                if let Some(checks) = &state.installation_checks {
-                    checks.settings_confirmed(
-                        interaction_id,
-                        &thread_id,
-                        false,
+            _ = dispatched_rx => {
+                drop(_input_phase);
+                drop(_settings_change);
+                apply.await
+            }
+        };
+        let language = state.config.language;
+        let (update_confirmed, current_applied, mut notice, terminal_only, target_current) =
+            match outcome {
+                Ok(outcome) => {
+                    let current_applied = matches!(
+                        &outcome.current_turn,
+                        crate::settings_operation::CurrentTurnOutcome::NotRequested
+                            | crate::settings_operation::CurrentTurnOutcome::Applied(_)
+                    );
+                    let (notice, confirmed, terminal_only) =
+                        format_setting_operation_result(&requested, &outcome, &state);
+                    let error_detail = match (
+                        &outcome.application,
+                        &outcome.persistence,
+                        &outcome.current_turn,
+                    ) {
+                        (crate::settings_operation::ApplicationOutcome::Failed(error), _, _)
+                        | (_, crate::settings_operation::PersistenceOutcome::Failed(error), _)
+                        | (_, _, crate::settings_operation::CurrentTurnOutcome::Failed(error)) => {
+                            Some(settings_error_detail(error, language, Some(&state.config)))
+                        }
+                        _ => None,
+                    };
+                    if let Some(detail) = error_detail.as_deref() {
+                        tracing::error!(
+                            event = "settings_operation_diagnostic",
+                            error = %detail,
+                            "settings operation contains a failed stage"
+                        );
+                    }
+                    if let Some(checks) = &state.installation_checks {
+                        let defaults_match = match &outcome.application {
+                            crate::settings_operation::ApplicationOutcome::Applied(snapshot) => {
+                                snapshot.get(requested_field) == Some(&expected_value)
+                            }
+                            _ => false,
+                        };
+                        checks.settings_confirmed(
+                            interaction_id,
+                            &thread_id,
+                            defaults_match,
+                            current_applied,
+                            error_detail.as_deref(),
+                        );
+                    }
+                    (
+                        confirmed,
                         current_applied,
-                        Some(&detail),
+                        notice,
+                        terminal_only,
+                        outcome.target_current,
+                    )
+                }
+                Err(error) => {
+                    let detail = settings_error_detail(&error, language, Some(&state.config));
+                    tracing::error!(
+                        event = "settings_operation_worker_error",
+                        error = %detail,
+                        "settings operation completed without an application outcome"
+                    );
+                    if let Some(checks) = &state.installation_checks {
+                        checks.settings_confirmed(
+                            interaction_id,
+                            &thread_id,
+                            false,
+                            false,
+                            Some(&detail),
+                        );
+                    }
+                    (
+                    false,
+                    false,
+                    localized_failure_message(
+                        language.message(
+                            MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396,
+                        ),
+                        &detail,
+                    ),
+                    false,
+                    false,
+                )
+                }
+            };
+
+        tracing::info!(
+            event = "settings_operation_completed",
+            applied = update_confirmed,
+            current_turn_applied = current_applied,
+            "native settings operation reached a terminal result"
+        );
+
+        // The operation is worker-owned before the Discord panel edit starts.
+        // A failed/dropped panel observer cannot cancel native confirmation.
+        let panel_decision = settings_panel_decision(
+            panel_result.await.map_err(|_| ()),
+            &notice,
+            !terminal_only && target_current,
+            language,
+        );
+        let pending_menu_id = match panel_decision {
+            SettingsPanelDecision::Update(id) => id,
+            SettingsPanelDecision::Fallback {
+                notice,
+                panel_failure,
+                observer_ended,
+            } => {
+                if let Some(panel_error) = panel_failure {
+                    tracing::error!(
+                        event = "settings_pending_panel_delivery_failed",
+                        error = %panel_error,
+                        "settings operation continued after its pending panel could not be delivered"
+                    );
+                } else if observer_ended {
+                    tracing::error!(
+                        error = language.message(MessageKey::SettingsOperationPanelObserverEnded),
+                        "settings panel result observer ended"
+                    );
+                } else {
+                    tracing::info!(
+                        event = "settings_terminal_result_using_fallback",
+                        "settings terminal result is being delivered through the fallback channel"
                     );
                 }
-                localized_failure_message(
-                    state.config.language.message(
-                        MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396,
-                    ),
-                    &detail,
-                )
+                let _ =
+                    deliver_settings_operation_fallback(&ctx, &interaction, &state, &notice).await;
+                return;
             }
         };
 
-        // The native update may already be queued even when the first Discord
-        // panel edit failed. Keep confirmation and persistence independent from
-        // that UI result, but never recreate a panel the user may not have seen.
-        if !panel_was_delivered || !is_current {
+        if state.native.current_generation() != generation || state.native.thread_id() != thread_id
+        {
+            deliver_settings_operation_fallback(&ctx, &interaction, &state, &notice).await;
             return;
         }
 
@@ -5726,6 +5904,7 @@ fn spawn_settings_confirmation(
             })
         };
         if !current {
+            deliver_settings_operation_fallback(&ctx, &interaction, &state, &notice).await;
             return;
         }
         let refreshed = match build_settings_menu_with_catalog(
@@ -5753,8 +5932,7 @@ fn spawn_settings_confirmation(
                 return;
             }
         };
-        let still_current = ticket.is_current()
-            && state.native.current_generation() == generation
+        let still_current = state.native.current_generation() == generation
             && state.native.thread_id() == thread_id
             && {
                 let menus = state.settings_menus.lock().await;
@@ -5765,6 +5943,7 @@ fn spawn_settings_confirmation(
                 })
             };
         if !still_current {
+            deliver_settings_operation_fallback(&ctx, &interaction, &state, &notice).await;
             return;
         }
         if let Err(error) = update_settings_panel_with_notice(
@@ -5838,6 +6017,122 @@ async fn report_settings_confirmation_delivery_failure(
             &fallback,
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod settings_terminal_delivery_tests {
+    use super::*;
+
+    const COMPLETED_NOTICE: &str =
+        "Model applied: example-model\nSaved selection failed: disk detail";
+
+    #[test]
+    fn pending_panel_failure_falls_back_with_completed_and_persistence_diagnostics() {
+        let panel_error = "Discord panel edit failed: status 503";
+        let decision = settings_panel_decision(
+            Ok(PanelDelivery::Failed(panel_error.to_owned())),
+            COMPLETED_NOTICE,
+            true,
+            crate::i18n::Language::English,
+        );
+        match decision {
+            SettingsPanelDecision::Fallback {
+                notice,
+                panel_failure,
+                observer_ended,
+            } => {
+                assert!(notice.contains("Model applied: example-model"));
+                assert!(notice.contains("Saved selection failed: disk detail"));
+                assert!(notice.contains(panel_error));
+                assert_eq!(panel_failure.as_deref(), Some(panel_error));
+                assert!(!observer_ended);
+            }
+            SettingsPanelDecision::Update(_) => panic!("failed panel must use fallback"),
+        }
+    }
+
+    #[test]
+    fn dropped_panel_observer_falls_back_with_completed_result() {
+        let decision = settings_panel_decision(
+            Err(()),
+            COMPLETED_NOTICE,
+            true,
+            crate::i18n::Language::English,
+        );
+        match decision {
+            SettingsPanelDecision::Fallback {
+                notice,
+                panel_failure,
+                observer_ended,
+            } => {
+                assert!(notice.contains(COMPLETED_NOTICE));
+                assert!(
+                    notice.contains(
+                        crate::i18n::Language::English
+                            .message(MessageKey::SettingsOperationPanelObserverEnded)
+                    )
+                );
+                assert!(panel_failure.is_none());
+                assert!(observer_ended);
+            }
+            SettingsPanelDecision::Update(_) => panic!("dropped observer must use fallback"),
+        }
+    }
+
+    #[test]
+    fn stale_or_closed_panel_falls_back_without_resurrecting_its_menu() {
+        let decision = settings_panel_decision(
+            Ok(PanelDelivery::Delivered("closed-menu".to_owned())),
+            COMPLETED_NOTICE,
+            false,
+            crate::i18n::Language::English,
+        );
+        match decision {
+            SettingsPanelDecision::Fallback { notice, .. } => {
+                assert_eq!(notice, COMPLETED_NOTICE);
+            }
+            SettingsPanelDecision::Update(_) => {
+                panic!("stale/closed panel must not be updated")
+            }
+        }
+    }
+
+    #[test]
+    fn current_delivered_panel_keeps_the_normal_panel_update_path() {
+        let menu_id = "current-menu";
+        let decision = settings_panel_decision(
+            Ok(PanelDelivery::Delivered(menu_id.to_owned())),
+            COMPLETED_NOTICE,
+            true,
+            crate::i18n::Language::English,
+        );
+        match decision {
+            SettingsPanelDecision::Update(id) => assert_eq!(id, menu_id),
+            SettingsPanelDecision::Fallback { .. } => {
+                panic!("current delivered panel should be updated")
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_failure_keeps_diagnostic_and_does_not_claim_delivery() {
+        let diagnostic = "Discord follow-up failed: status 503".to_owned();
+        let mut delivery = SettingsFallbackDelivery::default();
+        delivery.record_failure(diagnostic.clone());
+        assert_eq!(delivery.delivered_chunks, 0);
+        assert_eq!(delivery.failure.as_deref(), Some(diagnostic.as_str()));
+        assert!(!delivery.is_fully_delivered(1));
+    }
+
+    #[test]
+    fn fallback_success_reports_only_observed_delivered_chunks() {
+        let mut delivery = SettingsFallbackDelivery::default();
+        delivery.record_success();
+        assert_eq!(delivery.delivered_chunks, 1);
+        assert!(delivery.failure.is_none());
+        assert!(delivery.is_fully_delivered(1));
+        assert!(!delivery.is_fully_delivered(2));
     }
 }
 

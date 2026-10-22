@@ -58,5 +58,47 @@
     "ko": "네이티브 요청에 실패했습니다",
     "zh": "原生请求失败",
     "ja": "ネイティブ要求に失敗しました"
+  },
+  "native.configured_settings_queue_context": {
+    "en": "Queue configured thread settings update",
+    "ko": "설정된 스레드 설정 변경 요청을 전달하지 못했습니다",
+    "zh": "无法排入已配置的线程设置更新",
+    "ja": "設定済みスレッド設定の更新をキューに登録できませんでした"
+  },
+  "native.configured_settings_apply_context": {
+    "en": "Apply and confirm configured settings on the newly started Codex thread",
+    "ko": "새 Codex 스레드에 설정을 적용하고 확인하지 못했습니다",
+    "zh": "无法在新启动的 Codex 线程上应用并确认已配置的设置",
+    "ja": "新しく開始したCodexスレッドに設定を適用して確認できませんでした"
+  },
+  "native.configured_settings_readback_context": {
+    "en": "Read newly started thread settings after update acknowledgement",
+    "ko": "변경 요청 확인 후 새 스레드 설정을 읽지 못했습니다",
+    "zh": "更新确认后无法读取新线程设置",
+    "ja": "更新確認後に新しいスレッド設定を読み取れませんでした"
+  },
+  "native.configured_settings_wrong_thread": {
+    "en": "Thread read returned a different thread while confirming configured settings",
+    "ko": "설정 확인 중 다른 스레드의 읽기 결과가 반환되었습니다",
+    "zh": "确认设置时读取结果属于其他线程",
+    "ja": "設定の確認中に別のスレッドの読み取り結果が返されました"
+  },
+  "native.configured_settings_connection_changed": {
+    "en": "Codex connection changed while confirming configured thread settings",
+    "ko": "스레드 설정 확인 중 Codex 연결이 변경되었습니다",
+    "zh": "确认线程设置时 Codex 连接已更改",
+    "ja": "スレッド設定の確認中にCodex接続が変更されました"
+  },
+  "native.configured_settings_event_stream_closed": {
+    "en": "Native event stream closed before configured settings were confirmed",
+    "ko": "설정 확인 전에 네이티브 이벤트 스트림이 종료되었습니다",
+    "zh": "确认设置前原生事件流已关闭",
+    "ja": "設定の確認前にネイティブイベントストリームが終了しました"
+  },
+  "native.configured_settings_connection_closed": {
+    "en": "Native connection closed before configured settings were confirmed",
+    "ko": "설정 확인 전에 네이티브 연결이 종료되었습니다",
+    "zh": "确认设置前原生连接已关闭",
+    "ja": "設定の確認前にネイティブ接続が閉じられました"
   }
 }

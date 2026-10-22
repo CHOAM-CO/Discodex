@@ -1,0 +1,14 @@
+{
+  "diagnostics.agy_cleanup_also_failed": {
+    "en": "AGY cleanup also failed: {error}",
+    "ko": "AGY 정리도 실패했습니다: {error}",
+    "zh": "AGY 清理也失败：{error}",
+    "ja": "AGY のクリーンアップも失敗しました: {error}"
+  },
+  "diagnostics.agy_cleanup_stop_failed": {
+    "en": "Could not stop the completed AGY process tree.",
+    "ko": "완료된 AGY 프로세스를 정리하지 못했습니다.",
+    "zh": "无法停止已完成的 AGY 进程树。",
+    "ja": "完了した AGY プロセスツリーを停止できませんでした。"
+  }
+}

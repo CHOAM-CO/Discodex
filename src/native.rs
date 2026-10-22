@@ -20,6 +20,7 @@ use tokio_tungstenite::{WebSocketStream, client_async_with_config};
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::i18n::{Language, MessageKey};
 use crate::model_catalog::{ModelExecutor, ModelSelection};
 use crate::state::StateStore;
 
@@ -75,6 +76,32 @@ struct PendingRequest {
     sender: oneshot::Sender<std::result::Result<Value, NativeRequestError>>,
     method: String,
     observation_fence: u64,
+}
+
+fn decode_pending_response(
+    method: &str,
+    value: Value,
+    generation: u64,
+    observation_order: u64,
+    observation_fence: u64,
+) -> std::result::Result<Value, NativeRequestError> {
+    let mut response = if let Some(error) = value.get("error") {
+        Err(NativeRequestError::from_response(method.to_owned(), error))
+    } else {
+        Ok(value.get("result").cloned().unwrap_or(Value::Null))
+    };
+    if matches!(
+        method,
+        "turn/start" | "thread/start" | "thread/read" | "thread/resume"
+    ) && let Ok(result) = response.as_mut()
+    {
+        if method == "turn/start" {
+            stamp_state_observation(result, generation, observation_order);
+        } else {
+            stamp_state_snapshot(result, generation, observation_order, observation_fence);
+        }
+    }
+    response
 }
 
 /// Recover an in-flight native response from a poisoned map so its original
@@ -400,7 +427,10 @@ enum ThreadSettingUpdateStatus {
 }
 
 pub enum ThreadSettingUpdate {
-    Confirmed(Value),
+    Confirmed {
+        snapshot: Value,
+        revision: ThreadSettingRevision,
+    },
     Pending(ThreadSettingUpdateTicket),
 }
 
@@ -417,7 +447,25 @@ pub struct ThreadSettingUpdateTicket {
     current: Arc<AtomicBool>,
 }
 
+/// Opaque identity for one thread-setting revision. It remains valid through
+/// conditional persistence and becomes stale when a newer same-field request
+/// supersedes it.
+#[derive(Clone)]
+pub struct ThreadSettingRevision {
+    key: ThreadSettingKey,
+    current: Arc<AtomicBool>,
+    inner: Weak<Inner>,
+}
+
 impl ThreadSettingUpdateTicket {
+    pub fn revision(&self) -> ThreadSettingRevision {
+        ThreadSettingRevision {
+            key: self.key.clone(),
+            current: self.current.clone(),
+            inner: self.inner.clone(),
+        }
+    }
+
     pub fn is_current(&self) -> bool {
         self.current.load(Ordering::Acquire)
     }
@@ -453,6 +501,37 @@ impl Drop for ThreadSettingUpdateTicket {
         let Some(inner) = self.inner.upgrade() else {
             return;
         };
+        let pending = inner.pending_thread_settings.lock();
+        if let Ok(mut pending) = pending
+            && pending
+                .get(&self.key)
+                .is_some_and(|entry| entry.revision == self.revision)
+        {
+            pending.remove(&self.key);
+        }
+        if Arc::strong_count(&self.current) == 1
+            && let Ok(mut current) = inner.thread_setting_current.lock()
+            && current
+                .get(&self.key)
+                .and_then(Weak::upgrade)
+                .is_some_and(|value| Arc::ptr_eq(&value, &self.current))
+        {
+            current.remove(&self.key);
+        }
+    }
+}
+
+impl Drop for ThreadSettingRevision {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.current) != 1 {
+            return;
+        }
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        let Ok(_pending) = inner.pending_thread_settings.lock() else {
+            return;
+        };
         if let Ok(mut current) = inner.thread_setting_current.lock()
             && current
                 .get(&self.key)
@@ -462,6 +541,57 @@ impl Drop for ThreadSettingUpdateTicket {
             current.remove(&self.key);
         }
     }
+}
+
+/// Run an operation while holding the same locks used to supersede a setting
+/// revision. This makes revision validation and persistence one atomic boundary.
+fn with_current_thread_setting_revision<T>(
+    pending: &Mutex<HashMap<ThreadSettingKey, PendingThreadSetting>>,
+    current: &Mutex<HashMap<ThreadSettingKey, Weak<AtomicBool>>>,
+    revision: &ThreadSettingRevision,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    let _pending = pending
+        .lock()
+        .map_err(|_| anyhow!("pending thread settings lock poisoned"))?;
+    let current = current
+        .lock()
+        .map_err(|_| anyhow!("thread setting current-state lock poisoned"))?;
+    let is_current = revision.current.load(Ordering::Acquire)
+        && current
+            .get(&revision.key)
+            .and_then(Weak::upgrade)
+            .is_some_and(|value| Arc::ptr_eq(&value, &revision.current));
+    if !is_current {
+        return Ok(None);
+    }
+    operation().map(Some)
+}
+
+fn supersede_thread_setting_revisions(
+    pending: &mut HashMap<ThreadSettingKey, PendingThreadSetting>,
+    current: &mut HashMap<ThreadSettingKey, Weak<AtomicBool>>,
+    key: &ThreadSettingKey,
+) -> bool {
+    let mut superseded_pending = false;
+    let obsolete = current
+        .keys()
+        .filter(|old_key| old_key.thread_id == key.thread_id && old_key.field == key.field)
+        .cloned()
+        .collect::<Vec<_>>();
+    for old_key in obsolete {
+        if let Some(flag) = current.remove(&old_key).and_then(|flag| flag.upgrade()) {
+            flag.store(false, Ordering::Release);
+        }
+        if let Some(old) = pending.remove(&old_key)
+            && matches!(&*old.status.borrow(), ThreadSettingUpdateStatus::Pending)
+        {
+            superseded_pending = true;
+            old.status
+                .send_replace(ThreadSettingUpdateStatus::Superseded);
+        }
+    }
+    superseded_pending
 }
 
 fn setting_value<'a>(settings: &'a Value, field: &str) -> Option<&'a Value> {
@@ -641,6 +771,184 @@ fn configured_thread_settings_update(config: &Config, thread_id: &str) -> Option
         };
     }
     (config.effort.is_some() || config.service_tier.is_some()).then_some(params)
+}
+
+fn configured_thread_settings_match(snapshot: &Value, update: &Value) -> bool {
+    let summary = thread_state_summary(snapshot);
+    let Some(update) = update.as_object() else {
+        return false;
+    };
+    update
+        .iter()
+        .filter(|(key, _)| key.as_str() != "threadId")
+        .all(|(key, expected)| setting_value(&summary, key) == Some(expected))
+}
+
+fn persist_model_selection_for_target<T>(
+    current_thread: &Mutex<String>,
+    current_generation: &AtomicU64,
+    expected_thread: &str,
+    expected_generation: u64,
+    persist: impl FnOnce() -> Result<T>,
+) -> Result<Option<T>> {
+    if current_generation.load(Ordering::Acquire) != expected_generation {
+        return Ok(None);
+    }
+    let active_thread = current_thread
+        .lock()
+        .map_err(|_| anyhow!("thread ID lock poisoned"))?;
+    if *active_thread != expected_thread
+        || current_generation.load(Ordering::Acquire) != expected_generation
+    {
+        return Ok(None);
+    }
+    persist().map(Some)
+}
+
+async fn apply_configured_thread_settings<R, F>(
+    mut request: R,
+    events: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    generation: u64,
+    settings: Value,
+    language: Language,
+) -> Result<Value>
+where
+    R: FnMut(&'static str, Value) -> F,
+    F: std::future::Future<Output = Result<Value>>,
+{
+    request("thread/settings/update", settings.clone())
+        .await
+        .context(language.message(MessageKey::NativeConfiguredSettingsQueueContext))?;
+
+    // A newly started thread can already have the requested values even when
+    // the queued update is a no-op and emits no settings notification. Read the
+    // native state after the ACK; if it is not applied yet, keep waiting for
+    // the event subscribed before the update was sent.
+    let readback = request(
+        "thread/read",
+        json!({"threadId":thread_id,"includeTurns":false}),
+    )
+    .await
+    .context(language.message(MessageKey::NativeConfiguredSettingsReadbackContext))?;
+    if response_thread_id(&readback).ok().as_deref() != Some(thread_id) {
+        bail!(
+            "{}",
+            language.message(MessageKey::NativeConfiguredSettingsWrongThread)
+        );
+    }
+    if readback
+        .get("_discodex_connection_generation")
+        .and_then(Value::as_u64)
+        != Some(generation)
+    {
+        bail!(
+            "{}",
+            language.message(MessageKey::NativeConfiguredSettingsConnectionChanged)
+        );
+    }
+    let readback_summary = thread_state_summary(&readback);
+    if configured_thread_settings_match(&readback_summary, &settings) {
+        return Ok(readback_summary);
+    }
+
+    loop {
+        let event = events
+            .recv()
+            .await
+            .context(language.message(MessageKey::NativeConfiguredSettingsEventStreamClosed))?;
+        let method = event.get("method").and_then(Value::as_str);
+        let event_generation = event
+            .pointer("/params/_discodex_connection_generation")
+            .and_then(Value::as_u64);
+        if method == Some("discodex/connection-closed") && event_generation == Some(generation) {
+            bail!(
+                "{}",
+                language.message(MessageKey::NativeConfiguredSettingsConnectionClosed)
+            );
+        }
+        if method != Some("thread/settings/updated")
+            || event_generation != Some(generation)
+            || event.pointer("/params/threadId").and_then(Value::as_str) != Some(thread_id)
+        {
+            continue;
+        }
+        let Some(settings_snapshot) = event.pointer("/params/threadSettings") else {
+            continue;
+        };
+        let summary = thread_state_summary(&json!({"thread": settings_snapshot}));
+        if !configured_thread_settings_match(&summary, &settings) {
+            // Notifications carry no request ID. A same-thread update may
+            // belong to another settings operation, so only an exact value
+            // match can confirm this request; mismatches are not attributable.
+            continue;
+        }
+        return Ok(summary);
+    }
+}
+
+async fn apply_and_merge_configured_thread_settings<R, F>(
+    request: R,
+    events: &mut broadcast::Receiver<Value>,
+    thread_id: &str,
+    generation: u64,
+    settings: Value,
+    cached_summary: &mut Value,
+    language: Language,
+) -> Result<()>
+where
+    R: FnMut(&'static str, Value) -> F,
+    F: std::future::Future<Output = Result<Value>>,
+{
+    let confirmed = apply_configured_thread_settings(
+        request, events, thread_id, generation, settings, language,
+    )
+    .await?;
+    merge_thread_state(cached_summary, &confirmed);
+    Ok(())
+}
+
+#[derive(Debug)]
+enum ThreadSettingReadbackOutcome {
+    Confirmed(Value),
+    Superseded,
+    Queued,
+}
+
+async fn readback_then_queue_thread_setting_update<R, F, C>(
+    mut request: R,
+    thread_id: &str,
+    params: Value,
+    field: &str,
+    expected: &Value,
+    can_confirm: bool,
+    is_current: C,
+) -> Result<ThreadSettingReadbackOutcome>
+where
+    R: FnMut(&'static str, Value) -> F,
+    F: std::future::Future<Output = Result<Value>>,
+    C: FnOnce() -> bool,
+{
+    let snapshot = request(
+        "thread/read",
+        json!({"threadId":thread_id,"includeTurns":false}),
+    )
+    .await
+    .context("read current thread settings before update")?;
+    if response_thread_id(&snapshot).ok().as_deref() != Some(thread_id) {
+        bail!("thread/read returned a different thread than requested");
+    }
+    let summary = thread_state_summary(&snapshot);
+    if !is_current() {
+        return Ok(ThreadSettingReadbackOutcome::Superseded);
+    }
+    if can_confirm && setting_value(&summary, field) == Some(expected) {
+        return Ok(ThreadSettingReadbackOutcome::Confirmed(summary));
+    }
+    request("thread/settings/update", params)
+        .await
+        .context("queue thread settings update")?;
+    Ok(ThreadSettingReadbackOutcome::Queued)
 }
 
 fn apply_memory_config(command: &mut Command, enabled: Option<bool>) {
@@ -1347,10 +1655,28 @@ impl Native {
                 );
             }
         }
-        if let Some(settings) = configured_thread_settings_update(&self.inner.config, &thread_id) {
-            self.request_raw("thread/settings/update", settings)
-                .await
-                .context("apply configured settings to newly started Codex thread")?;
+        let mut started_summary = thread_state_summary(&response);
+        if let Some(settings) = configured_thread_settings_update(&self.inner.config, &thread_id)
+            && !configured_thread_settings_match(&started_summary, &settings)
+        {
+            let generation = self.current_generation();
+            let mut events = self.subscribe();
+            apply_and_merge_configured_thread_settings(
+                |method, params| self.request_raw(method, params),
+                &mut events,
+                &thread_id,
+                generation,
+                settings,
+                &mut started_summary,
+                self.inner.config.language,
+            )
+            .await
+            .context(
+                self.inner
+                    .config
+                    .language
+                    .message(MessageKey::NativeConfiguredSettingsApplyContext),
+            )?;
         }
         self.remember_subagent_model(child_model)?;
         *self
@@ -1362,8 +1688,8 @@ impl Native {
             .inner
             .thread_state
             .lock()
-            .map_err(|_| anyhow!("thread state lock poisoned"))? = thread_state_summary(&response);
-        if thread_state_summary(&response).get("approvalPolicy") != Some(&approval_policy) {
+            .map_err(|_| anyhow!("thread state lock poisoned"))? = started_summary.clone();
+        if started_summary.get("approvalPolicy") != Some(&approval_policy) {
             self.set_approval_policy_and_confirm(approval_policy)
                 .await?;
         }
@@ -1538,6 +1864,49 @@ impl Native {
         StateStore::new(&self.inner.config.state_dir).save_model_selection(selection)
     }
 
+    /// Persist only while the exact applied thread-setting revision remains
+    /// current. The supersession lock is held across the write so a newer
+    /// same-field request cannot slip between validation and persistence.
+    pub(crate) async fn save_model_selection_if_setting_current(
+        &self,
+        revision: &ThreadSettingRevision,
+        expected_generation: u64,
+        expected_thread_id: &str,
+        selection: &ModelSelection,
+    ) -> Result<bool> {
+        let _reconnect = self.inner.reconnect.lock().await;
+        let store = StateStore::new(&self.inner.config.state_dir);
+        let persisted = with_current_thread_setting_revision(
+            &self.inner.pending_thread_settings,
+            &self.inner.thread_setting_current,
+            revision,
+            || {
+                Ok(persist_model_selection_for_target(
+                    &self.inner.thread_id,
+                    &self.inner.connection_generation,
+                    expected_thread_id,
+                    expected_generation,
+                    || store.save_model_selection(selection),
+                )?
+                .is_some())
+            },
+        )?;
+        Ok(persisted.unwrap_or(false))
+    }
+
+    pub(crate) fn thread_setting_revision_is_current(
+        &self,
+        revision: &ThreadSettingRevision,
+    ) -> bool {
+        with_current_thread_setting_revision(
+            &self.inner.pending_thread_settings,
+            &self.inner.thread_setting_current,
+            revision,
+            || Ok(()),
+        )
+        .is_ok_and(|current| current.is_some())
+    }
+
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         self.ensure_connected().await?;
         self.request_raw(method, params).await
@@ -1585,29 +1954,12 @@ impl Native {
                     }));
                 }
             }
-            let mut superseded = false;
             let mut current = self
                 .inner
                 .thread_setting_current
                 .lock()
                 .map_err(|_| anyhow!("thread setting current-state lock poisoned"))?;
-            let obsolete = current
-                .keys()
-                .filter(|old_key| old_key.thread_id == key.thread_id && old_key.field == key.field)
-                .cloned()
-                .collect::<Vec<_>>();
-            for old_key in obsolete {
-                if let Some(flag) = current.remove(&old_key).and_then(|flag| flag.upgrade()) {
-                    flag.store(false, Ordering::Release);
-                }
-                if let Some(old) = pending.remove(&old_key)
-                    && matches!(&*old.status.borrow(), ThreadSettingUpdateStatus::Pending)
-                {
-                    superseded = true;
-                    old.status
-                        .send_replace(ThreadSettingUpdateStatus::Superseded);
-                }
-            }
+            let superseded = supersede_thread_setting_revisions(&mut pending, &mut current, &key);
             let revision = self
                 .inner
                 .next_thread_setting_revision
@@ -1627,14 +1979,18 @@ impl Native {
             (revision, status_rx, superseded, current_flag)
         };
 
-        let snapshot = match self
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": false}),
-            )
-            .await
-        {
-            Ok(snapshot) => snapshot,
+        let readback_outcome = readback_then_queue_thread_setting_update(
+            |method, params| self.request(method, params),
+            thread_id,
+            params,
+            field,
+            &expected,
+            !superseded_pending,
+            || self.thread_setting_is_current(&key, revision),
+        )
+        .await;
+        let readback_outcome = match readback_outcome {
+            Ok(outcome) => outcome,
             Err(error) => {
                 self.finish_thread_setting(
                     &key,
@@ -1642,55 +1998,38 @@ impl Native {
                     ThreadSettingUpdateStatus::Failed(format!("{error:#}")),
                 );
                 self.forget_thread_setting_current(&key, &current_flag);
-                return Err(error).context("read current thread settings before update");
+                return Err(error);
             }
         };
-        if response_thread_id(&snapshot).ok().as_deref() != Some(thread_id) {
-            let error = anyhow!("thread/read returned a different thread than requested");
-            self.finish_thread_setting(
-                &key,
-                revision,
-                ThreadSettingUpdateStatus::Failed(error.to_string()),
-            );
-            self.forget_thread_setting_current(&key, &current_flag);
-            return Err(error);
-        }
-        let summary = thread_state_summary(&snapshot);
-        if !superseded_pending && setting_value(&summary, field) == Some(&expected) {
-            if self.thread_setting_is_current(&key, revision) {
+        match readback_outcome {
+            ThreadSettingReadbackOutcome::Confirmed(summary)
+                if self.thread_setting_is_current(&key, revision) =>
+            {
                 self.finish_thread_setting(
                     &key,
                     revision,
                     ThreadSettingUpdateStatus::Applied(summary.clone()),
                 );
-                self.forget_thread_setting_current(&key, &current_flag);
-                return Ok(ThreadSettingUpdate::Confirmed(summary));
+                return Ok(ThreadSettingUpdate::Confirmed {
+                    snapshot: summary,
+                    revision: ThreadSettingRevision {
+                        key,
+                        current: current_flag,
+                        inner: Arc::downgrade(&self.inner),
+                    },
+                });
             }
-            return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
-                key,
-                revision,
-                inner: Arc::downgrade(&self.inner),
-                status: status_rx,
-                current: current_flag.clone(),
-            }));
-        }
-        if !self.thread_setting_is_current(&key, revision) {
-            return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
-                key,
-                revision,
-                inner: Arc::downgrade(&self.inner),
-                status: status_rx,
-                current: current_flag.clone(),
-            }));
-        }
-        if let Err(error) = self.request("thread/settings/update", params).await {
-            self.finish_thread_setting(
-                &key,
-                revision,
-                ThreadSettingUpdateStatus::Failed(format!("{error:#}")),
-            );
-            self.forget_thread_setting_current(&key, &current_flag);
-            return Err(error).context("queue thread settings update");
+            ThreadSettingReadbackOutcome::Superseded
+            | ThreadSettingReadbackOutcome::Confirmed(_) => {
+                return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+                    key,
+                    revision,
+                    inner: Arc::downgrade(&self.inner),
+                    status: status_rx,
+                    current: current_flag.clone(),
+                }));
+            }
+            ThreadSettingReadbackOutcome::Queued => {}
         }
         let native = self.clone();
         let watch_key = key.clone();
@@ -1745,7 +2084,7 @@ impl Native {
                             &watch_key,
                             revision,
                             ThreadSettingUpdateStatus::Failed(format!(
-                                "missed {count} native events before settings confirmation"
+                                "native event stream lagged by {count} messages before settings were confirmed"
                             )),
                         );
                         break;
@@ -2318,21 +2657,20 @@ impl Native {
     /// actually reports into the metadata last returned by start/resume/settings.
     /// thread/read omits some settings, so it does not erase those native values.
     pub async fn refresh_thread_state(&self) -> Result<Value> {
-        let response = self
-            .request(
-                "thread/read",
-                json!({ "threadId": self.thread_id(), "includeTurns": false }),
-            )
-            .await
-            .context("read current Codex thread settings")?;
-        let update = thread_state_summary(&response);
-        let mut state = self
-            .inner
-            .thread_state
-            .lock()
-            .map_err(|_| anyhow!("thread state lock poisoned"))?;
-        merge_thread_state(&mut state, &update);
-        Ok(state.clone())
+        self.ensure_connected().await?;
+        refresh_thread_state_with(
+            &self.inner.reconnect,
+            &self.inner.thread_id,
+            &self.inner.connection_generation,
+            &self.inner.thread_state,
+            |thread_id| {
+                self.request_raw(
+                    "thread/read",
+                    json!({ "threadId": thread_id, "includeTurns": false }),
+                )
+            },
+        )
+        .await
     }
 
     async fn validate_permission_profile(&self, profile_id: &str) -> Result<()> {
@@ -3503,6 +3841,78 @@ fn merge_thread_state(target: &mut Value, update: &Value) {
     }
 }
 
+async fn refresh_thread_state_with<R, F>(
+    reconnect: &AsyncMutex<()>,
+    current_thread_id: &Mutex<String>,
+    current_generation: &AtomicU64,
+    thread_state: &Mutex<Value>,
+    request: R,
+) -> Result<Value>
+where
+    R: FnOnce(String) -> F,
+    F: std::future::Future<Output = Result<Value>>,
+{
+    let (target_thread_id, target_generation) = {
+        let active_thread = current_thread_id
+            .lock()
+            .map_err(|_| anyhow!("thread ID lock poisoned"))?;
+        (
+            active_thread.clone(),
+            current_generation.load(Ordering::Acquire),
+        )
+    };
+    let response = request(target_thread_id.clone())
+        .await
+        .context("read current Codex thread settings")?;
+
+    let _reconnect = reconnect.lock().await;
+    let active_thread = current_thread_id
+        .lock()
+        .map_err(|_| anyhow!("thread ID lock poisoned"))?;
+    let mut state = thread_state
+        .lock()
+        .map_err(|_| anyhow!("thread state lock poisoned"))?;
+    if *active_thread != target_thread_id
+        || current_generation.load(Ordering::Acquire) != target_generation
+    {
+        return Ok(state.clone());
+    }
+    if response_thread_id(&response).ok().as_deref() != Some(target_thread_id.as_str()) {
+        bail!("thread/read returned a different thread than requested");
+    }
+    if response
+        .get("_discodex_connection_generation")
+        .and_then(Value::as_u64)
+        != Some(target_generation)
+    {
+        bail!("Codex connection changed while refreshing thread settings");
+    }
+    merge_thread_state(&mut state, &thread_state_summary(&response));
+    Ok(state.clone())
+}
+
+fn apply_thread_settings_event_to_cache(
+    state: &mut Value,
+    active_thread_id: &str,
+    active_generation: u64,
+    event: &Value,
+) -> bool {
+    if event.get("method").and_then(Value::as_str) != Some("thread/settings/updated")
+        || event
+            .pointer("/params/_discodex_connection_generation")
+            .and_then(Value::as_u64)
+            != Some(active_generation)
+        || event.pointer("/params/threadId").and_then(Value::as_str) != Some(active_thread_id)
+    {
+        return false;
+    }
+    let Some(settings) = event.pointer("/params/threadSettings") else {
+        return false;
+    };
+    merge_thread_state(state, &thread_state_summary(&json!({ "thread": settings })));
+    true
+}
+
 pub(crate) fn stamp_state_observation(value: &mut Value, generation: u64, order: u64) {
     if let Some(object) = value.as_object_mut() {
         object.insert(
@@ -3609,9 +4019,10 @@ fn spawn_reader(
                         };
                         let id = value["id"].clone();
                         tokio::spawn(async move {
-                            let detail = crate::discord::sanitize_discord_error(
-                                &native.inner.config,
+                            let token = native.inner.config.token().ok();
+                            let detail = crate::diagnostics::sanitize_diagnostic_with_secret(
                                 &format!("{error:#}"),
+                                token.as_deref(),
                             );
                             if let Err(response_error) = native
                                 .respond_for_generation(
@@ -3621,10 +4032,11 @@ fn spawn_reader(
                                 )
                                 .await
                             {
-                                let response_detail = crate::discord::sanitize_discord_error(
-                                    &native.inner.config,
-                                    &format!("{response_error:#}"),
-                                );
+                                let response_detail =
+                                    crate::diagnostics::sanitize_diagnostic_with_secret(
+                                        &format!("{response_error:#}"),
+                                        token.as_deref(),
+                                    );
                                 publish_native_failure(
                                     &native.inner,
                                     &format!(
@@ -3670,18 +4082,15 @@ fn spawn_reader(
                     }
                 }
                 if value.get("method").and_then(Value::as_str) == Some("thread/settings/updated") {
-                    if let Some(params) = value.get("params") {
-                        let current_thread = inner.thread_id.lock().ok().map(|id| id.clone());
-                        if current_thread.as_deref()
-                            == params.get("threadId").and_then(Value::as_str)
-                        {
-                            if let Some(settings) = params.get("threadSettings") {
-                                let update = thread_state_summary(&json!({ "thread": settings }));
-                                if let Ok(mut state) = inner.thread_state.lock() {
-                                    merge_thread_state(&mut state, &update);
-                                }
-                            }
-                        }
+                    if let Ok(current_thread) = inner.thread_id.lock()
+                        && let Ok(mut state) = inner.thread_state.lock()
+                    {
+                        apply_thread_settings_event_to_cache(
+                            &mut state,
+                            &current_thread,
+                            inner.connection_generation.load(Ordering::Acquire),
+                            &value,
+                        );
                     }
                 }
                 publish_event(&inner, value);
@@ -3700,31 +4109,13 @@ fn spawn_reader(
                     );
                 }
                 if let Some(pending) = pending {
-                    let mut response = if let Some(error) = value.get("error") {
-                        Err(NativeRequestError::from_response(
-                            pending.method.clone(),
-                            error,
-                        ))
-                    } else {
-                        Ok(value.get("result").cloned().unwrap_or(Value::Null))
-                    };
-                    if matches!(
-                        pending.method.as_str(),
-                        "turn/start" | "thread/start" | "thread/read" | "thread/resume"
-                    ) {
-                        if let Ok(result) = response.as_mut() {
-                            if pending.method == "turn/start" {
-                                stamp_state_observation(result, generation, observation_order);
-                            } else {
-                                stamp_state_snapshot(
-                                    result,
-                                    generation,
-                                    observation_order,
-                                    pending.observation_fence,
-                                );
-                            }
-                        }
-                    }
+                    let response = decode_pending_response(
+                        &pending.method,
+                        value,
+                        generation,
+                        observation_order,
+                        pending.observation_fence,
+                    );
                     if response.is_ok()
                         && matches!(
                             pending.method.as_str(),

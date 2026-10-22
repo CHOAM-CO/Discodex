@@ -24,6 +24,8 @@ Discodex 1.0 通过随附的 Codex 分支把 Discord 接入持久对话。Discod
 
 `/discodex settings` 会显示当前设置，并用按钮选择模型、推理强度、服务等级、权限配置、输入传递模式和语音配置。模型与权限选项来自官方 native catalog，并通过现有更新接口设置。选项按 Discord 行和按钮限制分页，不会遗漏；只有有多页时才显示上一页和下一页。子设置页的返回按钮回到主设置列表；主列表的退出按钮只关闭设置界面。已应用设置和正在进行的对话保持不变。按钮文案使用配置文件的语言。提交时会保留按钮显示的选择值，并以当前 native catalog 再次核对。
 
+应用层的设置操作负责协调每个线程异步更新模型、推理强度和服务等级，并分别记录 Native 应用确认、模型选择持久化、当前 turn 更新结果和 Discord 投递结果。仅收到 queued acknowledgment 不代表设置已应用。新线程设置只有在收到匹配的 applied 通知或完成 readback 后才合并到缓存状态；过期或被替代的结果不会持久化。Discord 命令层继续负责交互与 turn 准入，Native 继续负责 app-server 协议。诊断保留原始错误码和详情，并仅在输出边界屏蔽具体凭据值。
+
 语音列表来自 `thread/realtime/listVoices`。当前连接版本 V3 遵循官方 `voices.v1` 选项。选择 Codex 默认语音时不发送显式 voice，使用 native 现有设置和默认值。选定语音保存在 worker 状态目录的 `voice-settings.json` 中；文件不存在时使用现有配置，显式 `null` 表示选择 native 默认值。正在进行的通话不变更，新选择从下一次连接起生效。
 
 桥接程序通过私有 Unix WebSocket IPC 与其拥有的 Codex 子 app-server 通信，并保存 thread ID 以便重启后继续。正常重启会恢复已保存的 thread；新建 thread 必须由用户调用 `/discodex new`。恢复对话不代表正在生成的回复或语音通话能无缝继续。

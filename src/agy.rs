@@ -461,7 +461,7 @@ fn format_prompt_io_error(
 }
 
 fn sanitize_agy_diagnostic(detail: &str) -> String {
-    crate::discord::sanitize_discord_diagnostic(detail)
+    crate::diagnostics::sanitize_diagnostic(detail)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,6 +1,628 @@
 use super::*;
 use std::future;
 
+#[test]
+fn superseded_applied_revision_cannot_cross_conditional_persistence_guard() {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let key = ThreadSettingKey {
+        generation: 4,
+        thread_id: "thread-a".to_owned(),
+        field: "model".to_owned(),
+    };
+    let revision_flag = Arc::new(AtomicBool::new(true));
+    let revision = ThreadSettingRevision {
+        key: key.clone(),
+        current: revision_flag.clone(),
+        inner: Weak::new(),
+    };
+    let mut pending = HashMap::new();
+    let mut current = HashMap::from([(key.clone(), Arc::downgrade(&revision_flag))]);
+
+    // A has already applied. B supersedes A before A reaches persistence.
+    assert!(!supersede_thread_setting_revisions(
+        &mut pending,
+        &mut current,
+        &key,
+    ));
+    let replacement = Arc::new(AtomicBool::new(true));
+    current.insert(key, Arc::downgrade(&replacement));
+    let pending = Mutex::new(pending);
+    let current = Mutex::new(current);
+
+    let writes = AtomicUsize::new(0);
+    let result = with_current_thread_setting_revision(&pending, &current, &revision, || {
+        writes.fetch_add(1, Ordering::SeqCst);
+        Ok("saved")
+    })
+    .unwrap();
+
+    assert_eq!(result, None);
+    assert_eq!(writes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn current_applied_revision_runs_conditional_persistence_once() {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let key = ThreadSettingKey {
+        generation: 4,
+        thread_id: "thread-a".to_owned(),
+        field: "model".to_owned(),
+    };
+    let current_flag = Arc::new(AtomicBool::new(true));
+    let revision = ThreadSettingRevision {
+        key: key.clone(),
+        current: current_flag.clone(),
+        inner: Weak::new(),
+    };
+    let pending = Mutex::new(HashMap::new());
+    let current = Mutex::new(HashMap::from([(key, Arc::downgrade(&current_flag))]));
+    let writes = AtomicUsize::new(0);
+
+    let result = with_current_thread_setting_revision(&pending, &current, &revision, || {
+        writes.fetch_add(1, Ordering::SeqCst);
+        Ok("saved")
+    })
+    .unwrap();
+
+    assert_eq!(result, Some("saved"));
+    assert_eq!(writes.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn thread_settings_cache_changes_only_for_current_thread_and_generation_event() {
+    let mut cache = json!({
+        "id":"thread-current",
+        "effort":"medium",
+        "serviceTier":"standard",
+        "model":"old-model"
+    });
+    let unchanged = cache.clone();
+    for event in [
+        json!({"method":"error","params":{"error":{"code":-32000,"message":"unrelated"}}}),
+        json!({"method":"thread/settings/updated","params":{
+            "_discodex_connection_generation":8,
+            "threadId":"thread-other",
+            "threadSettings":{"effort":"high","model":"new-model"}
+        }}),
+        json!({"method":"thread/settings/updated","params":{
+            "_discodex_connection_generation":6,
+            "threadId":"thread-current",
+            "threadSettings":{"effort":"high","model":"new-model"}
+        }}),
+    ] {
+        assert!(!apply_thread_settings_event_to_cache(
+            &mut cache,
+            "thread-current",
+            7,
+            &event,
+        ));
+        assert_eq!(cache, unchanged);
+    }
+
+    let applied = json!({"method":"thread/settings/updated","params":{
+        "_discodex_connection_generation":7,
+        "threadId":"thread-current",
+        "threadSettings":{"reasoningEffort":"high","model":"new-model"}
+    }});
+    assert!(apply_thread_settings_event_to_cache(
+        &mut cache,
+        "thread-current",
+        7,
+        &applied,
+    ));
+    assert_eq!(cache["effort"], "high");
+    assert_eq!(cache["model"], "new-model");
+    assert_eq!(cache["serviceTier"], "standard");
+}
+
+#[tokio::test]
+async fn delayed_thread_a_readback_cannot_overwrite_thread_b_cache() {
+    let reconnect = AsyncMutex::new(());
+    let current_thread_id = Mutex::new("thread-A".to_owned());
+    let current_generation = AtomicU64::new(7);
+    let thread_state = Mutex::new(json!({"id":"thread-A","effort":"medium"}));
+    let (started_sender, started_receiver) = oneshot::channel();
+    let (response_sender, response_receiver) = oneshot::channel();
+
+    let refresh = refresh_thread_state_with(
+        &reconnect,
+        &current_thread_id,
+        &current_generation,
+        &thread_state,
+        move |thread_id| async move {
+            started_sender.send(thread_id).unwrap();
+            response_receiver
+                .await
+                .map_err(|_| anyhow!("synthetic thread/read response was canceled"))
+        },
+    );
+    tokio::pin!(refresh);
+    let requested_thread = tokio::select! {
+        result = &mut refresh => panic!("refresh completed before its response: {result:?}"),
+        requested_thread = started_receiver => requested_thread.unwrap(),
+    };
+    assert_eq!(requested_thread, "thread-A");
+
+    *current_thread_id.lock().unwrap() = "thread-B".to_owned();
+    *thread_state.lock().unwrap() = json!({
+        "id":"thread-B","effort":"low","model":"model-B"
+    });
+    response_sender
+        .send(json!({
+            "id":"thread-A","effort":"high","model":"model-A",
+            "_discodex_connection_generation":7
+        }))
+        .unwrap();
+
+    let returned = refresh.await.unwrap();
+    assert_eq!(returned["id"], "thread-B");
+    assert_eq!(returned["effort"], "low");
+    assert_eq!(returned["model"], "model-B");
+
+    *current_thread_id.lock().unwrap() = "thread-A".to_owned();
+    *thread_state.lock().unwrap() = json!({"id":"thread-A","effort":"medium"});
+    let returned = refresh_thread_state_with(
+        &reconnect,
+        &current_thread_id,
+        &current_generation,
+        &thread_state,
+        |_| {
+            future::ready(Ok(json!({
+                "id":"thread-A","effort":"high","model":"model-A",
+                "_discodex_connection_generation":7
+            })))
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(returned["id"], "thread-A");
+    assert_eq!(returned["effort"], "high");
+    assert_eq!(returned["model"], "model-A");
+}
+
+#[tokio::test]
+async fn native_responses_stay_bound_to_their_pending_request_ids() {
+    let (sender_a, receiver_a) = oneshot::channel();
+    let (sender_b, receiver_b) = oneshot::channel();
+    let pending = Mutex::new(HashMap::from([
+        (
+            "id-A".to_owned(),
+            PendingRequest {
+                sender: sender_a,
+                method: "thread/read".to_owned(),
+                observation_fence: 0,
+            },
+        ),
+        (
+            "id-B".to_owned(),
+            PendingRequest {
+                sender: sender_b,
+                method: "thread/settings/update".to_owned(),
+                observation_fence: 0,
+            },
+        ),
+    ]));
+
+    let response_b = json!({"error":{"code":-32001,"message":"status 503; provider rejected api_key=fixture-secret; retry later"}});
+    let (request_b, _) = take_pending_response(&pending, "id-B");
+    let PendingRequest {
+        sender: sender_b,
+        method: method_b,
+        observation_fence: fence_b,
+    } = request_b.unwrap();
+    sender_b
+        .send(decode_pending_response(
+            &method_b, response_b, 7, 41, fence_b,
+        ))
+        .unwrap();
+
+    let success_a = json!({"result":{"id":"thread-a","status":"ready"}});
+    let (request_a, _) = take_pending_response(&pending, "id-A");
+    let PendingRequest {
+        sender: sender_a,
+        method: method_a,
+        observation_fence: fence_a,
+    } = request_a.unwrap();
+    sender_a
+        .send(decode_pending_response(
+            &method_a, success_a, 7, 42, fence_a,
+        ))
+        .unwrap();
+
+    let error_b = receiver_b.await.unwrap().unwrap_err();
+    assert_eq!(error_b.method, "thread/settings/update");
+    assert_eq!(error_b.code, Some(-32001));
+    assert_eq!(
+        error_b.message,
+        "status 503; provider rejected api_key=fixture-secret; retry later"
+    );
+    assert_eq!(
+        receiver_a.await.unwrap().unwrap(),
+        json!({
+            "id":"thread-a",
+            "status":"ready",
+            "_discodex_connection_generation":7,
+            "_discodex_observation_order":42,
+            "_discodex_observation_fence":0
+        })
+    );
+    assert!(pending.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn matching_thread_setting_readback_confirms_without_queueing_update() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let outcome = readback_then_queue_thread_setting_update(
+        |method, _| {
+            calls.borrow_mut().push(method);
+            future::ready(Ok(json!({
+                "id":"thread-current",
+                "effort":"high"
+            })))
+        },
+        "thread-current",
+        json!({"threadId":"thread-current","effort":"high"}),
+        "effort",
+        &json!("high"),
+        true,
+        || true,
+    )
+    .await
+    .unwrap();
+
+    let ThreadSettingReadbackOutcome::Confirmed(snapshot) = outcome else {
+        panic!("matching readback should be confirmed: {outcome:?}");
+    };
+    assert_eq!(snapshot["effort"], "high");
+    assert_eq!(*calls.borrow(), ["thread/read"]);
+}
+
+#[tokio::test]
+async fn mismatching_thread_setting_readback_queues_but_does_not_confirm() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let outcome = readback_then_queue_thread_setting_update(
+        |method, _| {
+            calls.borrow_mut().push(method);
+            future::ready(Ok(if method == "thread/read" {
+                json!({"id":"thread-current","effort":"medium"})
+            } else {
+                json!({})
+            }))
+        },
+        "thread-current",
+        json!({"threadId":"thread-current","effort":"high"}),
+        "effort",
+        &json!("high"),
+        true,
+        || true,
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcome, ThreadSettingReadbackOutcome::Queued));
+    assert_eq!(*calls.borrow(), ["thread/read", "thread/settings/update"]);
+}
+
+#[tokio::test]
+async fn superseded_thread_setting_readback_does_not_queue_update() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let outcome = readback_then_queue_thread_setting_update(
+        |method, _| {
+            calls.borrow_mut().push(method);
+            future::ready(Ok(json!({
+                "id":"thread-current",
+                "effort":"high"
+            })))
+        },
+        "thread-current",
+        json!({"threadId":"thread-current","effort":"high"}),
+        "effort",
+        &json!("high"),
+        true,
+        || false,
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcome, ThreadSettingReadbackOutcome::Superseded));
+    assert_eq!(*calls.borrow(), ["thread/read"]);
+}
+
+#[tokio::test]
+async fn prior_pending_supersession_disables_readback_shortcut() {
+    let calls = std::cell::RefCell::new(Vec::new());
+    let outcome = readback_then_queue_thread_setting_update(
+        |method, _| {
+            calls.borrow_mut().push(method);
+            future::ready(Ok(if method == "thread/read" {
+                json!({"id":"thread-current","effort":"high"})
+            } else {
+                json!({})
+            }))
+        },
+        "thread-current",
+        json!({"threadId":"thread-current","effort":"high"}),
+        "effort",
+        &json!("high"),
+        false,
+        || true,
+    )
+    .await
+    .unwrap();
+
+    assert!(matches!(outcome, ThreadSettingReadbackOutcome::Queued));
+    assert_eq!(*calls.borrow(), ["thread/read", "thread/settings/update"]);
+}
+
+#[tokio::test]
+async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snapshot() {
+    let (sender, mut events) = broadcast::channel(8);
+    let requested = json!({"threadId":"thread-new","effort":"high","serviceTier":null});
+    let calls = std::cell::RefCell::new(Vec::new());
+    let stale_start_snapshot =
+        json!({"id":"thread-new","effort":"medium","serviceTier":"standard"});
+    let mut cache = thread_state_summary(&stale_start_snapshot);
+    apply_and_merge_configured_thread_settings(
+        |method, params| {
+            calls.borrow_mut().push((method.to_owned(), params));
+            match method {
+                "thread/settings/update" => {
+                    sender.send(json!({"method":"error","params":{"error":{"code":-32000,"message":"unrelated request failed"}}})).unwrap();
+                    sender.send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-other",
+                        "_discodex_connection_generation":4,
+                        "threadSettings":{"effort":"high","serviceTier":null}
+                    }})).unwrap();
+                    sender.send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":3,
+                        "threadSettings":{"effort":"high","serviceTier":null}
+                    }})).unwrap();
+                    std::future::ready(Ok(json!({})))
+                }
+                "thread/read" => {
+                    sender.send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":4,
+                        "threadSettings":{"reasoningEffort":"high","serviceTier":null,"model":"example-model"}
+                    }})).unwrap();
+                    std::future::ready(Ok(json!({
+                        "id":"thread-new","effort":"medium","serviceTier":"standard",
+                        "_discodex_connection_generation":4
+                    })))
+                }
+                _ => panic!("unexpected native request {method}"),
+            }
+        },
+        &mut events,
+        "thread-new",
+        4,
+        requested.clone(),
+        &mut cache,
+        Language::English,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(cache["effort"], "high");
+    assert_eq!(cache["serviceTier"], Value::Null);
+    assert_eq!(cache["model"], "example-model");
+    assert_eq!(
+        *calls.borrow(),
+        vec![
+            ("thread/settings/update".to_owned(), requested),
+            (
+                "thread/read".to_owned(),
+                json!({"threadId":"thread-new","includeTurns":false})
+            )
+        ]
+    );
+}
+
+#[tokio::test]
+async fn new_thread_settings_noop_is_confirmed_by_readback_without_notification() {
+    let (_sender, mut events) = broadcast::channel(4);
+    let calls = std::cell::RefCell::new(Vec::new());
+    let applied = apply_configured_thread_settings(
+        |method, params| {
+            calls.borrow_mut().push((method.to_owned(), params));
+            std::future::ready(Ok(match method {
+                "thread/settings/update" => json!({}),
+                "thread/read" => json!({
+                    "id":"thread-new","effort":"high",
+                    "_discodex_connection_generation":2
+                }),
+                _ => panic!("unexpected native request {method}"),
+            }))
+        },
+        &mut events,
+        "thread-new",
+        2,
+        json!({"threadId":"thread-new","effort":"high"}),
+        Language::English,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(applied["effort"], "high");
+    assert_eq!(calls.borrow().len(), 2);
+}
+
+#[tokio::test]
+async fn new_thread_settings_ignores_unrelated_same_thread_update_until_requested_value_applies() {
+    let (sender, mut events) = broadcast::channel(4);
+    let mut cache = thread_state_summary(&json!({
+        "id":"thread-new","effort":"medium","serviceTier":"standard"
+    }));
+    apply_and_merge_configured_thread_settings(
+        |method, _| {
+            if method == "thread/settings/update" {
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":2
+                    }}))
+                    .unwrap();
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":2,
+                        "threadSettings":{"effort":"medium"}
+                    }}))
+                    .unwrap();
+                std::future::ready(Ok(json!({})))
+            } else {
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":2,
+                        "threadSettings":{"effort":"medium"}
+                    }}))
+                    .unwrap();
+                sender
+                    .send(json!({"method":"thread/settings/updated","params":{
+                        "threadId":"thread-new",
+                        "_discodex_connection_generation":2,
+                        "threadSettings":{"effort":"high"}
+                    }}))
+                    .unwrap();
+                std::future::ready(Ok(json!({
+                    "id":"thread-new","effort":"medium",
+                    "_discodex_connection_generation":2
+                })))
+            }
+        },
+        &mut events,
+        "thread-new",
+        2,
+        json!({"threadId":"thread-new","effort":"high"}),
+        &mut cache,
+        Language::English,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(cache["effort"], "high");
+}
+
+#[tokio::test]
+async fn new_thread_settings_queue_failure_preserves_native_error() {
+    let (_sender, mut events) = broadcast::channel(4);
+    let error = apply_configured_thread_settings(
+        |_, _| std::future::ready(Err(anyhow!("native rejected configured settings"))),
+        &mut events,
+        "thread-new",
+        2,
+        json!({"threadId":"thread-new","effort":"high"}),
+        Language::English,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("native rejected configured settings"));
+}
+
+#[tokio::test]
+async fn new_thread_settings_connection_close_is_not_reported_as_applied() {
+    let (sender, mut events) = broadcast::channel(4);
+    let old_cache = json!({"id":"thread-new","effort":"medium"});
+    let mut cache = thread_state_summary(&old_cache);
+    let error = apply_and_merge_configured_thread_settings(
+        |method, _| {
+            if method == "thread/settings/update" {
+                sender
+                    .send(json!({"method":"discodex/connection-closed","params":{
+                        "_discodex_connection_generation":2
+                    }}))
+                    .unwrap();
+                std::future::ready(Ok(json!({})))
+            } else {
+                std::future::ready(Ok(json!({
+                    "id":"thread-new","effort":"medium",
+                    "_discodex_connection_generation":2
+                })))
+            }
+        },
+        &mut events,
+        "thread-new",
+        2,
+        json!({"threadId":"thread-new","effort":"high"}),
+        &mut cache,
+        Language::English,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("connection closed before configured settings were confirmed")
+    );
+    assert_eq!(cache["effort"], "medium");
+}
+
+#[test]
+fn selection_persistence_requires_the_confirmed_thread_and_generation() {
+    let current_thread = Mutex::new("thread-current".to_owned());
+    let generation = AtomicU64::new(5);
+    let previous = selection("provider-old", "model-old");
+    let next = selection("provider-next", "model-next");
+    let selected = std::cell::RefCell::new(previous.clone());
+    let mut saves = 0;
+
+    let saved = persist_model_selection_for_target(
+        &current_thread,
+        &generation,
+        "thread-current",
+        5,
+        || {
+            assert!(current_thread.try_lock().is_err());
+            saves += 1;
+            *selected.borrow_mut() = next.clone();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(saved, Some(()));
+    assert_eq!(selected.borrow().model, "model-next");
+
+    *current_thread.lock().unwrap() = "thread-forked".to_owned();
+    let stale_thread = persist_model_selection_for_target(
+        &current_thread,
+        &generation,
+        "thread-current",
+        5,
+        || {
+            saves += 1;
+            *selected.borrow_mut() = previous.clone();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(stale_thread, None);
+
+    generation.store(6, Ordering::Release);
+    let stale_generation = persist_model_selection_for_target(
+        &current_thread,
+        &generation,
+        "thread-forked",
+        5,
+        || {
+            saves += 1;
+            *selected.borrow_mut() = previous.clone();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(stale_generation, None);
+    assert_eq!(saves, 1);
+    assert_eq!(selected.borrow().model, "model-next");
+}
+
 fn selection(provider: &str, model: &str) -> ModelSelection {
     ModelSelection {
         executor: crate::model_catalog::ModelExecutor::Codex,

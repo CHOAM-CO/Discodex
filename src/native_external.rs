@@ -215,12 +215,56 @@ fn run_response(result: Result<()>, language: crate::i18n::Language) -> Value {
     match result {
         Ok(()) => json!({"success":true,"error":null}),
         Err(error) => {
-            let detail = crate::discord::sanitize_discord_diagnostic(&format!("{error:#}"));
+            let detail = crate::diagnostics::sanitize_diagnostic(&format!("{error:#}"));
             let message = language
                 .message(crate::i18n::MessageKey::NativeExternalExecutionFailed)
                 .replace("{detail}", &detail);
             json!({"success":false,"error":message})
         }
+    }
+}
+
+fn combine_turn_and_cleanup(
+    turn: Result<()>,
+    cleanup: Result<()>,
+    language: crate::i18n::Language,
+) -> Result<()> {
+    match (turn, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(turn_error), Ok(())) => Err(turn_error),
+        (Ok(()), Err(cleanup_error)) => Err(cleanup_error)
+            .context(language.message(crate::i18n::MessageKey::DiagnosticsAgyCleanupStopFailed)),
+        (Err(turn_error), Err(cleanup_error)) => {
+            let cleanup_detail =
+                crate::diagnostics::sanitize_diagnostic(&format!("{cleanup_error:#}"));
+            let summary = language
+                .message(crate::i18n::MessageKey::DiagnosticsAgyCleanupAlsoFailed)
+                .replace("{error}", &cleanup_detail);
+            Err(turn_error).context(CleanupFailureContext {
+                cleanup: cleanup_error,
+                summary,
+            })
+        }
+    }
+}
+
+struct CleanupFailureContext {
+    cleanup: anyhow::Error,
+    summary: String,
+}
+
+impl std::fmt::Debug for CleanupFailureContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CleanupFailureContext")
+            .field("summary", &self.summary)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for CleanupFailureContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.summary)
     }
 }
 
@@ -662,9 +706,8 @@ async fn run(
     }.await;
     // stdin-close alone can leave MCP subprocesses alive. Always reap the owned
     // process tree after the terminal result or cancellation.
-    let cleanup = session.terminate().await;
-    outcome?;
-    cleanup.context("stop completed AGY process tree")?;
+    let cleanup = session.terminate().await.map(|_| ());
+    combine_turn_and_cleanup(outcome, cleanup, native.inner.config.language)?;
     Ok(())
 }
 
@@ -974,6 +1017,75 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn external_turn_cleanup_preserves_both_successes() {
+        assert!(combine_turn_and_cleanup(Ok(()), Ok(()), crate::i18n::Language::English).is_ok());
+    }
+
+    #[test]
+    fn external_turn_cleanup_preserves_primary_error_when_cleanup_succeeds() {
+        let primary = std::io::Error::from_raw_os_error(23);
+        let result = combine_turn_and_cleanup(
+            Err(anyhow::Error::new(primary)),
+            Ok(()),
+            crate::i18n::Language::English,
+        )
+        .expect_err("the turn failed");
+        assert_eq!(
+            result
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(23)
+        );
+    }
+
+    #[test]
+    fn external_turn_cleanup_reports_cleanup_error_after_turn_success() {
+        let result = combine_turn_and_cleanup(
+            Ok(()),
+            Err(anyhow::anyhow!("cleanup diagnostic code -32042")),
+            crate::i18n::Language::English,
+        )
+        .expect_err("cleanup failed");
+        assert_eq!(
+            format!("{result:#}"),
+            "Could not stop the completed AGY process tree.: cleanup diagnostic code -32042"
+        );
+    }
+
+    #[test]
+    fn external_turn_cleanup_keeps_primary_chain_and_cleanup_diagnostic() {
+        let primary =
+            anyhow::Error::new(std::io::Error::from_raw_os_error(24)).context("primary turn cause");
+        let cleanup =
+            anyhow::Error::new(std::io::Error::from_raw_os_error(25)).context("cleanup cause");
+        let result =
+            combine_turn_and_cleanup(Err(primary), Err(cleanup), crate::i18n::Language::English)
+                .expect_err("both turn and cleanup failed");
+        let context = result
+            .downcast_ref::<CleanupFailureContext>()
+            .expect("cleanup error chain remains available in the context");
+        assert_eq!(
+            result
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(24)
+        );
+        assert_eq!(
+            context
+                .cleanup
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .raw_os_error(),
+            Some(25)
+        );
+        let rendered = format!("{result:#}");
+        assert!(rendered.contains("AGY cleanup also failed: cleanup cause:"));
+        assert!(rendered.contains("primary turn cause:"));
     }
 
     #[test]

@@ -1,0 +1,50 @@
+{
+  "settings_operation.pending": {
+    "en": "The setting update was queued. Waiting for Codex to confirm the applied value.",
+    "ko": "설정 변경 요청을 전달했습니다. Codex가 적용된 값을 확인하는 중입니다.",
+    "zh": "设置更新已排队，正在等待 Codex 确认应用的值。",
+    "ja": "設定の更新をキューに追加しました。Codex が適用値を確認しています。"
+  },
+  "settings_operation.superseded": {
+    "en": "A newer setting choice replaced this request before it was confirmed.",
+    "ko": "확인되기 전에 더 새로운 설정 선택이 이 요청을 대체했습니다.",
+    "zh": "此请求得到确认前，已被更新的设置选择取代。",
+    "ja": "確認前に、このリクエストは新しい設定選択に置き換えられました。"
+  },
+  "settings_operation.stale_target": {
+    "en": "The setting result belongs to a conversation that is no longer active; the saved selection was not changed.",
+    "ko": "설정 결과가 더 이상 활성 상태가 아닌 대화에 해당해 저장된 선택은 변경하지 않았습니다.",
+    "zh": "设置结果属于已不再活动的对话；保存的选择未更改。",
+    "ja": "設定結果は現在アクティブでない会話のものです。保存済みの選択は変更していません。"
+  },
+  "settings_operation.worker_exited": {
+    "en": "The settings worker exited before producing a terminal result.",
+    "ko": "설정 작업자가 최종 결과를 만들기 전에 종료되었습니다.",
+    "zh": "设置工作任务在生成最终结果前退出。",
+    "ja": "設定ワーカーが最終結果を生成する前に終了しました。"
+  },
+  "settings_operation.result_missing": {
+    "en": "The shared settings operation ended without a result.",
+    "ko": "공유 설정 작업이 결과 없이 종료되었습니다.",
+    "zh": "共享设置操作结束时没有结果。",
+    "ja": "共有設定操作が結果なしで終了しました。"
+  },
+  "settings_operation.persistence_failed": {
+    "en": "Codex applied the conversation model, but the saved selection could not be updated.",
+    "ko": "Codex가 대화 모델을 적용했지만 저장된 선택을 갱신하지 못했습니다.",
+    "zh": "Codex 已应用对话模型，但无法更新已保存的选择。",
+    "ja": "Codex は会話モデルを適用しましたが、保存済みの選択を更新できませんでした。"
+  },
+  "settings_operation.panel_observer_ended": {
+    "en": "The settings panel closed before delivery could be confirmed.",
+    "ko": "전달을 확인하기 전에 설정 패널이 닫혔습니다.",
+    "zh": "设置面板在确认送达前关闭。",
+    "ja": "設定パネルは配信確認前に閉じられました。"
+  },
+  "settings_operation.registry_lock_poisoned": {
+    "en": "The settings operation registry lock was poisoned.",
+    "ko": "설정 작업 레지스트리 잠금 상태가 손상되었습니다.",
+    "zh": "设置操作注册表锁已中毒。",
+    "ja": "設定操作レジストリのロックが破損しました。"
+  }
+}

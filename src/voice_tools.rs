@@ -332,7 +332,7 @@ fn tool_result(id: Value, result: std::result::Result<Value, Value>) -> Result<V
         Err(mut error) => {
             if let Some(object) = error.as_object_mut() {
                 if let Some(Value::String(message)) = object.get_mut("message") {
-                    *message = crate::discord::sanitize_discord_diagnostic(message);
+                    *message = crate::diagnostics::sanitize_diagnostic(message);
                 }
             }
             (serde_json::to_string(&error)?, true)
@@ -346,7 +346,7 @@ fn tool_result(id: Value, result: std::result::Result<Value, Value>) -> Result<V
 }
 
 fn ipc_error(message: impl Into<String>) -> Value {
-    json!({"code":-32000,"message":crate::discord::sanitize_discord_diagnostic(&message.into())})
+    json!({"code":-32000,"message":crate::diagnostics::sanitize_diagnostic(&message.into())})
 }
 
 async fn write_response<W>(writer: &mut W, response: &Value) -> Result<()>
