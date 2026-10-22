@@ -77,6 +77,12 @@
     "zh": "无法启动独立的计划任务更新程序（{0}）：{1}",
     "ja": "独立したスケジュールタスク更新プログラムを開始できませんでした（{0}）: {1}"
   },
+  "update.error_cleanup_task_wrapper": {
+    "en": "Could not remove the temporary updater wrapper: {0}",
+    "ko": "임시 업데이트 wrapper를 제거하지 못했습니다: {0}",
+    "zh": "无法删除临时更新程序包装脚本：{0}",
+    "ja": "一時更新ラッパーを削除できませんでした: {0}"
+  },
   "update.error_persist_failure_state": {
     "en": "Also failed to persist the update failure state: {0}",
     "ko": "업데이트 실패 상태도 저장하지 못했습니다: {0}",
@@ -3304,5 +3310,83 @@
     "ko": "read update state {0}",
     "zh": "read update state {0}",
     "ja": "read update state {0}"
+  },
+  "install.update_rollback_restored": {
+    "en": "Update failed; the previous worker and service state were restored.",
+    "ko": "업데이트에 실패했지만 이전 워커와 서비스 상태를 복원했습니다.",
+    "zh": "更新失败；已恢复之前的工作进程和服务状态。",
+    "ja": "更新に失敗しました。以前のワーカーとサービスの状態を復元しました。"
+  },
+  "install.update_rollback_unchanged": {
+    "en": "Update failed before replacement; the existing worker and profile were unchanged.",
+    "ko": "교체 전에 업데이트가 실패해 기존 워커와 프로필은 변경되지 않았습니다.",
+    "zh": "更新在替换前失败；现有的工作进程和配置未更改。",
+    "ja": "置き換え前に更新に失敗しました。既存のワーカーとプロファイルに変更はありません。"
+  },
+  "install.update_rollback_incomplete": {
+    "en": "Update failed ({0}); rollback was incomplete ({1}).",
+    "ko": "업데이트에 실패했고({0}), 롤백이 완료되지 않았습니다({1}).",
+    "zh": "更新失败（{0}）；回滚未完成（{1}）。",
+    "ja": "更新に失敗し（{0}）、ロールバックが完了しませんでした（{1}）。"
+  },
+  "install.migration_stop_and_restore_failed": {
+    "en": "Could not stop the verified legacy service ({0}), and restoring it also failed ({1}).",
+    "ko": "검증된 기존 서비스를 중지하지 못했고({0}), 서비스 복원도 실패했습니다({1}).",
+    "zh": "无法停止已验证的旧服务（{0}），恢复该服务也失败（{1}）。",
+    "ja": "確認済みの旧サービスを停止できず（{0}）、サービスの復元にも失敗しました（{1}）。"
+  },
+  "install.migration_stop_cleanup_incomplete": {
+    "en": "Could not stop the verified legacy service ({0}); it was restored, but staged Discodex files remain ({1}).",
+    "ko": "검증된 기존 서비스를 중지하지 못했습니다({0}). 서비스는 복원했지만 Discodex 준비 파일이 남아 있습니다({1}).",
+    "zh": "无法停止已验证的旧服务（{0}）；服务已恢复，但仍有 Discodex 暂存文件（{1}）。",
+    "ja": "確認済みの旧サービスを停止できませんでした（{0}）。サービスは復元されましたが、Discodex の準備ファイルが残っています（{1}）。"
+  },
+  "install.migration_copy_and_restore_failed": {
+    "en": "Could not copy the final legacy state ({0}), and restoring the old service also failed ({1}).",
+    "ko": "기존 상태의 최종 복사에 실패했고({0}), 기존 서비스 복원도 실패했습니다({1}).",
+    "zh": "无法复制最终的旧状态（{0}），恢复旧服务也失败（{1}）。",
+    "ja": "旧状態の最終コピーに失敗し（{0}）、旧サービスの復元にも失敗しました（{1}）。"
+  },
+  "install.migration_copy_cleanup_incomplete": {
+    "en": "Could not copy the final legacy state ({0}); the old service was restored, but staged files remain ({1}).",
+    "ko": "기존 상태의 최종 복사에 실패했습니다({0}). 기존 서비스는 복원했지만 준비 파일이 남아 있습니다({1}).",
+    "zh": "无法复制最终的旧状态（{0}）；旧服务已恢复，但仍有暂存文件（{1}）。",
+    "ja": "旧状態の最終コピーに失敗しました（{0}）。旧サービスは復元されましたが、準備ファイルが残っています（{1}）。"
+  },
+  "install.migration_new_service_cleanup_failed": {
+    "en": "Migration failed ({0}); the new service could not be verified and removed ({1}). The legacy service was left stopped to prevent two workers from using the same native thread.",
+    "ko": "마이그레이션에 실패했고({0}), 새 서비스를 검증하거나 제거하지 못했습니다({1}). 두 워커가 같은 네이티브 스레드를 사용하지 않도록 기존 서비스는 중지된 상태로 두었습니다.",
+    "zh": "迁移失败（{0}）；无法验证并移除新服务（{1}）。为避免两个工作进程使用同一原生线程，旧服务保持停止状态。",
+    "ja": "移行に失敗し（{0}）、新しいサービスを確認して削除できませんでした（{1}）。2 つのワーカーが同じネイティブスレッドを使わないよう、旧サービスは停止したままです。"
+  },
+  "install.migration_restore_previous_service": {
+    "en": "Migration failed, and the previous service could not be restored.",
+    "ko": "마이그레이션에 실패했고 이전 서비스를 복원하지 못했습니다.",
+    "zh": "迁移失败，无法恢复之前的服务。",
+    "ja": "移行に失敗し、以前のサービスを復元できませんでした。"
+  },
+  "install.migration_files_cleanup_incomplete": {
+    "en": "Migration failed ({0}); the previous service was restored, but staged files remain ({1}).",
+    "ko": "마이그레이션에 실패했습니다({0}). 이전 서비스는 복원했지만 준비 파일이 남아 있습니다({1}).",
+    "zh": "迁移失败（{0}）；之前的服务已恢复，但仍有暂存文件（{1}）。",
+    "ja": "移行に失敗しました（{0}）。以前のサービスは復元されましたが、準備ファイルが残っています（{1}）。"
+  },
+  "install.migration_failed_restored": {
+    "en": "Migration failed; the previous service was restored.",
+    "ko": "마이그레이션에 실패했지만 이전 서비스를 복원했습니다.",
+    "zh": "迁移失败；之前的服务已恢复。",
+    "ja": "移行に失敗しました。以前のサービスが復元されました。"
+  },
+  "install.selected_signed_worker_executable": {
+    "en": "Selected signed worker executable: {}",
+    "ko": "선택한 서명 작업자 실행 파일: {}",
+    "zh": "选定的签名工作程序：{}",
+    "ja": "選択した署名済みワーカー実行ファイル: {}"
+  },
+  "install.updated_discodex_worker_at": {
+    "en": "Updated Discodex worker at {}.",
+    "ko": "Discodex 작업자를 업데이트했습니다: {}",
+    "zh": "已更新 Discodex 工作程序：{}",
+    "ja": "Discodex ワーカーを更新しました：{}"
   }
 }

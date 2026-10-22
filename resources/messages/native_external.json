@@ -10,5 +10,35 @@
     "ko": "Antigravity 실행에 실패했습니다: {detail}",
     "zh": "Antigravity 执行失败：{detail}",
     "ja": "Antigravityの実行に失敗しました: {detail}"
+  },
+  "native_external.profile_disabled": {
+    "en": "Antigravity is disabled in this profile.",
+    "ko": "이 프로필에서 Antigravity가 비활성화되어 있습니다.",
+    "zh": "此配置文件中已禁用 Antigravity。",
+    "ja": "このプロファイルではAntigravityが無効になっています。"
+  },
+  "native_external.request_already_active": {
+    "en": "An external request is already active for this task.",
+    "ko": "이 작업에 대한 외부 요청이 이미 진행 중입니다.",
+    "zh": "此任务已有一个正在进行的外部请求。",
+    "ja": "このタスクでは外部リクエストがすでに実行中です。"
+  },
+  "native_external.response_inactive": {
+    "en": "The external response is no longer active.",
+    "ko": "외부 응답이 더 이상 활성 상태가 아닙니다.",
+    "zh": "外部响应已不再处于活动状态。",
+    "ja": "外部応答はすでに有効ではありません。"
+  },
+  "native_external.turn_interrupted": {
+    "en": "The external turn was interrupted.",
+    "ko": "외부 턴이 중단되었습니다.",
+    "zh": "外部轮次已中断。",
+    "ja": "外部ターンが中断されました。"
+  },
+  "native_external.cli_exited_early": {
+    "en": "AGY exited before returning a terminal result.",
+    "ko": "AGY가 최종 결과를 반환하기 전에 종료되었습니다.",
+    "zh": "AGY 在返回终结结果前退出。",
+    "ja": "AGYは最終結果を返す前に終了しました。"
   }
 }

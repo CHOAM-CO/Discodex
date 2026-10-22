@@ -59,6 +59,23 @@ impl StateStore {
         self.save(&state)
     }
 
+    pub(crate) fn save_thread_and_model_selection(
+        &self,
+        thread_id: &str,
+        selection: &ModelSelection,
+    ) -> Result<()> {
+        let mut state = self.load()?;
+        if let Some(previous) = state.thread_id.as_ref() {
+            if previous != thread_id && !state.previous_thread_ids.contains(previous) {
+                state.previous_thread_ids.push(previous.clone());
+            }
+        }
+        state.thread_id = Some(thread_id.to_owned());
+        state.pending_new_thread = false;
+        state.model_selection = Some(selection.clone());
+        self.save(&state)
+    }
+
     pub fn mark_pending_new_thread(&self) -> Result<()> {
         let mut state = self.load()?;
         state.pending_new_thread = true;
@@ -157,5 +174,26 @@ mod tests {
             StateStore::new(dir.path()).load().unwrap().model_selection,
             Some(selection)
         );
+    }
+
+    #[test]
+    fn model_fork_switch_persists_thread_and_selection_as_one_state_change() {
+        let dir = tempfile::tempdir().expect("temporary state directory");
+        let store = StateStore::new(dir.path());
+        store.save_thread_id("source-thread").unwrap();
+        let selection = ModelSelection {
+            executor: crate::model_catalog::ModelExecutor::Codex,
+            provider: "example-provider".to_owned(),
+            model: "example-model".to_owned(),
+        };
+
+        store
+            .save_thread_and_model_selection("forked-thread", &selection)
+            .unwrap();
+        let state = store.load().unwrap();
+        assert_eq!(state.thread_id.as_deref(), Some("forked-thread"));
+        assert_eq!(state.previous_thread_ids, vec!["source-thread"]);
+        assert_eq!(state.model_selection, Some(selection));
+        assert!(!state.pending_new_thread);
     }
 }

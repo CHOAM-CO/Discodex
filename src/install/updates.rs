@@ -1294,6 +1294,7 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
             prepared,
             &config,
             &config_data.state_dir,
+            config_data.language,
             &label,
             attempt_id,
         )?;
@@ -1341,7 +1342,11 @@ fn helper_label(attempt_id: &str) -> String {
 
 /// Check the detached helper process after its durable startup acknowledgement.
 /// The caller should reread UpdateStore before acting on a false result.
-pub fn helper_running(state_dir: &Path, attempt_id: &str) -> Result<bool> {
+pub fn helper_running(
+    state_dir: &Path,
+    attempt_id: &str,
+    language: crate::i18n::Language,
+) -> Result<bool> {
     let snapshot = UpdateStore::load(state_dir)?.snapshot();
     if snapshot.status != UpdateStatus::Applying
         || snapshot.apply_attempt_id.as_deref() != Some(attempt_id)
@@ -1370,10 +1375,16 @@ pub fn helper_running(state_dir: &Path, attempt_id: &str) -> Result<bool> {
             .stdin(Stdio::null())
             .output()
             .context("inspect detached Scheduled Task updater")?;
-        ensure!(
-            output.status.success(),
-            "could not inspect detached Scheduled Task updater"
-        );
+        if !output.status.success() {
+            let detail = native_command_detail(&output.stdout, &output.stderr);
+            bail!(
+                "{}",
+                language
+                    .message(crate::i18n::MessageKey::UpdateErrorInspectHelper)
+                    .replace("{0}", &output.status.to_string())
+                    .replace("{1}", &detail)
+            );
+        }
         return Ok(String::from_utf8_lossy(&output.stdout).trim() == "running");
     }
     #[cfg(unix)]
@@ -1388,10 +1399,15 @@ pub fn helper_running(state_dir: &Path, attempt_id: &str) -> Result<bool> {
             .args(["-p", &pid.to_string(), "-o", "args="])
             .output()
             .context("inspect detached update helper process")?;
-        if !output.status.success() {
+        let Some(command) = classify_unix_ps_output(
+            output.status.code(),
+            &output.stdout,
+            &output.stderr,
+            language,
+        )?
+        else {
             return Ok(false);
-        }
-        let command = String::from_utf8_lossy(&output.stdout);
+        };
         let executable = prepared.binary.canonicalize().unwrap_or(prepared.binary);
         return Ok(command.contains("update-helper")
             && command.contains(&executable.display().to_string()));
@@ -1409,6 +1425,7 @@ fn launch_windows_task(
     prepared: &PreparedUpdate,
     config: &Path,
     state_dir: &Path,
+    language: crate::i18n::Language,
     label: &str,
     attempt_id: &str,
 ) -> Result<()> {
@@ -1457,7 +1474,7 @@ fn launch_windows_task(
     let registration = format!(
         "$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{script_path}\"'; $principal=New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel '{run_level}'; $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; Register-ScheduledTask -TaskName '{task}' -TaskPath '\\' -Action $action -Principal $principal -Settings $settings | Out-Null; Start-ScheduledTask -TaskName '{task}' -TaskPath '\\'"
     );
-    let status = Command::new("powershell.exe")
+    let output = Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
@@ -1468,13 +1485,31 @@ fn launch_windows_task(
             &registration,
         ])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+        .output()
         .context("start independent Scheduled Task updater")?;
-    if !status.success() {
-        let _ = fs::remove_file(&task_script);
-        bail!("could not start independent Scheduled Task updater: {status}");
+    if !output.status.success() {
+        let cleanup = fs::remove_file(&task_script)
+            .err()
+            .map(|error| {
+                format!(
+                    "; {}",
+                    language
+                        .message(crate::i18n::MessageKey::UpdateErrorCleanupTaskWrapper)
+                        .replace("{0}", &error.to_string())
+                )
+            })
+            .unwrap_or_default();
+        let detail = format!(
+            "{}{cleanup}",
+            native_command_detail(&output.stdout, &output.stderr)
+        );
+        bail!(
+            "{}",
+            language
+                .message(crate::i18n::MessageKey::UpdateErrorStartTask)
+                .replace("{0}", &output.status.to_string())
+                .replace("{1}", &detail)
+        );
     }
     Ok(())
 }
@@ -1484,9 +1519,89 @@ fn ps_quote(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+fn native_command_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_owned();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (false, false) => format!("{stderr}\n{stdout}"),
+    }
+}
+
+fn classify_unix_ps_output(
+    status_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    language: crate::i18n::Language,
+) -> Result<Option<String>> {
+    let detail = native_command_detail(stdout, stderr);
+    if status_code == Some(1) && stdout.is_empty() && stderr.is_empty() {
+        return Ok(None);
+    }
+    if status_code != Some(0) || !stderr.is_empty() {
+        bail!(
+            "{}",
+            language
+                .message(crate::i18n::MessageKey::UpdateErrorInspectHelper)
+                .replace(
+                    "{0}",
+                    &status_code
+                        .map(|code| format!("exit status {code}"))
+                        .unwrap_or_else(|| "unknown exit status".to_owned())
+                )
+                .replace("{1}", &detail)
+        );
+    }
+    Ok(Some(String::from_utf8_lossy(stdout).into_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_command_detail_preserves_output_and_handles_empty_streams() {
+        assert_eq!(native_command_detail(b"", b""), "");
+        assert_eq!(native_command_detail(b" result \n", b""), "result");
+        assert_eq!(native_command_detail(b"out\n", b"err\n"), "err\nout");
+    }
+
+    #[test]
+    fn unix_ps_classifier_distinguishes_no_match_from_inspection_errors() {
+        let language = crate::i18n::Language::English;
+        assert_eq!(
+            classify_unix_ps_output(Some(1), b"", b"", language).unwrap(),
+            None
+        );
+        assert_eq!(
+            classify_unix_ps_output(Some(0), b"helper args", b"", language).unwrap(),
+            Some("helper args".to_owned())
+        );
+
+        for (status, stdout, stderr, expected) in [
+            (
+                Some(1),
+                b"".as_slice(),
+                b"permission denied".as_slice(),
+                "permission denied",
+            ),
+            (
+                Some(0),
+                b"row".as_slice(),
+                b"sysctl warning".as_slice(),
+                "sysctl warning",
+            ),
+            (Some(2), b"".as_slice(), b"".as_slice(), "exit status 2"),
+            (None, b"".as_slice(), b"".as_slice(), "unknown exit status"),
+        ] {
+            let error = classify_unix_ps_output(status, stdout, stderr, language)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+        }
+    }
 
     #[test]
     fn legacy_helper_arguments_keep_the_incoming_binary_and_existing_profile() {

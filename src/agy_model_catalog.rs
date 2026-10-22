@@ -122,9 +122,16 @@ pub(crate) fn invocation(
                 .iter()
                 .find(|variant| variant.id == selected_model)
                 .map(|variant| variant.effort.as_str());
+            let compatible_requested = requested.and_then(|effort| {
+                family
+                    .variants
+                    .iter()
+                    .find(|variant| variant.effort.eq_ignore_ascii_case(effort))
+                    .map(|variant| variant.effort.as_str())
+            });
             return Invocation {
                 model: family.id.clone(),
-                effort: requested
+                effort: compatible_requested
                     .map(str::to_owned)
                     .or_else(|| legacy_effort.map(str::to_owned)),
             };
@@ -276,6 +283,39 @@ mod tests {
         assert_eq!(
             invocation(Some(&catalog), "custom-model", Some("ultra")).effort,
             None
+        );
+    }
+
+    #[test]
+    fn discovered_family_drops_unsupported_inherited_effort_to_provider_default() {
+        let catalog = catalog();
+        assert_eq!(
+            invocation(Some(&catalog), "example-argon", Some("xhigh")),
+            Invocation {
+                model: "example-argon".into(),
+                effort: None,
+            }
+        );
+        assert_eq!(
+            invocation(Some(&catalog), "example-argon", Some("HIGH")),
+            Invocation {
+                model: "example-argon".into(),
+                effort: Some("high".into()),
+            }
+        );
+        assert_eq!(
+            invocation(Some(&catalog), "example-argon-low", Some("xhigh")),
+            Invocation {
+                model: "example-argon".into(),
+                effort: Some("low".into()),
+            }
+        );
+        assert_eq!(
+            invocation(Some(&catalog), "custom-user-model", Some("xhigh")),
+            Invocation {
+                model: "custom-user-model".into(),
+                effort: Some("xhigh".into()),
+            }
         );
     }
 

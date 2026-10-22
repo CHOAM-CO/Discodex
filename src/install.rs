@@ -21,7 +21,7 @@ use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, InputMode};
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 use crate::message_access::{MessageAccess, MessagePolicy};
 use crate::native_features::{NativeFeaturePreferences, NativeFeatureStore};
 
@@ -106,7 +106,7 @@ fn merge_install_config(
     worker_path: Option<&Path>,
     state_dir: &Path,
     selected_codex_home: &Path,
-) -> Config {
+) -> Result<Config> {
     let (
         name,
         permissions,
@@ -127,7 +127,7 @@ fn merge_install_config(
             config.effort,
             config.service_tier,
             config.memory_enabled,
-            configured_language(config.language),
+            configured_language(config.language)?,
             config.model.or_else(|| list.model.clone()),
             if list.message_access_plan_pending {
                 list.message_access.clone().or(config.message_access)
@@ -145,13 +145,13 @@ fn merge_install_config(
             None,
             None,
             None,
-            configured_language(list.language),
+            configured_language(list.language)?,
             list.model.clone(),
             list.message_access.clone(),
         ),
     };
-    Config {
-        language: env_language().unwrap_or(language),
+    Ok(Config {
+        language: env_language()?.unwrap_or(language),
         profile: list.profile.clone(),
         name,
         token_env: "DISCODEX_DISCORD_TOKEN".to_owned(),
@@ -174,7 +174,7 @@ fn merge_install_config(
         permissions,
         voice,
         input_mode,
-    }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -275,61 +275,24 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         .with_context(|| format!("create {}", roots.config.display()))?;
     set_private_dir(&roots.config)?;
 
-    let profile = ask_text(
-        language,
-        "Discord profile name",
-        "Discord 프로필 이름",
-        "Discord 配置名称",
-        "Discord プロファイル名",
-        "default",
-    )?;
+    let profile = ask_text(language, MessageKey::InstallDiscordProfileName, "default")?;
     let native_source = NativeSource::ManagedCore;
     let native_path = None;
     let codex_home = Some(choose_codex_home(&roots, language)?);
     let antigravity = Some(choose_antigravity_install(language)?);
     let discord_app = ask_text(
         language,
-        "Discord application profile (existing app)",
-        "Discord 애플리케이션 프로필 (기존 앱)",
-        "Discord 应用配置（现有应用）",
-        "Discord アプリケーションプロファイル（既存アプリ）",
+        MessageKey::InstallDiscordApplicationProfileExistingApp,
         &profile,
     )?;
-    let guild_id = ask_u64(
-        language,
-        "Home guild/server ID",
-        "홈 서버 ID",
-        "主页服务器 ID",
-        "ホームサーバー ID",
-    )?;
-    let home_channel_id = ask_u64(
-        language,
-        "Home text channel ID",
-        "홈 텍스트 채널 ID",
-        "主页文本频道 ID",
-        "ホームテキストチャンネル ID",
-    )?;
-    let transcript_channel_id = ask_u64(
-        language,
-        "Voice transcript channel ID",
-        "음성 전사 채널 ID",
-        "语音转录频道 ID",
-        "音声文字起こしチャンネル ID",
-    )?;
+    let guild_id = ask_u64(language, MessageKey::InstallHomeGuildServerId)?;
+    let home_channel_id = ask_u64(language, MessageKey::InstallHomeTextChannelId)?;
+    let transcript_channel_id = ask_u64(language, MessageKey::InstallVoiceTranscriptChannelId)?;
     let voice_channel_ids = ask_ids(
         language,
-        "Allowed voice channel IDs (comma-separated)",
-        "허용할 음성 채널 ID (쉼표로 구분)",
-        "允许的语音频道 ID（逗号分隔）",
-        "許可する音声チャンネル ID（カンマ区切り）",
+        MessageKey::InstallAllowedVoiceChannelIdsCommaSeparated,
     )?;
-    let operator_ids = ask_ids(
-        language,
-        "Operator user IDs (comma-separated)",
-        "운영자 사용자 ID (쉼표로 구분)",
-        "操作员用户 ID（逗号分隔）",
-        "オペレーターのユーザー ID（カンマ区切り）",
-    )?;
+    let operator_ids = ask_ids(language, MessageKey::InstallOperatorUserIdsCommaSeparated)?;
     let message_access = ask_install_message_access(
         language,
         &operator_ids,
@@ -338,18 +301,12 @@ fn print_plan_for_language(language: Language) -> Result<()> {
     let project_default = env::current_dir().context("read current directory")?;
     let project_dir = prepare_project_directory(&PathBuf::from(ask_text(
         language,
-        "Codex project/work directory",
-        "Codex 프로젝트/작업 디렉터리",
-        "Codex 项目/工作目录",
-        "Codex プロジェクト/作業ディレクトリ",
+        MessageKey::InstallCodexProjectWorkDirectory,
         &project_default.display().to_string(),
     )?))?;
     let model = optional_value(
         language,
-        "Codex model (leave empty for native default)",
-        "Codex 모델 (비우면 기본값)",
-        "Codex 模型（留空使用默认值）",
-        "Codex モデル（空欄なら標準）",
+        MessageKey::InstallCodexModelLeaveEmptyForNativeDefault,
     )?;
 
     let list = InstallationList {
@@ -492,12 +449,20 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
         let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
         if let Err(restore_error) = service_restore {
             return Err(anyhow!(
-                "could not stop the verified legacy service ({error:#}) and its restoration failed ({restore_error:#})"
+                "{}",
+                migration_language
+                    .message(MessageKey::InstallMigrationStopAndRestoreFailed)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{restore_error:#}"))
             ));
         }
         if let Err(cleanup_error) = staged_cleanup {
             return Err(anyhow!(
-                "could not stop the verified legacy service ({error:#}); the old service was restored but staged Discodex files remain ({cleanup_error:#})"
+                "{}",
+                migration_language
+                    .message(MessageKey::InstallMigrationStopCleanupIncomplete)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{cleanup_error:#}"))
             ));
         }
         return Err(error)
@@ -510,12 +475,20 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
         let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
         if let Err(restore_error) = service_restore {
             return Err(anyhow!(
-                "could not copy final stopped legacy state ({error:#}) and the old service restoration failed ({restore_error:#})"
+                "{}",
+                migration_language
+                    .message(MessageKey::InstallMigrationCopyAndRestoreFailed)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{restore_error:#}"))
             ));
         }
         if let Err(cleanup_error) = staged_cleanup {
             return Err(anyhow!(
-                "could not copy final stopped legacy state ({error:#}); old service restored but staged files remain ({cleanup_error:#})"
+                "{}",
+                migration_language
+                    .message(MessageKey::InstallMigrationCopyCleanupIncomplete)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{cleanup_error:#}"))
             ));
         }
         return Err(error).context("could not copy the legacy state after stopping its service");
@@ -542,19 +515,28 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
             let cleanup = rollback_new_migration_service(&roots);
             if let Err(cleanup_error) = cleanup {
                 return Err(anyhow!(
-                    "Discodex migration failed ({error:#}); its new service could not be verified and removed ({cleanup_error:#}), so the legacy service was left stopped to avoid two workers using the same native thread"
+                    "{}",
+                    migration_language
+                        .message(MessageKey::InstallMigrationNewServiceCleanupFailed)
+                        .replace("{0}", &format!("{error:#}"))
+                        .replace("{1}", &format!("{cleanup_error:#}"))
                 ));
             }
             let files_cleanup = remove_migration_staging(&roots, &legacy_config_root);
             restore_legacy_service(&service_backup, &legacy_owner_path).context(
-                "Discodex migration failed and the previous service could not be restored",
+                migration_language.message(MessageKey::InstallMigrationRestorePreviousService),
             )?;
             if let Err(cleanup_error) = files_cleanup {
                 Err(anyhow!(
-                    "Discodex migration failed ({error:#}); the previous service was restored, but staged files remain ({cleanup_error:#})"
+                    "{}",
+                    migration_language
+                        .message(MessageKey::InstallMigrationFilesCleanupIncomplete)
+                        .replace("{0}", &format!("{error:#}"))
+                        .replace("{1}", &format!("{cleanup_error:#}"))
                 ))
             } else {
-                Err(error).context("Discodex migration failed; the previous service was restored")
+                Err(error)
+                    .context(migration_language.message(MessageKey::InstallMigrationFailedRestored))
             }
         }
     }
@@ -1231,12 +1213,7 @@ fn install_at(
     if !list_path.exists() {
         println!(
             "{}",
-            language.text(
-                "No installation list is saved. Create it before setup starts.",
-                "저장된 설치 목록이 없습니다. 설정을 시작하기 전에 목록을 만듭니다.",
-                "未找到已保存的安装列表。请先创建列表再开始设置。",
-                "保存済みのインストールリストがありません。設定を始める前に作成します。"
-            )
+            language.message(MessageKey::InstallNoInstallationListIsSavedCreateItBeforeS)
         );
         print_plan_for_language(language)?;
     }
@@ -1371,23 +1348,22 @@ fn install_at(
     } else {
         None
     };
-    let token = env::var("DISCODEX_DISCORD_TOKEN")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env::var("CODEX_WORKER_DISCORD_TOKEN")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .unwrap_or_else(|| saved_token.unwrap_or_default());
+    let token = select_token_environment(
+        explicit_token_environment_value(
+            "DISCODEX_DISCORD_TOKEN",
+            env::var_os("DISCODEX_DISCORD_TOKEN"),
+        ),
+        || {
+            explicit_token_environment_value(
+                "CODEX_WORKER_DISCORD_TOKEN",
+                env::var_os("CODEX_WORKER_DISCORD_TOKEN"),
+            )
+        },
+        saved_token,
+    )?;
     let token = if token.trim().is_empty() {
-        rpassword::prompt_password(language.text(
-            "Discord bot token (input hidden): ",
-            "Discord 봇 토큰 (입력 숨김): ",
-            "Discord 机器人令牌（隐藏输入）：",
-            "Discord ボットトークン（入力非表示）：",
-        ))
-        .context("read Discord token privately")?
+        rpassword::prompt_password(language.message(MessageKey::InstallDiscordBotTokenInputHidden))
+            .context("read Discord token privately")?
     } else {
         token
     };
@@ -1404,7 +1380,7 @@ fn install_at(
         worker_executable.as_deref(),
         &state_dir,
         &selected_codex_home,
-    );
+    )?;
     write_json_private(&config_path, &config)?;
     if list.message_access_plan_pending {
         let access = list
@@ -1463,22 +1439,15 @@ fn install_at(
                 "{}",
                 format!(
                     "{}: {warning}",
-                    language.text(
-                        "Discord channel permission check",
-                        "Discord 채널 권한 확인",
-                        "Discord 频道权限检查",
-                        "Discord チャンネル権限の確認"
-                    )
+                    language.message(MessageKey::InstallDiscordChannelPermissionCheck)
                 )
             );
         }
     }
-    println!("{}", language.text(
-        "Verified the bot's current role and channel overrides for read, write, voice, and transcript-thread permissions on Discord.",
-        "Discord의 현재 봇 역할과 채널 덮어쓰기에서 읽기·쓰기·통화·기록 스레드 권한을 확인했습니다.",
-        "已验证 Discord 中机器人当前角色和频道覆盖设置具备读取、写入、语音和记录线程权限。",
-        "Discord の現在のボットロールとチャンネル上書き設定で、読み取り、書き込み、音声、記録スレッドの権限を確認しました。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallVerifiedTheBotSCurrentRoleAndChannelOver)
+    );
     println!(
         "Discord API authenticated bot {} and can read guild {} ({}).",
         discord.bot_id, discord.guild_id, discord.guild_name
@@ -1506,24 +1475,20 @@ fn install_at(
     if let Some(previous) = &previous_ownership {
         retire_previous_runtime(previous, &managed_runtime);
     }
-    println!("{}", language.text(
-        "Codex provider authentication settings were checked; the permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
-        "Codex 공급자의 인증 설정을 확인했습니다. 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
-        "已检查 Codex 提供商的身份验证设置，保存权限配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
-        "Codex プロバイダーの認証設定を確認しました。権限プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallCodexProviderAuthenticationSettingsWereChec)
+    );
     confirm_installed_features(&config, previous_run)?;
     Ok(())
 }
 
 fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> Result<()> {
-    let language = configured_language(config.language);
-    println!("{}", language.text(
-        "Send a real text message in Discord and try settings, question forms, and approval buttons. Speak in an allowed voice channel and verify voice work and its finalized transcript. Handle sign-in, MFA, OS consent, and microphone prompts in their official user interfaces.",
-        "Discord에서 실제 텍스트를 보내고 설정 변경·질문 폼·승인 버튼을 사용하세요. 허용한 음성 채널에서 말한 뒤 음성 업무와 확정 전사를 확인하세요. 로그인·MFA·OS 동의·마이크는 공식 사용자 화면에서 처리합니다.",
-        "请在 Discord 中发送真实文本，并尝试设置、问题表单和批准按钮。在获准的语音频道中讲话，验证语音任务和最终转录。请在官方用户界面中处理登录、MFA、操作系统授权和麦克风提示。",
-        "Discord で実際のテキストを送り、設定、質問フォーム、承認ボタンを試してください。許可された音声チャンネルで話し、音声タスクと確定した文字起こしを確認してください。サインイン、MFA、OS の許可、マイクの確認は公式ユーザー画面で行ってください."
-    ));
+    let language = configured_language(config.language)?;
+    println!(
+        "{}",
+        language.message(MessageKey::InstallSendARealTextMessageInDiscordAndTrySett)
+    );
     loop {
         let report = match crate::installation_check::read(config) {
             Ok(Some(report)) if Some(report.run_id.as_str()) != previous_run.as_deref() => {
@@ -1535,11 +1500,8 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
                     "{}",
                     format!(
                         "{}: {error:#}",
-                        language.text(
-                            "Could not read installation feature observations",
-                            "설치 기능 관측을 읽지 못했습니다",
-                            "无法读取安装功能观察结果",
-                            "インストール機能の観測結果を読み取れませんでした"
+                        language.message(
+                            MessageKey::InstallCouldNotReadInstallationFeatureObservations
                         )
                     )
                 );
@@ -1552,11 +1514,11 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
                 match result {
                     crate::installation_check::Observation::Failed { error } => eprintln!(
                         "{name}: {} — {error}",
-                        language.text("failed", "실패", "失败", "失敗")
+                        language.message(MessageKey::InstallFailed)
                     ),
                     crate::installation_check::Observation::Incomplete { reason } => println!(
                         "{name}: {} — {reason}",
-                        language.text("incomplete", "미완료", "未完成", "未完了")
+                        language.message(MessageKey::InstallIncomplete)
                     ),
                     _ => {}
                 }
@@ -1569,52 +1531,36 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
                     .and_then(|state| state.thread_id.as_deref())
                     == Some(report.thread_id.as_str())
             {
-                println!("{}", language.text(
-                    "READY: This install successfully exercised text, settings, approvals, two-way voice, work linked to the same conversation, and the finalized transcript.",
-                    "준비 완료: 이 설치에서 텍스트·설정·승인·양방향 음성·같은 대화 업무 연결·확정 전사가 실제로 동작했습니다.",
-                    "就绪：此安装已成功验证文本、设置、批准、双向语音、关联同一对话的任务以及最终转录。",
-                    "準備完了：このインストールで、テキスト、設定、承認、双方向音声、同じ会話に紐づくタスク、確定した文字起こしが動作しました。"
-                ));
+                println!(
+                    "{}",
+                    language.message(MessageKey::InstallReadyThisInstallSuccessfullyExercisedTextS)
+                );
                 return Ok(());
             }
         } else {
             println!(
                 "{}",
-                language.text(
-                    "No feature result from the current install has been observed yet.",
-                    "현재 설치의 기능 결과가 아직 관측되지 않았습니다。",
-                    "尚未观察到当前安装的功能结果。",
-                    "現在のインストールでの機能結果はまだ確認されていません。"
-                )
+                language.message(MessageKey::InstallNoFeatureResultFromTheCurrentInstallHasB)
             );
         }
         if !io::stdin().is_terminal() {
-            println!("{}", language.text(
-                "Settings and conversation history were preserved. Feature verification is incomplete.",
-                "설정과 대화 이력을 보존했습니다. 기능 확인은 미완료입니다.",
-                "设置和对话历史已保留。功能验证尚未完成。",
-                "設定と会話履歴は保持されています。機能確認は未完了です。"
-            ));
+            println!(
+                "{}",
+                language.message(MessageKey::InstallSettingsAndConversationHistoryWerePreserved)
+            );
             return Ok(());
         }
         print!(
             "{}",
-            language.text(
-                "Press Enter to read results again, or q to exit with verification incomplete > ",
-                "Enter: 실제 결과 다시 읽기, q: 미완료 상태로 종료 > ",
-                "按 Enter 重新读取结果，或按 q 在验证未完成时退出 > ",
-                "Enter で結果を再読込、q で確認未完了のまま終了 > "
-            )
+            language.message(MessageKey::InstallPressEnterToReadResultsAgainOrQToExitW)
         );
         io::stdout().flush()?;
         let mut input = String::new();
         if io::stdin().read_line(&mut input)? == 0 || input.trim().eq_ignore_ascii_case("q") {
-            println!("{}", language.text(
-                "Settings and conversation history were preserved. Feature verification is incomplete.",
-                "설정과 대화 이력을 보존했습니다. 기능 확인은 미완료입니다.",
-                "设置和对话历史已保留。功能验证尚未完成。",
-                "設定と会話履歴は保持されています。機能確認は未完了です。"
-            ));
+            println!(
+                "{}",
+                language.message(MessageKey::InstallSettingsAndConversationHistoryWerePreserved)
+            );
             return Ok(());
         }
     }
@@ -1717,7 +1663,7 @@ pub fn open_mac_permissions(args: &[String]) -> Result<()> {
     let ownership_path =
         mac_permissions_ownership_path(args, &roots.config.join("ownership.json"))?;
     let (ownership, executable) = owned_mac_worker(&ownership_path)?;
-    let language = ownership
+    let saved_language = ownership
         .config_file
         .is_file()
         .then(|| {
@@ -1725,23 +1671,18 @@ pub fn open_mac_permissions(args: &[String]) -> Result<()> {
                 .ok()
                 .map(|config| config.language)
         })
-        .flatten()
-        .unwrap_or_else(|| configured_language(Language::default()));
+        .flatten();
+    let language = configured_language(saved_language.unwrap_or_default())?;
     open_mac_permissions_for_executable(&executable)?;
-    println!("{}", language.text(
-        "In Finder, add the selected executable to System Settings > Privacy & Security > Full Disk Access and enable it: {}",
-        "Finder에서 선택한 실행 파일을 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에 추가하고 켜세요: {}",
-        "在 Finder 中将选定的可执行文件添加到“系统设置”>“隐私与安全性”>“完全磁盘访问权限”并启用：{}",
-        "Finder で選択した実行ファイルを「システム設定」>「プライバシーとセキュリティ」>「フルディスクアクセス」に追加して有効にしてください：{}"
-    ).replace("{}", &executable.display().to_string()));
     println!(
         "{}",
-        language.text(
-            "This command does not automatically check or change macOS permissions.",
-            "이 명령은 macOS 권한 부여 여부를 자동으로 확인하거나 변경하지 않습니다.",
-            "此命令不会自动检查或更改 macOS 权限。",
-            "このコマンドは macOS の権限を自動で確認または変更しません。"
-        )
+        language
+            .message(MessageKey::InstallInFinderAddTheSelectedExecutableToSystem)
+            .replace("{}", &executable.display().to_string())
+    );
+    println!(
+        "{}",
+        language.message(MessageKey::InstallThisCommandDoesNotAutomaticallyCheckOrCha)
     );
     Ok(())
 }
@@ -1869,34 +1810,20 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
     println!(
         "{}",
         language
-            .text(
-                "Selected signed worker executable: {}",
-                "선택한 서명 작업자 실행 파일: {}",
-                "选定的签名工作程序：{}",
-                "選択した署名済みワーカー実行ファイル: {}"
-            )
+            .message(MessageKey::InstallSelectedSignedWorkerExecutable)
             .replace("{}", &executable.display().to_string())
     );
-    println!("{}", language.text(
-        "macOS may ask this executable for protected-folder access separately. Add this exact worker to Full Disk Access only if your workflow needs that broader permission.",
-        "macOS가 이 실행 파일에 보호된 폴더 접근을 별도로 요청할 수 있습니다. 더 넓은 권한이 필요한 작업에서만 이 실행 파일을 전체 디스크 접근에 추가하세요.",
-        "macOS 可能会单独询问此可执行文件是否可访问受保护的文件夹。只有工作流确实需要更广泛权限时，才将此准确路径的工作程序添加到“完全磁盘访问权限”。",
-        "macOS はこの実行ファイルに保護フォルダへのアクセスを別途求める場合があります。ワークフローにより広い権限が必要な場合に限り、このパスのワーカーをフルディスクアクセスに追加してください。"
-    ));
-    println!("{}", language.text(
-        "If you grant Full Disk Access, select the exact executable path shown above and enable it. Press Enter to continue or q to cancel. Continuing does not confirm that macOS granted access.",
-        "전체 디스크 접근을 허용하려면 위에 표시된 정확한 실행 파일을 선택하고 켜세요. Enter로 계속하거나 q로 취소할 수 있습니다. 계속해도 macOS가 권한을 허용했는지는 확인되지 않습니다.",
-        "如需授予“完全磁盘访问权限”，请选择上方显示的准确可执行文件并启用。按 Enter 继续，或按 q 取消。继续操作不会确认 macOS 已授予访问权限。",
-        "フルディスクアクセスを許可する場合は、上記の正確な実行ファイルを選択して有効にしてください。Enter で続行、q でキャンセルできます。続行しても macOS がアクセスを許可したことは確認されません。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallMacosMayAskThisExecutableForProtectedFold)
+    );
+    println!(
+        "{}",
+        language.message(MessageKey::InstallIfYouGrantFullDiskAccessSelectTheExactE)
+    );
     print!(
         "{}",
-        language.text(
-            "Continue after FDA guidance [Enter] / cancel [q] > ",
-            "FDA 안내 후 계속 [Enter] / 취소 [q] > ",
-            "完成完全磁盘访问提示后继续 [Enter] / 取消 [q] > ",
-            "フルディスクアクセスの案内後に続行 [Enter] / キャンセル [q] > "
-        )
+        language.message(MessageKey::InstallContinueAfterFdaGuidanceEnterCancelQ)
     );
     io::stdout().flush()?;
     let mut answer = String::new();
@@ -2106,6 +2033,7 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         "owned executable does not use the Discodex worker filename"
     );
     let mut config = Config::load(&config_path)?;
+    let update_language = config.language;
     ensure!(
         config.state_dir == owner.state_dir
             && config.credentials_file.as_deref() == Some(owner.credentials_file.as_path()),
@@ -2248,12 +2176,16 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         });
         return match rollback {
             Ok(()) => Err(error).context(if replaced {
-                "update failed; previous worker and service state were restored"
+                update_language.message(MessageKey::InstallUpdateRollbackRestored)
             } else {
-                "update failed before replacement; existing worker and profile were unchanged"
+                update_language.message(MessageKey::InstallUpdateRollbackUnchanged)
             }),
             Err(restore) => Err(anyhow!(
-                "update failed ({error:#}); rollback incomplete ({restore:#})"
+                "{}",
+                update_language
+                    .message(MessageKey::InstallUpdateRollbackIncomplete)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{restore:#}"))
             )),
         };
     }
@@ -2262,12 +2194,7 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
         "{}",
         config
             .language
-            .text(
-                "Updated Discodex worker at {}.",
-                "Discodex 작업자를 업데이트했습니다: {}",
-                "已更新 Discodex 工作程序：{}",
-                "Discodex ワーカーを更新しました：{}"
-            )
+            .message(MessageKey::InstallUpdatedDiscodexWorkerAt)
             .replace("{}", &installed.display().to_string())
     );
     Ok(())
@@ -3164,106 +3091,55 @@ fn choose_codex_home(roots: &Roots, language: Language) -> Result<PathBuf> {
         .map(PathBuf::from)
         .unwrap_or(default_codex_home()?);
     let separate = roots.data.join("codex-home");
-    println!("{}", language.text(
-        "Codex data: 1) Existing home (share account, memory and history); 2) Separate Discodex home. Shared settings are preserved.",
-        "Codex 데이터: 1) 기존 홈 공유 (계정·메모리·기록); 2) Discodex 전용 홈. 공유 설정은 보존합니다.",
-        "Codex 数据：1) 共享现有目录（账户、记忆和历史）；2) Discodex 独立目录。保留共享设置。",
-        "Codex データ：1) 既存ホームを共有（アカウント・メモリ・履歴）；2) Discodex 専用ホーム。共有設定は保持します。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallCodexData1ExistingHomeShareAccountMemory)
+    );
     println!("1) {}\n2) {}", existing.display(), separate.display());
     let default = if existing.is_dir() { "1" } else { "2" };
     loop {
-        match ask_text(
-            language,
-            "Data home",
-            "데이터 홈",
-            "数据目录",
-            "データホーム",
-            default,
-        )?
-        .as_str()
-        {
+        match ask_text(language, MessageKey::InstallDataHome, default)?.as_str() {
             "1" => {
                 return Ok(PathBuf::from(ask_text(
                     language,
-                    "Existing Codex home",
-                    "기존 Codex 홈",
-                    "现有 Codex 目录",
-                    "既存 Codex ホーム",
+                    MessageKey::InstallExistingCodexHome,
                     &existing.display().to_string(),
                 )?));
             }
             "2" => return Ok(separate),
-            _ => println!(
-                "{}",
-                language.text(
-                    "Choose 1 or 2.",
-                    "1 또는 2를 선택하세요.",
-                    "请选择 1 或 2。",
-                    "1 または 2 を選んでください。"
-                )
-            ),
+            _ => println!("{}", language.message(MessageKey::InstallChoose1Or2)),
         }
     }
 }
 
 fn choose_antigravity_install(language: Language) -> Result<AntigravityInstallChoice> {
-    println!("{}", language.text(
-        "Antigravity: 1) Install a Discodex-managed CLI; 2) Skip (you can enable it later in Discord). Enter q to exit setup.",
-        "Antigravity: 1) Discodex 전용 CLI 설치; 2) 건너뛰기 (나중에 Discord에서 활성화 가능). q를 입력하면 설치를 종료합니다.",
-        "Antigravity：1) 安装由 Discodex 管理的 CLI；2) 跳过（以后可在 Discord 中启用）。输入 q 退出安装。",
-        "Antigravity：1) Discodex 管理の CLI をインストール; 2) スキップ（後で Discord から有効化できます）。q でセットアップを終了します。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallAntigravity1InstallADiscodexManagedCli2S)
+    );
     loop {
-        match ask_text(
-            language,
-            "Antigravity",
-            "Antigravity",
-            "Antigravity",
-            "Antigravity",
-            "2",
-        )?
-        .as_str()
-        {
+        match ask_text(language, MessageKey::InstallAntigravity, "2")?.as_str() {
             "1" => return choose_antigravity_settings(language),
             "2" => return Ok(AntigravityInstallChoice::Disabled),
             "q" | "Q" => return Err(crate::agy_setup::SetupCancelled.into()),
-            _ => println!(
-                "{}",
-                language.text(
-                    "Choose 1, 2, or q.",
-                    "1, 2 또는 q를 선택하세요.",
-                    "请选择 1、2 或 q。",
-                    "1、2、q のいずれかを選んでください。"
-                )
-            ),
+            _ => println!("{}", language.message(MessageKey::InstallChoose12OrQ)),
         }
     }
 }
 
 fn choose_antigravity_settings(language: Language) -> Result<AntigravityInstallChoice> {
-    println!("{}", language.text(
-        "Antigravity settings: 1) Share existing settings; 2) Separate Discodex settings. The CLI still uses the operating system's account keyring. Shared settings are preserved on uninstall. Enter q to exit.",
-        "Antigravity 설정: 1) 기존 설정 공유; 2) Discodex 전용 설정. 로그인 계정은 CLI의 운영체제 키링을 사용합니다. 공유 설정은 삭제할 때 보존합니다. q를 입력하면 종료합니다.",
-        "Antigravity 设置：1) 共享现有设置；2) Discodex 独立设置。CLI 仍使用操作系统账户密钥环。卸载时保留共享设置。输入 q 退出。",
-        "Antigravity 設定：1) 既存の設定を共有; 2) Discodex 専用の設定。CLI は引き続き OS のアカウントキーチェーンを使用します。共有設定はアンインストール時も保持します。q で終了します。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallAntigravitySettings1ShareExistingSettings2)
+    );
     loop {
-        let answer = ask_text(language, "Settings", "설정", "设置", "設定", "2")?;
+        let answer = ask_text(language, MessageKey::InstallSettings, "2")?;
         match antigravity_settings_choice(&answer) {
             Some(choice) => return Ok(choice),
             None if answer.eq_ignore_ascii_case("q") => {
                 return Err(crate::agy_setup::SetupCancelled.into());
             }
-            None => println!(
-                "{}",
-                language.text(
-                    "Choose 1, 2, or q.",
-                    "1, 2 또는 q를 선택하세요.",
-                    "请选择 1、2 或 q。",
-                    "1、2、q のいずれかを選んでください。"
-                )
-            ),
+            None => println!("{}", language.message(MessageKey::InstallChoose12OrQ)),
         }
     }
 }
@@ -3308,12 +3184,9 @@ fn configure_antigravity_install(
     store.apply(&preferences)?;
     println!(
         "{}",
-        config.language.text(
-            "Antigravity is installed, signed in, and enabled.",
-            "Antigravity 설치와 로그인을 확인했고 활성화했습니다.",
-            "已确认 Antigravity 安装和登录成功，并已启用。",
-            "Antigravity のインストールとログインを確認し、有効化しました。"
-        )
+        config
+            .language
+            .message(MessageKey::InstallAntigravityIsInstalledSignedInAndEnabled)
     );
     Ok(())
 }
@@ -3409,12 +3282,10 @@ async fn prepare_antigravity_at_console(
     };
     use tokio::sync::{mpsc, watch};
 
-    println!("{}", language.text(
-        "Preparing Antigravity. Ctrl+C or Ctrl+D cancels and exits at any stage. Use arrow keys and Enter for CLI choices; type an answer or login code, then press Enter. Typed text is hidden.",
-        "Antigravity를 준비합니다. 어느 단계에서든 Ctrl+C 또는 Ctrl+D로 취소하고 나갈 수 있습니다. CLI 선택은 방향키와 Enter를 사용하고, 답변이나 로그인 코드는 입력 후 Enter를 누르세요. 입력 내용은 숨겨집니다.",
-        "正在准备 Antigravity。任何阶段都可按 Ctrl+C 或 Ctrl+D 取消并退出。使用方向键和 Enter 选择 CLI 选项；输入回答或登录代码后按 Enter。输入内容不显示。",
-        "Antigravity を準備します。各段階で Ctrl+C または Ctrl+D を押すと中止して終了できます。CLI の選択は矢印キーと Enter を使い、回答やログインコードは入力後に Enter を押してください。入力内容は非表示です。"
-    ));
+    println!(
+        "{}",
+        language.message(MessageKey::InstallPreparingAntigravityCtrlCOrCtrlDCancelsA)
+    );
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
     let terminal = interactive.then(SetupTerminal::open).transpose()?;
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -3448,12 +3319,12 @@ async fn prepare_antigravity_at_console(
                     acknowledgements.retain_mut(|received| match received.try_recv() {
                         Err(tokio::sync::oneshot::error::TryRecvError::Empty) => true,
                         Ok(InputDisposition::NotAccepting) => {
-                            print!("{}\r\n", language.text(
-                                "The CLI prompt changed. Follow the current prompt and try again.",
-                                "CLI 입력 단계가 바뀌었습니다. 현재 안내에 따라 다시 입력하세요.",
-                                "CLI 提示已更改。请按照当前提示重新输入。",
-                                "CLI の入力段階が変わりました。現在の案内に従って再入力してください。"
-                            ));
+                            print!(
+                                "{}\r\n",
+                                language.message(
+                                    MessageKey::InstallTheCliPromptChangedFollowTheCurrentPrompt
+                                )
+                            );
                             let _ = io::stdout().flush();
                             false
                         }
@@ -3516,10 +3387,10 @@ async fn prepare_antigravity_at_console(
                 code_input.store(accepts_code, Ordering::Release);
                 navigation_input.store(accepts_navigation, Ordering::Release);
                 let message = match event {
-                    SetupProgress::Checking => language.text("Checking managed Antigravity…", "전용 Antigravity를 확인합니다…", "正在检查托管的 Antigravity…", "管理対象の Antigravity を確認しています…").to_owned(),
-                    SetupProgress::Installing => language.text("Downloading official Antigravity release…", "공식 Antigravity 릴리스를 다운로드합니다…", "正在下载 Antigravity 官方版本…", "Antigravity の公式リリースをダウンロードしています…").to_owned(),
-                    SetupProgress::CheckingAccount => language.text("Checking Antigravity sign-in…", "Antigravity 로그인을 확인합니다…", "正在检查 Antigravity 登录状态…", "Antigravity のログインを確認しています…").to_owned(),
-                    SetupProgress::Verifying => language.text("Verifying the Antigravity model catalog…", "Antigravity 모델 목록을 확인합니다…", "正在验证 Antigravity 模型列表…", "Antigravity のモデル一覧を確認しています…").to_owned(),
+                    SetupProgress::Checking => language.message(MessageKey::InstallCheckingManagedAntigravity).to_owned(),
+                    SetupProgress::Installing => language.message(MessageKey::InstallDownloadingOfficialAntigravityRelease).to_owned(),
+                    SetupProgress::CheckingAccount => language.message(MessageKey::InstallCheckingAntigravitySignIn).to_owned(),
+                    SetupProgress::Verifying => language.message(MessageKey::InstallVerifyingTheAntigravityModelCatalog).to_owned(),
                     SetupProgress::Authentication { output, .. } => {
                         if !interactive {
                             input_unavailable = true;
@@ -3550,12 +3421,10 @@ async fn prepare_antigravity_at_console(
         return Err(SetupCancelled.into());
     }
     if input_unavailable {
-        bail!("{}", language.text(
-            "Antigravity sign-in needs an interactive terminal. Run the installer in a terminal or enable Antigravity from Discord settings.",
-            "Antigravity 로그인에 대화형 터미널이 필요합니다. 터미널에서 설치 프로그램을 실행하거나 Discord 설정에서 Antigravity를 활성화하세요.",
-            "Antigravity 登录需要交互式终端。请在终端中运行安装程序，或从 Discord 设置启用 Antigravity。",
-            "Antigravity のログインには対話型端末が必要です。端末でインストーラーを実行するか、Discord の設定から Antigravity を有効化してください。"
-        ));
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallAntigravitySignInNeedsAnInteractiveTermina)
+        );
     }
     if result
         .as_ref()
@@ -3563,12 +3432,7 @@ async fn prepare_antigravity_at_console(
     {
         println!(
             "{}",
-            language.text(
-                "Antigravity setup cancelled.",
-                "Antigravity 설정을 취소했습니다.",
-                "已取消 Antigravity 设置。",
-                "Antigravity のセットアップを中止しました。"
-            )
+            language.message(MessageKey::InstallAntigravitySetupCancelled)
         );
     }
     result
@@ -3928,8 +3792,8 @@ fn install_user_service(
                 && previous.service_file.as_deref() == Some(unit_path.as_path())
                 && previous.config_file == config_path
         });
-        let existing_unit_matches =
-            fs::read_to_string(&unit_path).ok().as_deref() == Some(unit.as_str());
+        let existing_unit_matches = systemd_unit_matches(fs::read_to_string(&unit_path), &unit)
+            .context("read existing systemd user unit")?;
         let unit_loaded = String::from_utf8_lossy(&loaded.stdout).trim() != "not-found";
         if (unit_path.exists() || unit_loaded)
             && !(previous_record_owns_unit && existing_unit_matches)
@@ -4639,14 +4503,43 @@ exit $p.ExitCode"#,
         .output()
         .context("request Windows administrator consent")?;
     if !launched.status.success() {
-        let detail = fs::read_to_string(&result_path).unwrap_or_default();
+        let result_detail = match fs::read_to_string(&result_path) {
+            Ok(detail) => detail.trim().to_owned(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => format!("read elevated Windows task operation result: {error}"),
+        };
+        let mut diagnostic_parts = Vec::new();
+        if !result_detail.is_empty() {
+            diagnostic_parts.push(result_detail);
+        }
+        let launcher_stdout = String::from_utf8_lossy(&launched.stdout).trim().to_owned();
+        if !launcher_stdout.is_empty() {
+            diagnostic_parts.push(format!("PowerShell stdout: {launcher_stdout}"));
+        }
+        let launcher_stderr = String::from_utf8_lossy(&launched.stderr).trim().to_owned();
+        if !launcher_stderr.is_empty() {
+            diagnostic_parts.push(format!("PowerShell stderr: {launcher_stderr}"));
+        }
+        let detail = diagnostic_parts.join("\n");
         if detail.trim().is_empty() {
+            let detail = "Windows administrator consent was cancelled or the task operation could not start.";
             bail!(
-                "Windows administrator consent was cancelled or the task operation could not start: {}",
-                String::from_utf8_lossy(&launched.stderr).trim()
+                "{}",
+                Language::English
+                    .message(MessageKey::InstallErrorCommandFailed)
+                    .replace("{0}", "Windows task operation")
+                    .replace("{1}", &launched.status.to_string())
+                    .replace("{2}", detail)
             );
         }
-        bail!("Windows task operation failed: {}", detail.trim());
+        bail!(
+            "{}",
+            Language::English
+                .message(MessageKey::InstallErrorCommandFailed)
+                .replace("{0}", "Windows task operation")
+                .replace("{1}", &launched.status.to_string())
+                .replace("{2}", &detail)
+        );
     }
     Ok(())
 }
@@ -4856,12 +4749,7 @@ async fn ensure_native_account(
     if !crate::model_catalog::needs_chatgpt_login(&response) {
         println!(
             "{}",
-            language.text(
-                "Using the active Codex provider and its existing authentication settings.",
-                "활성 Codex 공급자와 기존 인증 설정을 사용합니다.",
-                "使用当前 Codex 提供商及其现有身份验证设置。",
-                "有効な Codex プロバイダーと既存の認証設定を使用します。"
-            )
+            language.message(MessageKey::InstallUsingTheActiveCodexProviderAndItsExisting)
         );
         return Ok(response);
     }
@@ -5060,10 +4948,7 @@ fn choose_permission_profile(
     loop {
         let selected = ask_text(
             language,
-            "Allowed permission profile ID",
-            "허용된 권한 프로필 ID",
-            "允许的权限配置 ID",
-            "許可された権限プロファイル ID",
+            MessageKey::InstallAllowedPermissionProfileId,
             &default_id,
         )?;
         if let Some(item) = entries.iter().find(|item| {
@@ -5230,14 +5115,75 @@ fn command_without_console(program: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-fn env_language() -> Option<Language> {
-    env::var("DISCODEX_LANGUAGE")
-        .ok()
-        .and_then(|value| value.parse::<Language>().ok())
+fn env_language() -> Result<Option<Language>> {
+    parse_environment_language(env::var_os("DISCODEX_LANGUAGE"))
 }
 
-fn configured_language(language: Language) -> Language {
-    env_language().unwrap_or(language)
+fn parse_environment_language(value: Option<std::ffi::OsString>) -> Result<Option<Language>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            Language::English
+                .message(MessageKey::InstallErrorEnvironmentVariableNotUtf8)
+                .replace("{0}", "DISCODEX_LANGUAGE")
+        )
+    })?;
+    let language = value.parse::<Language>().map_err(|_| {
+        anyhow::anyhow!(
+            "{}",
+            Language::English.message(MessageKey::InstallLanguageEnvironmentError)
+        )
+    })?;
+    Ok(Some(language))
+}
+
+fn systemd_unit_matches(read: io::Result<String>, expected: &str) -> io::Result<bool> {
+    match read {
+        Ok(existing) => Ok(existing == expected),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn explicit_token_environment_value(
+    name: &str,
+    value: Option<std::ffi::OsString>,
+) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.to_str().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            Language::English
+                .message(MessageKey::InstallErrorEnvironmentVariableNotUtf8)
+                .replace("{0}", name)
+        )
+    })?;
+    if value.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value.to_owned()))
+    }
+}
+
+fn select_token_environment(
+    primary: Result<Option<String>>,
+    legacy: impl FnOnce() -> Result<Option<String>>,
+    saved: Option<String>,
+) -> Result<String> {
+    let token = match primary? {
+        Some(token) => Some(token),
+        None => legacy()?,
+    };
+    Ok(token.or(saved).unwrap_or_default())
+}
+
+fn configured_language(language: Language) -> Result<Language> {
+    Ok(env_language()?.unwrap_or(language))
 }
 
 fn saved_install_language(roots: &Roots) -> Result<Option<Language>> {
@@ -5260,21 +5206,9 @@ fn ask_install_message_access(
     let policy = loop {
         println!(
             "{}",
-            language.text(
-                "Message receive policy: 1) Everyone (all servers and DMs)  2) Registered server  3) Registered channels  4) Paired users",
-                "메시지 수신 정책: 1) 모두 (모든 서버 및 DM)  2) 등록된 서버  3) 등록된 채널  4) 페어링된 사용자",
-                "消息接收策略：1) 所有人（所有服务器和私信）  2) 已注册服务器  3) 已注册频道  4) 已配对用户",
-                "メッセージ受信ポリシー: 1) 全員（すべてのサーバーとDM）  2) 登録サーバー  3) 登録チャンネル  4) ペアユーザー"
-            )
+            language.message(MessageKey::InstallMessageReceivePolicy1EveryoneAllServersAn)
         );
-        let choice = ask_text(
-            language,
-            "Choose policy (1-4)",
-            "정책 선택 (1-4)",
-            "选择策略（1-4）",
-            "ポリシーを選択 (1-4)",
-            "4",
-        )?;
+        let choice = ask_text(language, MessageKey::InstallChoosePolicy14, "4")?;
         match choice.trim().to_ascii_lowercase().as_str() {
             "1" | "everyone" => break MessagePolicy::Everyone,
             "2" | "registeredserver" | "registered-server" => {
@@ -5284,25 +5218,14 @@ fn ask_install_message_access(
                 break MessagePolicy::RegisteredChannels;
             }
             "4" | "paired" | "pairedusers" | "paired-users" => break MessagePolicy::Paired,
-            _ => println!(
-                "{}",
-                language.text(
-                    "Choose 1, 2, 3, or 4.",
-                    "1, 2, 3, 4 중에서 선택하세요.",
-                    "请选择 1、2、3 或 4。",
-                    "1、2、3、4 から選択してください。"
-                )
-            ),
+            _ => println!("{}", language.message(MessageKey::InstallChoose123Or4)),
         }
     };
 
     let paired_user_ids = if policy == MessagePolicy::Paired {
         ask_ids_with_default(
             language,
-            "Paired user IDs; enter 'none' to clear",
-            "페어링 사용자 ID ('none' 입력 시 비움)",
-            "已配对用户 ID（输入 none 清空）",
-            "ペアユーザー ID（none で消去）",
+            MessageKey::InstallPairedUserIdsEnterNoneToClear,
             operator_ids,
         )?
     } else {
@@ -5311,10 +5234,7 @@ fn ask_install_message_access(
     let channel_ids = if policy == MessagePolicy::RegisteredChannels {
         ask_ids_with_default(
             language,
-            "Registered channel IDs; blank keeps home/transcript defaults, 'none' clears",
-            "등록 채널 ID (비우면 홈/전사 채널, 'none' 입력 시 비움)",
-            "已注册频道 ID（留空使用主页/转录频道，输入 none 清空）",
-            "登録チャンネル ID（空欄でホーム/文字起こし、none で消去）",
+            MessageKey::InstallRegisteredChannelIdsBlankKeepsHomeTranscri,
             default_channels,
         )?
     } else {
@@ -5322,17 +5242,11 @@ fn ask_install_message_access(
     };
     let whitelist = ask_optional_ids(
         language,
-        "Whitelist user IDs (optional; comma-separated)",
-        "허용 목록 사용자 ID (선택 사항, 쉼표로 구분)",
-        "允许列表用户 ID（可选，逗号分隔）",
-        "許可リストのユーザー ID（任意、カンマ区切り）",
+        MessageKey::InstallWhitelistUserIdsOptionalCommaSeparated,
     )?;
     let blacklist = ask_optional_ids(
         language,
-        "Blacklist user IDs (optional; comma-separated)",
-        "차단 목록 사용자 ID (선택 사항, 쉼표로 구분)",
-        "阻止列表用户 ID（可选，逗号分隔）",
-        "拒否リストのユーザー ID（任意、カンマ区切り）",
+        MessageKey::InstallBlacklistUserIdsOptionalCommaSeparated,
     )?;
     Ok(MessageAccess {
         policy,
@@ -5345,10 +5259,7 @@ fn ask_install_message_access(
 
 fn ask_ids_with_default(
     language: Language,
-    en: &str,
-    ko: &str,
-    zh: &str,
-    ja: &str,
+    key: MessageKey,
     default_ids: &[u64],
 ) -> Result<Vec<u64>> {
     let default = default_ids
@@ -5357,7 +5268,7 @@ fn ask_ids_with_default(
         .collect::<Vec<_>>()
         .join(",");
     loop {
-        let line = ask_text(language, en, ko, zh, ja, &default)?;
+        let line = ask_text(language, key, &default)?;
         let line = line.trim();
         if line.eq_ignore_ascii_case("none") {
             return Ok(Vec::new());
@@ -5382,25 +5293,14 @@ fn ask_ids_with_default(
         }
         println!(
             "{}",
-            language.text(
-                "Enter numeric IDs separated by commas, or 'none' to clear.",
-                "숫자 ID를 쉼표로 구분해 입력하거나 'none'을 입력해 비우세요.",
-                "请输入逗号分隔的数字 ID，或输入 none 清空。",
-                "数値 ID をカンマ区切りで入力するか、none で消去してください。"
-            )
+            language.message(MessageKey::InstallEnterNumericIdsSeparatedByCommasOrNoneTo)
         );
     }
 }
 
-fn ask_optional_ids(
-    language: Language,
-    en: &str,
-    ko: &str,
-    zh: &str,
-    ja: &str,
-) -> Result<Vec<u64>> {
+fn ask_optional_ids(language: Language, key: MessageKey) -> Result<Vec<u64>> {
     loop {
-        let line = ask_text(language, en, ko, zh, ja, "")?;
+        let line = ask_text(language, key, "")?;
         if line.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -5424,18 +5324,13 @@ fn ask_optional_ids(
         }
         println!(
             "{}",
-            language.text(
-                "Enter numeric IDs separated by commas, or leave blank for none.",
-                "숫자 ID를 쉼표로 구분해 입력하거나 비워 두세요.",
-                "请输入逗号分隔的数字 ID，或留空表示无。",
-                "数値 ID をカンマ区切りで入力するか、空欄のままにしてください。"
-            )
+            language.message(MessageKey::InstallEnterNumericIdsSeparatedByCommasOrLeaveB)
         );
     }
 }
 
 fn choose_language(existing: Option<Language>) -> Result<Language> {
-    if let Some(language) = env_language().or(existing) {
+    if let Some(language) = env_language()?.or(existing) {
         return Ok(language);
     }
     println!("Choose language / 언어 선택 / 选择语言 / 言語を選択");
@@ -5452,15 +5347,8 @@ fn choose_language(existing: Option<Language>) -> Result<Language> {
     }
 }
 
-fn ask_text(
-    language: Language,
-    en: &str,
-    ko: &str,
-    zh: &str,
-    ja: &str,
-    default: &str,
-) -> Result<String> {
-    ask(language.text(en, ko, zh, ja), default)
+fn ask_text(language: Language, key: MessageKey, default: &str) -> Result<String> {
+    ask(language.message(key), default)
 }
 
 fn ask(prompt: &str, default: &str) -> Result<String> {
@@ -5476,27 +5364,22 @@ fn ask(prompt: &str, default: &str) -> Result<String> {
     })
 }
 
-fn ask_u64(language: Language, en: &str, ko: &str, zh: &str, ja: &str) -> Result<u64> {
+fn ask_u64(language: Language, key: MessageKey) -> Result<u64> {
     loop {
-        let value = ask_text(language, en, ko, zh, ja, "")?;
+        let value = ask_text(language, key, "")?;
         match value.parse() {
             Ok(value) => return Ok(value),
             Err(_) => println!(
                 "{}",
-                language.text(
-                    "Enter the numeric Discord ID.",
-                    "숫자 Discord ID를 입력하세요.",
-                    "请输入数字 Discord ID。",
-                    "Discord の数値 ID を入力してください。"
-                )
+                language.message(MessageKey::InstallEnterTheNumericDiscordId)
             ),
         }
     }
 }
 
-fn ask_ids(language: Language, en: &str, ko: &str, zh: &str, ja: &str) -> Result<Vec<u64>> {
+fn ask_ids(language: Language, key: MessageKey) -> Result<Vec<u64>> {
     loop {
-        let line = ask_text(language, en, ko, zh, ja, "")?;
+        let line = ask_text(language, key, "")?;
         let mut ids = Vec::new();
         let mut valid = true;
         for item in line
@@ -5517,24 +5400,13 @@ fn ask_ids(language: Language, en: &str, ko: &str, zh: &str, ja: &str) -> Result
         }
         println!(
             "{}",
-            language.text(
-                "Enter one or more numeric IDs separated by commas.",
-                "숫자 ID를 하나 이상 쉼표로 구분해 입력하세요.",
-                "请输入一个或多个数字 ID，并用逗号分隔。",
-                "数値 ID を1つ以上、カンマ区切りで入力してください。"
-            )
+            language.message(MessageKey::InstallEnterOneOrMoreNumericIdsSeparatedByComma)
         );
     }
 }
 
-fn optional_value(
-    language: Language,
-    en: &str,
-    ko: &str,
-    zh: &str,
-    ja: &str,
-) -> Result<Option<String>> {
-    let value = ask_text(language, en, ko, zh, ja, "")?;
+fn optional_value(language: Language, key: MessageKey) -> Result<Option<String>> {
+    let value = ask_text(language, key, "")?;
     Ok((!value.is_empty()).then_some(value))
 }
 
@@ -5548,6 +5420,61 @@ fn unix_time_string() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_language_environment_value_is_validated_without_fallback() {
+        assert_eq!(parse_environment_language(None).unwrap(), None);
+        assert_eq!(
+            parse_environment_language(Some("ko".into())).unwrap(),
+            Some(Language::Korean)
+        );
+        assert!(parse_environment_language(Some("invalid".into())).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn invalid_environment_encoding_reports_name_without_value() {
+        use std::os::unix::ffi::OsStringExt;
+        let secret = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+        let error = explicit_token_environment_value("DISCODEX_DISCORD_TOKEN", Some(secret))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("DISCODEX_DISCORD_TOKEN"));
+        assert!(!error.contains("0xff"));
+    }
+
+    #[test]
+    fn selected_token_uses_legacy_value_only_when_primary_is_missing() {
+        let selected = select_token_environment(
+            Ok(Some("primary-token".into())),
+            || anyhow::bail!("legacy value is invalid"),
+            Some("saved-token".into()),
+        )
+        .unwrap();
+        assert_eq!(selected, "primary-token");
+
+        let selected = select_token_environment(
+            Ok(None),
+            || Ok(Some("legacy-token".into())),
+            Some("saved-token".into()),
+        )
+        .unwrap();
+        assert_eq!(selected, "legacy-token");
+
+        let selected =
+            select_token_environment(Ok(None), || Ok(None), Some("saved-token".into())).unwrap();
+        assert_eq!(selected, "saved-token");
+    }
+
+    #[test]
+    fn systemd_unit_read_distinguishes_absence_from_read_failure() {
+        assert!(!systemd_unit_matches(Err(io::ErrorKind::NotFound.into()), "expected").unwrap());
+        assert!(systemd_unit_matches(Ok("expected".into()), "expected").unwrap());
+        assert!(!systemd_unit_matches(Ok("different".into()), "expected").unwrap());
+        let error = systemd_unit_matches(Err(io::ErrorKind::PermissionDenied.into()), "expected")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
 
     #[test]
     fn antigravity_installer_choices_select_sharing_without_enabling_early() {
@@ -6059,7 +5986,8 @@ mod tests {
             Some(Path::new("/owned/bin/bridge")),
             Path::new("/new/data/state"),
             &native_home,
-        );
+        )
+        .unwrap();
 
         assert_eq!(merged.profile, "alpha");
         assert_eq!(merged.name, "Alpha identity");
@@ -6113,7 +6041,8 @@ mod tests {
             None,
             Path::new("/new/data/state"),
             &native_home,
-        );
+        )
+        .unwrap();
         assert_eq!(planned.message_access, updated_list.message_access);
 
         // Older saved installation lists remain readable and preserve the

@@ -102,7 +102,13 @@ pub(super) fn spawn(inner: Arc<Inner>, request: Value, generation: u64) -> Resul
             .lock()
             .map_err(|_| anyhow!("external turn lock poisoned"))?;
         if turns.contains_key(&thread_id) {
-            bail!("thread already has an external request in progress");
+            bail!(
+                "{}",
+                inner
+                    .config
+                    .language
+                    .message(crate::i18n::MessageKey::NativeExternalRequestAlreadyActive)
+            );
         }
         turns.insert(
             thread_id.clone(),
@@ -167,6 +173,17 @@ pub(super) fn validate_binding(inner: &Inner, binding: &NativeRunBinding) -> Res
         binding,
         inner.connection_generation.load(Ordering::Acquire),
     )
+    .map_err(|error| localized_response_validation_error(inner.config.language, error))
+}
+
+fn localized_response_validation_error(
+    language: crate::i18n::Language,
+    error: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow!(
+        "{}: {error:#}",
+        language.message(crate::i18n::MessageKey::NativeExternalResponseInactive)
+    )
 }
 
 pub(super) fn take_binding(params: &mut Value) -> Result<Option<NativeRunBinding>> {
@@ -207,9 +224,15 @@ fn run_response(result: Result<()>, language: crate::i18n::Language) -> Value {
     }
 }
 
-fn validate_admission(preferences: &NativeFeaturePreferences) -> Result<()> {
+fn validate_admission(
+    preferences: &NativeFeaturePreferences,
+    language: crate::i18n::Language,
+) -> Result<()> {
     if !preferences.antigravity_enabled {
-        bail!("Antigravity is disabled in this profile");
+        bail!(
+            "{}",
+            language.message(crate::i18n::MessageKey::NativeExternalProfileDisabled)
+        );
     }
     Ok(())
 }
@@ -534,13 +557,14 @@ async fn run(
     binding: &NativeRunBinding,
     mut canceled: watch::Receiver<bool>,
 ) -> Result<()> {
+    let language = native.inner.config.language;
     if required_string(params, "executor")?
         != crate::model_catalog::ModelExecutor::Antigravity.as_str()
     {
         bail!("unsupported external executor");
     }
     let preferences = native.read_native_feature_preferences()?;
-    validate_admission(&preferences)?;
+    validate_admission(&preferences, language)?;
     let thread_id = required_string(params, "threadId")?;
     let turn_id = required_string(params, "turnId")?;
     let run_id = required_string(params, "runId")?;
@@ -554,7 +578,6 @@ async fn run(
         .unwrap_or_else(std::env::current_exe)?;
     let entry = crate::agy_mcp::native_server_entry(&worker, cwd)?;
     crate::agy_mcp::write_workspace_config(cwd, entry)?;
-    let language = native.inner.config.language;
     let prompt = prepare_prompt(params, language)?;
     let agent =
         crate::agy::TemporaryAgent::create(cwd, &agent_system_instructions(params, language))?;
@@ -587,13 +610,13 @@ async fn run(
     )
     .await?;
     let outcome = async {
-        if *canceled.borrow() { bail!("external turn was interrupted"); }
+        if *canceled.borrow() { bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)); }
         session.send_text(&prompt.text).await?;
         let mut text_streamed = false;
         let mut stream_diagnostics = StreamDiagnostics::default();
         loop {
             let event = tokio::select! {
-                _ = canceled.changed() => bail!("external turn was interrupted"),
+                _ = canceled.changed() => bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)),
                 event = session.next_event() => match event {
                     Some(Ok(event)) => event,
                     Some(Err(error)) => {
@@ -602,7 +625,7 @@ async fn run(
                     }
                     None => {
                         stream_diagnostics.ended_without_terminal(false).log();
-                        bail!("AGY exited before a terminal result");
+                        bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalCliExitedEarly));
                     }
                 },
             };
@@ -649,6 +672,17 @@ async fn run(
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn localized_inactive_response_wrapper_preserves_full_cause_and_code() {
+        let cause = anyhow::anyhow!("native rejection code=-32041")
+            .context("external response validation failed");
+        let wrapped = localized_response_validation_error(crate::i18n::Language::English, cause);
+        assert_eq!(
+            format!("{wrapped:#}"),
+            "The external response is no longer active.: external response validation failed: native rejection code=-32041"
+        );
+    }
 
     fn variant_catalog() -> crate::agy::Catalog {
         crate::agy::Catalog {
@@ -865,21 +899,28 @@ mod tests {
         let mut preferences = NativeFeaturePreferences::default();
         assert_eq!(
             run_response(
-                validate_admission(&preferences),
+                validate_admission(&preferences, crate::i18n::Language::English),
                 crate::i18n::Language::English
             ),
-            json!({"success":false,"error":"Antigravity execution failed: Antigravity is disabled in this profile"})
+            json!({"success":false,"error":"Antigravity execution failed: Antigravity is disabled in this profile."})
         );
         preferences.antigravity_enabled = true;
         assert_eq!(
             run_response(
-                validate_admission(&preferences),
+                validate_admission(&preferences, crate::i18n::Language::English),
                 crate::i18n::Language::English
             ),
             json!({"success":true,"error":null})
         );
         preferences.antigravity_enabled = false;
-        assert!(validate_admission(&preferences).is_err());
+        assert!(validate_admission(&preferences, crate::i18n::Language::English).is_err());
+        assert_eq!(
+            run_response(
+                validate_admission(&preferences, crate::i18n::Language::Japanese),
+                crate::i18n::Language::Japanese
+            ),
+            json!({"success":false,"error":"Antigravityの実行に失敗しました: このプロファイルではAntigravityが無効になっています。"})
+        );
     }
 
     #[test]

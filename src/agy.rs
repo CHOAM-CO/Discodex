@@ -119,6 +119,17 @@ fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     current.as_str()
 }
 
+fn json_value_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 /// Parse one documented `stream-json` line without discarding unknown fields.
 pub fn parse_event(value: Value) -> Result<Event> {
     match value.get(protocol::EVENT).and_then(Value::as_str) {
@@ -163,19 +174,34 @@ pub fn parse_event(value: Value) -> Result<Event> {
                     raw: step,
                 });
             }
-            let Some(step_type) = string_at(&step, &[protocol::STEP_TYPE]) else {
-                bail!("AGY stream-json step_update payload omitted its required step_type");
+            let step_type = match step.get(protocol::STEP_TYPE) {
+                Some(Value::String(step_type)) => step_type.clone(),
+                // Preserve lifecycle updates that describe state before naming
+                // a step type; callers can inspect the untouched event if needed.
+                None | Some(Value::Null) => return Ok(Event::Other(value)),
+                Some(value) => {
+                    bail!(
+                        "AGY stream-json step_update step_type must be a string, got {}",
+                        json_value_type(value)
+                    );
+                }
             };
-            match step_type {
-                protocol::AGENT_RESPONSE => match string_at(&step, &[protocol::TEXT_DELTA]) {
-                    Some(text) => Ok(Event::TextDelta {
+            match step_type.as_str() {
+                protocol::AGENT_RESPONSE => match step.get(protocol::TEXT_DELTA) {
+                    Some(Value::String(text)) => Ok(Event::TextDelta {
                         conversation_id,
                         step_index,
                         state,
                         text: text.to_owned(),
                         raw: step,
                     }),
-                    None => bail!("AGY agent_response step omitted its required text_delta"),
+                    // AGY also emits agent_response lifecycle/status updates that
+                    // do not carry text. Preserve the full event for future callers.
+                    None | Some(Value::Null) => Ok(Event::Other(value)),
+                    Some(value) => bail!(
+                        "AGY agent_response text_delta must be a string, got {}",
+                        json_value_type(value)
+                    ),
                 },
                 protocol::TOOL => Ok(Event::ToolStep {
                     conversation_id,
@@ -1430,6 +1456,45 @@ mod tests {
             }
         );
 
+        let empty_delta = parse_event(json!({
+            "event":"step_update",
+            "step_update":{"step_type":"agent_response","text_delta":""}
+        }))
+        .unwrap();
+        assert!(matches!(empty_delta, Event::TextDelta { text, .. } if text.is_empty()));
+
+        let active_tool_lifecycle = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"tool","state":"ACTIVE","step_index":8}
+        });
+        assert_eq!(
+            parse_event(active_tool_lifecycle.clone()).unwrap(),
+            Event::ToolStep {
+                conversation_id: None,
+                step_index: Some(8),
+                state: Some("ACTIVE".into()),
+                tool_name: None,
+                tool_info: None,
+                raw: active_tool_lifecycle["step_update"].clone(),
+            }
+        );
+
+        let incomplete_done_tool = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"tool","state":"DONE","tool_name":"tool_name"}
+        });
+        assert_eq!(
+            parse_event(incomplete_done_tool.clone()).unwrap(),
+            Event::ToolStep {
+                conversation_id: None,
+                step_index: None,
+                state: Some("DONE".into()),
+                tool_name: Some("tool_name".into()),
+                tool_info: None,
+                raw: incomplete_done_tool["step_update"].clone(),
+            }
+        );
+
         let tool = parse_event(
             json!({"event":"step_update","step_update":{"conversation_id":"tool-conversation","step_index":7,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"call_id":"tool-call-7","parameters":{"command":"printf ok"},"output":"ok"}}}),
         ).unwrap();
@@ -1482,14 +1547,41 @@ mod tests {
             Event::Other(future_step)
         );
 
+        let lifecycle = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"agent_response","conversation_id":"c","state":"ACTIVE","step_index":4}
+        });
+        assert_eq!(
+            parse_event(lifecycle.clone()).unwrap(),
+            Event::Other(lifecycle)
+        );
+
+        let null_delta_lifecycle = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"agent_response","conversation_id":"c","state":"ACTIVE","text_delta":null}
+        });
+        assert_eq!(
+            parse_event(null_delta_lifecycle.clone()).unwrap(),
+            Event::Other(null_delta_lifecycle)
+        );
+
+        let completed_lifecycle = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"agent_response","conversation_id":"c","state":"DONE","step_index":4}
+        });
+        assert_eq!(
+            parse_event(completed_lifecycle.clone()).unwrap(),
+            Event::Other(completed_lifecycle)
+        );
+
         let malformed_delta = json!({
             "event":"step_update",
-            "step_update":{"step_type":"agent_response","conversation_id":"c"}
+            "step_update":{"step_type":"agent_response","text_delta":42}
         });
         let delta_error = parse_event(malformed_delta).unwrap_err();
         assert_eq!(
             delta_error.to_string(),
-            "AGY agent_response step omitted its required text_delta"
+            "AGY agent_response text_delta must be a string, got number"
         );
         let malformed_result = json!({"event":"result"});
         let result_error = parse_event(malformed_result).unwrap_err();
@@ -1503,14 +1595,32 @@ mod tests {
             missing_status.to_string(),
             "AGY stream-json result payload omitted its required status"
         );
-        let missing_step_type = parse_event(json!({
+        let missing_step_type = json!({
             "event":"step_update",
             "step_update":{"conversation_id":"c"}
+        });
+        assert_eq!(
+            parse_event(missing_step_type.clone()).unwrap(),
+            Event::Other(missing_step_type)
+        );
+
+        let null_step_type = json!({
+            "event":"step_update",
+            "step_update":{"step_type":null,"state":"ACTIVE"}
+        });
+        assert_eq!(
+            parse_event(null_step_type.clone()).unwrap(),
+            Event::Other(null_step_type)
+        );
+
+        let invalid_step_type = parse_event(json!({
+            "event":"step_update",
+            "step_update":{"step_type":false}
         }))
         .unwrap_err();
         assert_eq!(
-            missing_step_type.to_string(),
-            "AGY stream-json step_update payload omitted its required step_type"
+            invalid_step_type.to_string(),
+            "AGY stream-json step_update step_type must be a string, got boolean"
         );
     }
 

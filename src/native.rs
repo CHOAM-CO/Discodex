@@ -77,6 +77,101 @@ struct PendingRequest {
     observation_fence: u64,
 }
 
+/// Recover an in-flight native response from a poisoned map so its original
+/// caller receives the actual response instead of waiting forever.
+fn take_pending_response(
+    pending: &Mutex<HashMap<String, PendingRequest>>,
+    key: &str,
+) -> (Option<PendingRequest>, bool) {
+    match pending.lock() {
+        Ok(mut pending) => (pending.remove(key), false),
+        Err(poisoned) => (poisoned.into_inner().remove(key), true),
+    }
+}
+
+fn drain_pending_responses(
+    pending: &Mutex<HashMap<String, PendingRequest>>,
+) -> (Vec<PendingRequest>, bool) {
+    match pending.lock() {
+        Ok(mut pending) => (pending.drain().map(|(_, request)| request).collect(), false),
+        Err(poisoned) => (
+            poisoned
+                .into_inner()
+                .drain()
+                .map(|(_, request)| request)
+                .collect(),
+            true,
+        ),
+    }
+}
+
+fn publish_native_failure(inner: &Inner, detail: &str) {
+    let detail = crate::discord::sanitize_discord_error(&inner.config, detail);
+    tracing::error!(%detail, "native bridge failure");
+    publish_event(
+        inner,
+        json!({"method":"error","params":{"error":{"message":detail}}}),
+    );
+}
+
+#[cfg(test)]
+mod pending_response_lock_tests {
+    use super::*;
+
+    fn pending(method: &str) -> PendingRequest {
+        let (sender, _receiver) = oneshot::channel();
+        PendingRequest {
+            sender,
+            method: method.to_owned(),
+            observation_fence: 0,
+        }
+    }
+
+    fn poison<T: Send + 'static>(mutex: Arc<Mutex<T>>) {
+        let poisoned = mutex.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoned.lock().unwrap();
+            panic!("synthetic pending-map poison");
+        })
+        .join();
+    }
+
+    #[test]
+    fn response_entry_remains_available_to_its_caller_after_lock_poison() {
+        let pending = Arc::new(Mutex::new(HashMap::from([(
+            "response-1".to_owned(),
+            pending("thread/read"),
+        )])));
+        poison(pending.clone());
+
+        let (request, poisoned) = take_pending_response(&pending, "response-1");
+        assert!(poisoned);
+        assert_eq!(request.expect("response is routed").method, "thread/read");
+        assert!(take_pending_response(&pending, "response-1").0.is_none());
+    }
+
+    #[test]
+    fn disconnect_drains_waiters_even_when_pending_map_is_poisoned() {
+        let pending = Arc::new(Mutex::new(HashMap::from([
+            ("response-1".to_owned(), pending("thread/read")),
+            ("response-2".to_owned(), pending("turn/start")),
+        ])));
+        poison(pending.clone());
+
+        let (mut requests, poisoned) = drain_pending_responses(&pending);
+        assert!(poisoned);
+        requests.sort_by(|left, right| left.method.cmp(&right.method));
+        assert_eq!(
+            requests
+                .into_iter()
+                .map(|request| request.method)
+                .collect::<Vec<_>>(),
+            ["thread/read", "turn/start"],
+        );
+        assert!(drain_pending_responses(&pending).0.is_empty());
+    }
+}
+
 struct BridgeEventBuffer {
     sender: mpsc::UnboundedSender<Value>,
     receiver: Option<mpsc::UnboundedReceiver<Value>>,
@@ -1339,77 +1434,104 @@ impl Native {
             }
             return Ok(self.thread_state());
         }
-        let old = self.thread_state();
-        let previous = old
-            .get("modelProvider")
-            .and_then(Value::as_str)
-            .zip(old.get("model").and_then(Value::as_str))
-            .map(|(provider, model)| ModelSelection {
-                executor: if old.get("modelExecutor").and_then(Value::as_str)
-                    == Some(ModelExecutor::Antigravity.as_str())
-                {
-                    ModelExecutor::Antigravity
-                } else {
-                    ModelExecutor::Codex
-                },
-                provider: provider.into(),
-                model: model.into(),
-            })
-            .or(saved.model_selection.clone())
-            .context("cannot determine the current model/provider for restoring the thread")?;
-        let mut params = json!({"threadId":thread_id});
-        let child_model = self
-            .prepare_model_params(&mut params, Some(selection))
-            .await?;
-        let mut rollback = json!({"threadId":thread_id});
-        apply_model_selection(&mut rollback, &previous);
-        merge_config_overrides(
-            &mut rollback,
-            &self
-                .inner
-                .applied_subagent_model
-                .lock()
-                .map_err(|_| anyhow!("subagent model lock poisoned"))?
-                .clone(),
-        );
-        // Subscribe before detach so a fast background unload cannot lose its closing event.
-        let mut events = self.subscribe();
-        let response = switch_model_thread(
-            |method, params| self.request_raw(method, params),
-            &mut events,
-            &thread_id,
-            &params,
-            selection,
-            &rollback,
-            &previous,
-        )
-        .await?;
-        if let Err(error) = store.save_model_selection(selection) {
-            let restored = switch_model_thread(
-                |method, params| self.request_raw(method, params),
-                &mut events,
-                &thread_id,
-                &rollback,
-                &previous,
-                &params,
-                selection,
-            )
-            .await;
-            return match restored {
-                Ok(response) => {
-                    *self.inner.thread_state.lock().map_err(|_|anyhow!("thread state lock poisoned"))?=thread_state_summary(&response);
-                    Err(error).context("could not persist the selected model; restored the previous conversation")
-                }
-                Err(restore_error) => Err(error).context(format!("could not persist the selected model; restoring the previous model also failed: {restore_error:#}")),
-            };
-        }
-        *self
+        let old = self
             .inner
             .thread_state
             .lock()
-            .map_err(|_| anyhow!("thread state lock poisoned"))? = thread_state_summary(&response);
-        self.remember_subagent_model(child_model)?;
-        Ok(thread_state_summary(&response))
+            .map_err(|_| anyhow!("thread state lock poisoned"))?
+            .clone();
+        let mut params = json!({
+            "threadId": thread_id,
+            "baseInstructions": crate::instructions::agent_base_instructions(
+                &self.inner.config.name,
+                self.inner.config.language
+            )
+        });
+        let child_model = self
+            .prepare_model_params(&mut params, Some(selection))
+            .await?;
+        // A loaded thread ignores executor/provider overrides on resume. Forking
+        // preserves its history while applying the requested configuration.
+        preserve_thread_fork_settings(&mut params, &old, self.inner.config.permissions.as_deref());
+
+        let response = self
+            .request_raw("thread/fork", params.clone())
+            .await
+            .context("fork the current Codex conversation with the selected model")?;
+        let new_thread_id = match (|| {
+            validate_model_selection_response(&response, selection)?;
+            let id = response_thread_id(&response)?;
+            if id == thread_id {
+                bail!("Codex returned the existing thread ID for a history-preserving model fork");
+            }
+            if response
+                .pointer("/thread/ephemeral")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                bail!("Codex returned an ephemeral thread for a persistent model switch");
+            }
+            Ok(id)
+        })() {
+            Ok(id) => id,
+            Err(error) => {
+                if let Ok(id) = response_thread_id(&response) {
+                    if id != thread_id {
+                        if let Err(cleanup_error) = self
+                            .request_raw("thread/unsubscribe", json!({"threadId":id}))
+                            .await
+                        {
+                            tracing::warn!(%cleanup_error, "could not detach rejected model fork");
+                        }
+                    }
+                }
+                return Err(error);
+            }
+        };
+        let next_thread_state = thread_state_after_fork(&response, &old, &params);
+        let commit = (|| -> Result<()> {
+            let mut active_thread = self
+                .inner
+                .thread_id
+                .lock()
+                .map_err(|_| anyhow!("thread ID lock poisoned"))?;
+            if *active_thread != thread_id {
+                bail!("active Codex thread changed before the model fork was committed");
+            }
+            let mut active_state = self
+                .inner
+                .thread_state
+                .lock()
+                .map_err(|_| anyhow!("thread state lock poisoned"))?;
+            let mut active_child_model = self
+                .inner
+                .applied_subagent_model
+                .lock()
+                .map_err(|_| anyhow!("subagent model lock poisoned"))?;
+
+            store.save_thread_and_model_selection(&new_thread_id, selection)?;
+            *active_thread = new_thread_id.clone();
+            *active_state = next_thread_state.clone();
+            *active_child_model = child_model;
+            Ok(())
+        })();
+        if let Err(error) = commit {
+            if let Err(cleanup_error) = self
+                .request_raw("thread/unsubscribe", json!({"threadId":new_thread_id}))
+                .await
+            {
+                tracing::warn!(%cleanup_error, "could not detach uncommitted model fork");
+            }
+            return Err(error).context("could not commit the selected model fork");
+        }
+
+        if let Err(error) = self
+            .request_raw("thread/unsubscribe", json!({"threadId":thread_id}))
+            .await
+        {
+            tracing::warn!(%error, "could not detach previous thread after model fork");
+        }
+        Ok(next_thread_state)
     }
 
     pub(crate) fn save_model_selection(&self, selection: &ModelSelection) -> Result<()> {
@@ -3095,6 +3217,69 @@ fn apply_model_selection(params: &mut Value, selection: &ModelSelection) {
         params["modelProvider"] = Value::String(selection.provider.clone());
     }
 }
+
+fn preserve_thread_fork_settings(
+    params: &mut Value,
+    previous: &Value,
+    configured_profile: Option<&str>,
+) {
+    for field in ["approvalPolicy", "approvalsReviewer", "serviceTier"] {
+        if let Some(value) = previous.get(field).filter(|value| !value.is_null()) {
+            params[field] = value.clone();
+        }
+    }
+    if let Some(cwd) = previous.get("cwd").and_then(Value::as_str) {
+        params["cwd"] = Value::String(cwd.to_owned());
+    }
+    if let Some(roots) = previous
+        .get("runtimeWorkspaceRoots")
+        .filter(|value| !value.is_null())
+    {
+        params["runtimeWorkspaceRoots"] = roots.clone();
+    }
+    if let Some(instructions) = previous
+        .get("developerInstructions")
+        .or_else(|| previous.pointer("/collaborationMode/settings/developerInstructions"))
+        .filter(|value| !value.is_null())
+    {
+        params["developerInstructions"] = instructions.clone();
+    }
+    if let Some(profile) = previous
+        .pointer("/activePermissionProfile/id")
+        .and_then(Value::as_str)
+    {
+        params["permissions"] = Value::String(profile.to_owned());
+    } else if previous
+        .get("sandbox")
+        .or_else(|| previous.get("sandboxPolicy"))
+        .is_none_or(Value::is_null)
+        && let Some(profile) = configured_profile
+    {
+        params["permissions"] = Value::String(profile.to_owned());
+    }
+    // A thread snapshot's `sandbox` is SandboxPolicy, while thread/fork accepts
+    // only SandboxMode. When policy is observed, leave both unset so core fork
+    // restores the persisted permission settings from the source history.
+}
+
+fn thread_state_after_fork(response: &Value, previous: &Value, fork_params: &Value) -> Value {
+    let mut next = thread_state_summary(response);
+    if next.get("collaborationMode").is_none()
+        && let Some(value) = previous.get("collaborationMode")
+    {
+        next["collaborationMode"] = value.clone();
+    }
+    if next.get("developerInstructions").is_none() {
+        if let Some(value) = fork_params
+            .get("developerInstructions")
+            .or_else(|| previous.get("developerInstructions"))
+        {
+            next["developerInstructions"] = value.clone();
+        }
+    }
+    next
+}
+
 fn validate_model_selection_response(response: &Value, selection: &ModelSelection) -> Result<()> {
     let thread = thread_state_summary(response);
     let model = thread.get("model").and_then(Value::as_str);
@@ -3275,6 +3460,8 @@ fn thread_state_summary(response: &Value) -> Value {
         "modelProvider",
         "modelExecutor",
         "serviceTier",
+        "runtimeWorkspaceRoots",
+        "developerInstructions",
         "permissionProfile",
         "activePermissionProfile",
         "sandboxPolicy",
@@ -3422,13 +3609,29 @@ fn spawn_reader(
                         };
                         let id = value["id"].clone();
                         tokio::spawn(async move {
-                            let _ = native
+                            let detail = crate::discord::sanitize_discord_error(
+                                &native.inner.config,
+                                &format!("{error:#}"),
+                            );
+                            if let Err(response_error) = native
                                 .respond_for_generation(
                                     generation,
                                     id,
-                                    json!({"success":false,"error":format!("{error:#}")}),
+                                    json!({"success":false,"error":detail}),
                                 )
-                                .await;
+                                .await
+                            {
+                                let response_detail = crate::discord::sanitize_discord_error(
+                                    &native.inner.config,
+                                    &format!("{response_error:#}"),
+                                );
+                                publish_native_failure(
+                                    &native.inner,
+                                    &format!(
+                                        "Could not return the external execution error to Codex app-server. Native error: {detail}; response error: {response_detail}"
+                                    ),
+                                );
+                            }
                         });
                     }
                     continue;
@@ -3489,11 +3692,13 @@ fn spawn_reader(
                     Value::String(value) => value.clone(),
                     _ => id.to_string(),
                 };
-                let pending = inner
-                    .pending
-                    .lock()
-                    .ok()
-                    .and_then(|mut pending| pending.remove(&key));
+                let (pending, map_poisoned) = take_pending_response(&inner.pending, &key);
+                if map_poisoned {
+                    publish_native_failure(
+                        &inner,
+                        "The native pending-response map lock was poisoned while routing a response.",
+                    );
+                }
                 if let Some(pending) = pending {
                     let mut response = if let Some(error) = value.get("error") {
                         Err(NativeRequestError::from_response(
@@ -3578,14 +3783,24 @@ fn spawn_reader(
             if inner.connection_generation.load(Ordering::Acquire) == generation {
                 mark_disconnected(&inner);
                 inner.writer.lock().await.take();
-                if let Ok(mut pending) = inner.pending.lock() {
-                    for (_, pending) in pending.drain() {
-                        let _ = pending.sender.send(Err(NativeRequestError {
-                            method: pending.method,
-                            code: None,
-                            message: "connection closed".to_owned(),
-                        }));
-                    }
+                let (pending, map_poisoned) = drain_pending_responses(&inner.pending);
+                if map_poisoned {
+                    publish_native_failure(
+                        &inner,
+                        "The native pending-response map lock was poisoned while the connection closed.",
+                    );
+                }
+                for pending in pending {
+                    let _ = pending.sender.send(Err(NativeRequestError {
+                        method: pending.method,
+                        code: None,
+                        message: if map_poisoned {
+                            "connection closed while the pending-response map lock was poisoned"
+                                .to_owned()
+                        } else {
+                            "connection closed".to_owned()
+                        },
+                    }));
                 }
             }
         }
@@ -3737,6 +3952,117 @@ mod thread_state_tests {
     use super::*;
     use std::io::{self, Write};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn model_fork_params_apply_requested_executor_and_keep_thread_settings() {
+        let selection = ModelSelection {
+            executor: ModelExecutor::Codex,
+            provider: "example-provider".to_owned(),
+            model: "example-model".to_owned(),
+        };
+        let mut params = json!({"threadId":"source-thread"});
+        apply_model_selection(&mut params, &selection);
+        preserve_thread_fork_settings(
+            &mut params,
+            &json!({
+                "approvalPolicy":"on-request",
+                "approvalsReviewer":"user",
+                "serviceTier":"priority",
+                "cwd":"/workspace/project",
+                "runtimeWorkspaceRoots":["/workspace/project"],
+                "developerInstructions":"keep current workspace guidance",
+                "activePermissionProfile":{"id":"workspace-write"}
+            }),
+            Some("configured-profile"),
+        );
+
+        assert_eq!(params["threadId"], "source-thread");
+        assert_eq!(params["model"], "example-model");
+        assert_eq!(params["modelProvider"], "example-provider");
+        assert_eq!(params["config"]["model_executor"], "codex");
+        assert_eq!(params["approvalPolicy"], "on-request");
+        assert_eq!(params["approvalsReviewer"], "user");
+        assert_eq!(params["serviceTier"], "priority");
+        assert_eq!(params["cwd"], "/workspace/project");
+        assert_eq!(params["runtimeWorkspaceRoots"][0], "/workspace/project");
+        assert_eq!(
+            params["developerInstructions"],
+            "keep current workspace guidance"
+        );
+        assert_eq!(params["permissions"], "workspace-write");
+        assert!(params.get("sandbox").is_none());
+    }
+
+    #[test]
+    fn fork_preserves_observed_sandbox_before_configured_profile_fallback() {
+        let mut params = json!({"threadId":"source-thread"});
+        preserve_thread_fork_settings(
+            &mut params,
+            &json!({"sandbox":{"type":"workspaceWrite", "networkAccess":false}}),
+            Some("configured-profile"),
+        );
+        assert!(params.get("sandbox").is_none());
+        assert!(params.get("permissions").is_none());
+    }
+
+    #[test]
+    fn fork_response_keeps_effective_instructions_for_a_later_provider_switch() {
+        let original_state = json!({
+            "collaborationMode":{
+                "mode":"custom",
+                "settings":{"developerInstructions":"keep the current workflow"}
+            }
+        });
+        let mut first_params = json!({"threadId":"source-thread"});
+        preserve_thread_fork_settings(&mut first_params, &original_state, None);
+        let first_response = json!({"thread":{
+            "id":"first-fork",
+            "model":"example-model",
+            "modelProvider":"example-provider",
+            "modelExecutor":"codex"
+        }});
+        let first_state = thread_state_after_fork(&first_response, &original_state, &first_params);
+
+        let mut second_params = json!({"threadId":"first-fork"});
+        preserve_thread_fork_settings(&mut second_params, &first_state, None);
+
+        assert_eq!(
+            second_params["developerInstructions"],
+            "keep the current workflow"
+        );
+        assert_eq!(
+            second_params["developerInstructions"],
+            first_params["developerInstructions"]
+        );
+        assert_eq!(
+            first_state["collaborationMode"],
+            original_state["collaborationMode"]
+        );
+    }
+
+    #[test]
+    fn fork_response_validation_requires_the_requested_executor_and_model() {
+        let selection = ModelSelection {
+            executor: ModelExecutor::Codex,
+            provider: "example-provider".to_owned(),
+            model: "example-model".to_owned(),
+        };
+        let response = json!({"thread":{
+            "id":"forked-thread",
+            "model":"example-model",
+            "modelProvider":"example-provider",
+            "modelExecutor":"codex",
+            "ephemeral":false
+        }});
+        validate_model_selection_response(&response, &selection).unwrap();
+        let mismatched = json!({"thread":{
+            "id":"forked-thread",
+            "model":"other-model",
+            "modelProvider":"example-provider",
+            "modelExecutor":"codex"
+        }});
+        assert!(validate_model_selection_response(&mismatched, &selection).is_err());
+    }
 
     #[tokio::test]
     async fn approval_policy_update_waits_for_matching_native_confirmation() {
