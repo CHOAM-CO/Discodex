@@ -113,7 +113,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-활성 catalog와 등록된 profile이 모델 선택지를 제공합니다. 모델을 선택하면 같은 영구 thread에서 provider를 전환하고 대화 기록을 유지합니다. 같은 provider 안의 변경은 바로 적용할 수 있으며, 공급자·실행기 변경은 진행 중 응답이나 음성 통화가 끝난 뒤 다시 선택해야 하며 대기열에 넣지 않습니다. 기능과 추론 강도 선택지는 native 메타데이터를 따릅니다. 호환 catalog에 사용한 기본값은 공급자의 기능을 검증한 결과가 아닙니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/)와 [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)를 참고하세요.
+활성 catalog와 등록된 profile이 모델 선택지를 제공합니다. 모델을 선택하면 같은 영구 thread에서 provider를 전환하고 대화 기록을 유지합니다. 실제 공급자·실행기 전환은 native 포크의 기록 보존 전환을 사용합니다. 같은 provider 안의 변경은 바로 적용할 수 있으며, 공급자·실행기 변경은 진행 중 응답이나 음성 통화가 끝난 뒤 다시 선택해야 하며 대기열에 넣지 않습니다. 기능과 추론 강도 선택지는 native 메타데이터를 따릅니다. 호환 catalog에 사용한 기본값은 공급자의 기능을 검증한 결과가 아닙니다. [Codex provider 설정 가이드](https://developers.openai.com/codex/config-advanced/)와 [공식 모델 메타데이터 스키마](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)를 참고하세요.
 
 메인·기본 하위 모델 선택은 실행기·공급자·모델을 함께 보존하며, 자식은 부모를 전환하지 않고 다른 등록 공급자를 사용할 수 있다. `[model_providers.<id>.capabilities]`의 `encrypted_content`와 `agent_messages`는 독립적인 선택적 불리언 설정이다. 생략하면 native 기본 분류를 따른다. OpenAI·Azure Responses는 암호화 기록 재사용을 지원하는 것으로, native OpenAI 분류만 `AgentMessage` 형식을 지원하는 것으로 본다. 명시적 값은 실제 공급자의 프로토콜 지원에 맞춰 설정한다. `encrypted_content = true`여도 native agent-message 형식이 미지원이면 해당 불투명 본문은 일반 assistant 메시지 안에서 이용 불가 안내로 표시된다. 원본 기록은 유지한다. 자세한 내용은 [기록 호환성](design.ko.md#공급자-변경과-암호화된-기록)을 참고한다.
 

@@ -1,0 +1,458 @@
+{
+  "update.diagnostic_selected_release_not_latest": {
+    "en": "The selected release is no longer the latest discovered release.",
+    "ko": "선택한 릴리스가 더 이상 가장 최근에 확인한 릴리스가 아닙니다.",
+    "zh": "所选版本已不是最近发现的版本。",
+    "ja": "選択したリリースは、検出済みの最新リリースではありません。"
+  },
+  "update.diagnostic_selected_release_not_pending": {
+    "en": "The selected release is no longer pending.",
+    "ko": "선택한 릴리스가 더 이상 대기 중이 아닙니다.",
+    "zh": "所选版本已不再处于待处理状态。",
+    "ja": "選択したリリースは保留中ではありません。"
+  },
+  "update.diagnostic_state_path_has_no_parent": {
+    "en": "The update state path has no parent directory.",
+    "ko": "업데이트 상태 경로에 상위 디렉터리가 없습니다.",
+    "zh": "更新状态路径没有父目录。",
+    "ja": "更新状態のパスに親ディレクトリがありません。"
+  },
+  "update.diagnostic_create_state_directory": {
+    "en": "Create update state directory {0}.",
+    "ko": "업데이트 상태 디렉터리 {0}을(를) 만듭니다.",
+    "zh": "创建更新状态目录 {0}。",
+    "ja": "更新状態ディレクトリ {0} を作成します。"
+  },
+  "update.diagnostic_open_state_lock": {
+    "en": "Open update state lock {0}.",
+    "ko": "업데이트 상태 잠금 파일 {0}을(를) 엽니다.",
+    "zh": "打开更新状态锁文件 {0}。",
+    "ja": "更新状態ロック {0} を開きます。"
+  },
+  "update.diagnostic_lock_update_state": {
+    "en": "Lock update state.",
+    "ko": "업데이트 상태를 잠급니다.",
+    "zh": "锁定更新状态。",
+    "ja": "更新状態をロックします。"
+  },
+  "update.diagnostic_stage_update_state": {
+    "en": "Stage update state.",
+    "ko": "업데이트 상태를 임시 저장합니다.",
+    "zh": "暂存更新状态。",
+    "ja": "更新状態を一時保存します。"
+  },
+  "update.diagnostic_serialize_update_state": {
+    "en": "Serialize update state.",
+    "ko": "업데이트 상태를 직렬화합니다.",
+    "zh": "序列化更新状态。",
+    "ja": "更新状態をシリアライズします。"
+  },
+  "update.diagnostic_flush_update_state": {
+    "en": "Flush update state to storage.",
+    "ko": "업데이트 상태를 저장소에 기록합니다.",
+    "zh": "将更新状态刷新到存储中。",
+    "ja": "更新状態をストレージにフラッシュします。"
+  },
+  "update.diagnostic_replace_update_state": {
+    "en": "Replace the update state file.",
+    "ko": "업데이트 상태 파일을 교체합니다.",
+    "zh": "替换更新状态文件。",
+    "ja": "更新状態ファイルを置き換えます。"
+  },
+  "update.diagnostic_read_update_state": {
+    "en": "Read update state {0}.",
+    "ko": "업데이트 상태 {0}을(를) 읽습니다.",
+    "zh": "读取更新状态 {0}。",
+    "ja": "更新状態 {0} を読み込みます。"
+  },
+  "update.diagnostic_read_path": {
+    "en": "Read {0}.",
+    "ko": "{0}을(를) 읽습니다.",
+    "zh": "读取 {0}。",
+    "ja": "{0} を読み込みます。"
+  },
+  "update.diagnostic_check_releases": {
+    "en": "Check Discodex releases.",
+    "ko": "Discodex 릴리스를 확인합니다.",
+    "zh": "检查 Discodex 发行版。",
+    "ja": "Discodex のリリースを確認します。"
+  },
+  "update.diagnostic_github_releases_endpoint_error": {
+    "en": "The GitHub releases endpoint returned an error.",
+    "ko": "GitHub 릴리스 엔드포인트에서 오류를 반환했습니다.",
+    "zh": "GitHub releases 端点返回了错误。",
+    "ja": "GitHub の releases エンドポイントがエラーを返しました。"
+  },
+  "update.diagnostic_parse_latest_release": {
+    "en": "Parse the latest stable Discodex release.",
+    "ko": "최신 안정 Discodex 릴리스를 해석합니다.",
+    "zh": "解析最新的 Discodex 稳定版。",
+    "ja": "最新の安定版 Discodex リリースを解析します。"
+  },
+  "update.diagnostic_resolve_release_tag_commit": {
+    "en": "Resolve the release tag to a commit.",
+    "ko": "릴리스 태그에 해당하는 커밋을 찾습니다.",
+    "zh": "将发行版标签解析为提交。",
+    "ja": "リリースタグに対応するコミットを解決します。"
+  },
+  "update.diagnostic_github_resolve_release_tag": {
+    "en": "GitHub could not resolve the release tag.",
+    "ko": "GitHub에서 릴리스 태그를 찾지 못했습니다.",
+    "zh": "GitHub 无法解析发行版标签。",
+    "ja": "GitHub がリリースタグを解決できませんでした。"
+  },
+  "update.diagnostic_parse_release_commit": {
+    "en": "Parse the release commit.",
+    "ko": "릴리스 커밋을 해석합니다.",
+    "zh": "解析发行版提交。",
+    "ja": "リリースコミットを解析します。"
+  },
+  "update.diagnostic_resolve_selected_release_assets": {
+    "en": "Resolve assets for the selected GitHub release.",
+    "ko": "선택한 GitHub 릴리스의 에셋을 확인합니다.",
+    "zh": "解析所选 GitHub 发行版的资源。",
+    "ja": "選択した GitHub リリースのアセットを解決します。"
+  },
+  "update.diagnostic_github_resolve_selected_release": {
+    "en": "GitHub could not resolve the selected release.",
+    "ko": "GitHub에서 선택한 릴리스를 찾지 못했습니다.",
+    "zh": "GitHub 无法解析所选发行版。",
+    "ja": "GitHub が選択したリリースを解決できませんでした。"
+  },
+  "update.diagnostic_parse_selected_release_assets": {
+    "en": "Parse assets for the selected release.",
+    "ko": "선택한 릴리스의 에셋을 해석합니다.",
+    "zh": "解析所选发行版的资源。",
+    "ja": "選択したリリースのアセットを解析します。"
+  },
+  "update.diagnostic_download_prebuilt_executable": {
+    "en": "Download the prebuilt release executable.",
+    "ko": "사전 빌드된 릴리스 실행 파일을 다운로드합니다.",
+    "zh": "下载发行版的预构建可执行文件。",
+    "ja": "リリースのビルド済み実行ファイルをダウンロードします。"
+  },
+  "update.diagnostic_github_rejected_executable_download": {
+    "en": "GitHub rejected the prebuilt release executable download.",
+    "ko": "GitHub에서 사전 빌드 릴리스 실행 파일 다운로드를 거부했습니다.",
+    "zh": "GitHub 拒绝下载发行版的预构建可执行文件。",
+    "ja": "GitHub がリリースのビルド済み実行ファイルのダウンロードを拒否しました。"
+  },
+  "update.diagnostic_flush_prepared_executable": {
+    "en": "Flush the prepared release executable to storage.",
+    "ko": "준비된 릴리스 실행 파일을 저장소에 기록합니다.",
+    "zh": "将已准备的发行版可执行文件刷新到存储中。",
+    "ja": "準備済みのリリース実行ファイルをストレージにフラッシュします。"
+  },
+  "update.diagnostic_save_prepared_update": {
+    "en": "Save the prepared update: {0}",
+    "ko": "준비된 업데이트를 저장합니다: {0}",
+    "zh": "保存已准备的更新：{0}",
+    "ja": "準備済みの更新を保存します: {0}"
+  },
+  "update.diagnostic_missing_asset_sha256": {
+    "en": "The GitHub release asset has no SHA-256 digest.",
+    "ko": "GitHub 릴리스 에셋에 SHA-256 다이제스트가 없습니다.",
+    "zh": "GitHub 发行版资源没有 SHA-256 摘要。",
+    "ja": "GitHub リリースアセットに SHA-256 ダイジェストがありません。"
+  },
+  "update.diagnostic_invalid_asset_sha256": {
+    "en": "The GitHub release asset digest is not SHA-256.",
+    "ko": "GitHub 릴리스 에셋 다이제스트가 SHA-256 형식이 아닙니다.",
+    "zh": "GitHub 发行版资源摘要不是 SHA-256。",
+    "ja": "GitHub リリースアセットのダイジェストは SHA-256 ではありません。"
+  },
+  "update.diagnostic_read_prebuilt_executable": {
+    "en": "Read the prebuilt release executable.",
+    "ko": "사전 빌드된 릴리스 실행 파일을 읽습니다.",
+    "zh": "读取发行版的预构建可执行文件。",
+    "ja": "ビルド済みリリース実行ファイルを読み込みます。"
+  },
+  "update.diagnostic_save_prebuilt_executable": {
+    "en": "Save the prebuilt release executable.",
+    "ko": "사전 빌드된 릴리스 실행 파일을 저장합니다.",
+    "zh": "保存发行版的预构建可执行文件。",
+    "ja": "ビルド済みリリース実行ファイルを保存します。"
+  },
+  "update.diagnostic_helper_option_requires_value": {
+    "en": "The update-helper option requires a value.",
+    "ko": "update-helper 옵션에는 값이 필요합니다.",
+    "zh": "update-helper 选项需要一个值。",
+    "ja": "update-helper オプションには値が必要です。"
+  },
+  "update.diagnostic_helper_requires_source": {
+    "en": "update-helper requires --source.",
+    "ko": "update-helper에는 --source가 필요합니다.",
+    "zh": "update-helper 需要 --source。",
+    "ja": "update-helper には --source が必要です。"
+  },
+  "update.diagnostic_helper_requires_config": {
+    "en": "update-helper requires --config.",
+    "ko": "update-helper에는 --config가 필요합니다.",
+    "zh": "update-helper 需要 --config。",
+    "ja": "update-helper には --config が必要です。"
+  },
+  "update.diagnostic_helper_requires_release_id": {
+    "en": "update-helper requires --release-id.",
+    "ko": "update-helper에는 --release-id가 필요합니다.",
+    "zh": "update-helper 需要 --release-id。",
+    "ja": "update-helper には --release-id が必要です。"
+  },
+  "update.diagnostic_invalid_release_id": {
+    "en": "The update release ID is invalid.",
+    "ko": "업데이트 릴리스 ID가 올바르지 않습니다.",
+    "zh": "更新发行版 ID 无效。",
+    "ja": "更新リリース ID が無効です。"
+  },
+  "update.diagnostic_helper_requires_attempt_id": {
+    "en": "update-helper requires --attempt-id.",
+    "ko": "update-helper에는 --attempt-id가 필요합니다.",
+    "zh": "update-helper 需要 --attempt-id。",
+    "ja": "update-helper には --attempt-id が必要です。"
+  },
+  "update.diagnostic_resolve_prepared_executable": {
+    "en": "Resolve the prepared updater executable.",
+    "ko": "준비된 업데이트 실행 파일의 경로를 확인합니다.",
+    "zh": "解析已准备的更新程序可执行文件。",
+    "ja": "準備済みアップデーター実行ファイルのパスを解決します。"
+  },
+  "update.diagnostic_resolve_selected_profile_config": {
+    "en": "Resolve the selected profile configuration.",
+    "ko": "선택한 프로필 설정 파일의 경로를 확인합니다.",
+    "zh": "解析所选配置的路径。",
+    "ja": "選択したプロファイル設定のパスを解決します。"
+  },
+  "update.diagnostic_start_launchd_job": {
+    "en": "Start the independent launchd update job.",
+    "ko": "독립 launchd 업데이트 작업을 시작합니다.",
+    "zh": "启动独立的 launchd 更新任务。",
+    "ja": "独立した launchd 更新ジョブを開始します。"
+  },
+  "update.diagnostic_start_systemd_job": {
+    "en": "Start the independent systemd user update job.",
+    "ko": "독립 systemd 사용자 업데이트 작업을 시작합니다.",
+    "zh": "启动独立的 systemd 用户更新任务。",
+    "ja": "独立した systemd ユーザー更新ジョブを開始します。"
+  },
+  "update.diagnostic_inspect_scheduled_task_helper": {
+    "en": "Inspect the detached Scheduled Task updater.",
+    "ko": "분리된 Scheduled Task 업데이트 작업을 확인합니다.",
+    "zh": "检查独立运行的计划任务更新程序。",
+    "ja": "分離されたスケジュールタスクの更新プログラムを確認します。"
+  },
+  "update.diagnostic_inspect_helper_process": {
+    "en": "Inspect the detached update helper process.",
+    "ko": "분리된 업데이트 helper 프로세스를 확인합니다.",
+    "zh": "检查独立运行的更新辅助进程。",
+    "ja": "分離された更新ヘルパープロセスを確認します。"
+  },
+  "update.diagnostic_missing_owned_worker_executable": {
+    "en": "The owned Windows worker executable is missing.",
+    "ko": "소유권이 기록된 Windows worker 실행 파일이 없습니다.",
+    "zh": "缺少已登记归属的 Windows worker 可执行文件。",
+    "ja": "所有権が記録された Windows worker 実行ファイルがありません。"
+  },
+  "update.diagnostic_write_task_wrapper": {
+    "en": "Write the temporary updater task wrapper.",
+    "ko": "임시 업데이트 작업 wrapper를 씁니다.",
+    "zh": "写入临时更新任务包装脚本。",
+    "ja": "一時更新タスクのラッパーを書き込みます。"
+  },
+  "update.diagnostic_start_scheduled_task": {
+    "en": "Start the independent Scheduled Task updater.",
+    "ko": "독립 Scheduled Task 업데이트 작업을 시작합니다.",
+    "zh": "启动独立的计划任务更新程序。",
+    "ja": "独立したスケジュールタスク更新プログラムを開始します。"
+  },
+  "update.diagnostic_retry_requires_failed_state": {
+    "en": "Only a failed update can be retried.",
+    "ko": "실패한 업데이트만 다시 시도할 수 있습니다.",
+    "zh": "只能重试失败的更新。",
+    "ja": "失敗した更新のみ再試行できます。"
+  },
+  "update.diagnostic_selection_changed_before_request": {
+    "en": "The selected update changed before the immediate request.",
+    "ko": "즉시 업데이트를 요청하기 전에 선택 항목이 변경되었습니다.",
+    "zh": "立即请求前，所选更新已发生变化。",
+    "ja": "即時リクエストの前に選択した更新が変更されました。"
+  },
+  "update.diagnostic_failed_update_changed_before_retry": {
+    "en": "The failed update changed before the immediate retry.",
+    "ko": "즉시 다시 시도하기 전에 실패한 업데이트가 변경되었습니다.",
+    "zh": "立即重试前，失败的更新已发生变化。",
+    "ja": "即時再試行の前に失敗した更新が変更されました。"
+  },
+  "update.diagnostic_another_release_applying": {
+    "en": "Another release is already being applied.",
+    "ko": "다른 릴리스가 이미 적용 중입니다.",
+    "zh": "另一个发行版正在应用。",
+    "ja": "別のリリースが適用中です。"
+  },
+  "update.diagnostic_update_already_applying": {
+    "en": "An update is already being applied.",
+    "ko": "업데이트가 이미 적용 중입니다.",
+    "zh": "更新已在应用中。",
+    "ja": "更新はすでに適用中です。"
+  },
+  "update.diagnostic_stale_result_notification_identity": {
+    "en": "The update result notification identity is stale.",
+    "ko": "업데이트 결과 알림 식별자가 오래되었습니다.",
+    "zh": "更新结果通知标识已过期。",
+    "ja": "更新結果通知の識別子が古くなっています。"
+  },
+  "update.diagnostic_result_not_terminal": {
+    "en": "The update result is not terminal.",
+    "ko": "업데이트 결과가 최종 상태가 아닙니다.",
+    "zh": "更新结果尚未达到终态。",
+    "ja": "更新結果が最終状態ではありません。"
+  },
+  "update.diagnostic_release_not_selected": {
+    "en": "The release is not selected.",
+    "ko": "릴리스가 선택되지 않았습니다.",
+    "zh": "未选择此发行版。",
+    "ja": "リリースが選択されていません。"
+  },
+  "update.diagnostic_prepared_binary_mismatch": {
+    "en": "The prepared binary does not match the selected pinned release.",
+    "ko": "준비된 실행 파일이 고정된 선택 릴리스와 일치하지 않습니다.",
+    "zh": "已准备的可执行文件与所选固定版本不匹配。",
+    "ja": "準備済みバイナリが選択済みの固定リリースと一致しません。"
+  },
+  "update.diagnostic_release_not_ready_to_apply": {
+    "en": "The release is not ready to apply.",
+    "ko": "릴리스를 적용할 준비가 되지 않았습니다.",
+    "zh": "发行版尚未准备好应用。",
+    "ja": "リリースを適用する準備ができていません。"
+  },
+  "update.diagnostic_release_not_prepared": {
+    "en": "The release has not been prepared.",
+    "ko": "릴리스가 준비되지 않았습니다.",
+    "zh": "发行版尚未准备好。",
+    "ja": "リリースが準備されていません。"
+  },
+  "update.diagnostic_release_no_longer_pending": {
+    "en": "The release is no longer pending.",
+    "ko": "릴리스가 더 이상 대기 중이 아닙니다.",
+    "zh": "发行版已不再处于待处理状态。",
+    "ja": "リリースは保留中ではありません。"
+  },
+  "update.diagnostic_handoff_no_longer_active": {
+    "en": "The update handoff is no longer active.",
+    "ko": "업데이트 인계가 더 이상 활성 상태가 아닙니다.",
+    "zh": "更新交接已不再处于活动状态。",
+    "ja": "更新の引き渡しはアクティブではありません。"
+  },
+  "update.diagnostic_helper_target_mismatch": {
+    "en": "The helper target no longer matches the selected release.",
+    "ko": "helper 대상이 더 이상 선택한 릴리스와 일치하지 않습니다.",
+    "zh": "辅助进程目标与所选发行版不再匹配。",
+    "ja": "ヘルパーの対象が選択したリリースと一致しなくなりました。"
+  },
+  "update.diagnostic_helper_binary_mismatch": {
+    "en": "The helper binary no longer matches the prepared target.",
+    "ko": "helper 실행 파일이 더 이상 준비된 대상과 일치하지 않습니다.",
+    "zh": "辅助进程可执行文件与已准备的目标不再匹配。",
+    "ja": "ヘルパーバイナリが準備済みの対象と一致しなくなりました。"
+  },
+  "update.diagnostic_handoff_ticket_inactive": {
+    "en": "The update handoff ticket is no longer active.",
+    "ko": "업데이트 인계 티켓이 더 이상 활성 상태가 아닙니다.",
+    "zh": "更新交接凭据已不再有效。",
+    "ja": "更新引き渡しチケットは有効ではありません。"
+  },
+  "update.diagnostic_helper_already_claimed_handoff": {
+    "en": "The update helper already claimed this handoff.",
+    "ko": "업데이트 helper가 이미 이 인계를 가져갔습니다.",
+    "zh": "更新辅助进程已认领此交接。",
+    "ja": "更新ヘルパーはすでにこの引き渡しを取得しています。"
+  },
+  "update.diagnostic_state_unavailable": {
+    "en": "Update state is unavailable; updater actions are refused.",
+    "ko": "업데이트 상태를 사용할 수 없어 업데이트 작업을 거부합니다.",
+    "zh": "更新状态不可用；拒绝执行更新操作。",
+    "ja": "更新状態を利用できないため、更新操作を拒否します。"
+  },
+  "update.diagnostic_unsupported_state_version": {
+    "en": "The update state version is unsupported.",
+    "ko": "지원하지 않는 업데이트 상태 버전입니다.",
+    "zh": "不支持此更新状态版本。",
+    "ja": "サポートされていない更新状態バージョンです。"
+  },
+  "update.diagnostic_pinned_release_missing_commit": {
+    "en": "The pinned release has no commit SHA.",
+    "ko": "고정된 릴리스에 커밋 SHA가 없습니다.",
+    "zh": "固定的发行版没有提交 SHA。",
+    "ja": "固定リリースにコミット SHA がありません。"
+  },
+  "update.diagnostic_github_release_id_mismatch": {
+    "en": "GitHub returned a different release ID.",
+    "ko": "GitHub가 다른 릴리스 ID를 반환했습니다.",
+    "zh": "GitHub 返回了不同的发行版 ID。",
+    "ja": "GitHub が異なるリリース ID を返しました。"
+  },
+  "update.diagnostic_pinned_asset_platform_mismatch": {
+    "en": "The pinned release asset does not match this platform.",
+    "ko": "고정된 릴리스 에셋이 이 플랫폼과 일치하지 않습니다.",
+    "zh": "固定的发行版资源与此平台不匹配。",
+    "ja": "固定リリースのアセットがこのプラットフォームに一致しません。"
+  },
+  "update.diagnostic_malformed_release_sha256": {
+    "en": "The GitHub release asset SHA-256 digest is malformed.",
+    "ko": "GitHub 릴리스 에셋의 SHA-256 다이제스트 형식이 잘못되었습니다.",
+    "zh": "GitHub 发行版资源的 SHA-256 摘要格式错误。",
+    "ja": "GitHub リリースアセットの SHA-256 ダイジェスト形式が正しくありません。"
+  },
+  "update.diagnostic_release_size_mismatch": {
+    "en": "Release executable size mismatch (expected {0}, received {1}).",
+    "ko": "릴리스 실행 파일 크기가 일치하지 않습니다(예상 {0}, 수신 {1}).",
+    "zh": "发行版可执行文件大小不匹配（预期 {0}，收到 {1}）。",
+    "ja": "リリース実行ファイルのサイズが一致しません（期待値 {0}、受信値 {1}）。"
+  },
+  "update.diagnostic_release_sha256_mismatch": {
+    "en": "The release executable SHA-256 digest does not match.",
+    "ko": "릴리스 실행 파일의 SHA-256 다이제스트가 일치하지 않습니다.",
+    "zh": "发行版可执行文件的 SHA-256 摘要不匹配。",
+    "ja": "リリース実行ファイルの SHA-256 ダイジェストが一致しません。"
+  },
+  "update.diagnostic_unknown_helper_option": {
+    "en": "Unknown update-helper option: {0}.",
+    "ko": "알 수 없는 update-helper 옵션입니다: {0}.",
+    "zh": "未知的 update-helper 选项：{0}。",
+    "ja": "不明な update-helper オプションです: {0}。"
+  },
+  "update.diagnostic_helper_option_requires_path": {
+    "en": "The update-helper option requires a path value.",
+    "ko": "update-helper 옵션에는 경로 값이 필요합니다.",
+    "zh": "update-helper 选项需要路径值。",
+    "ja": "update-helper オプションにはパス値が必要です。"
+  },
+  "update.diagnostic_helper_option_repeated": {
+    "en": "The update-helper option {0} may be used only once.",
+    "ko": "update-helper 옵션 {0}은(는) 한 번만 사용할 수 있습니다.",
+    "zh": "update-helper 选项 {0} 只能使用一次。",
+    "ja": "update-helper オプション {0} は一度だけ使用できます。"
+  },
+  "update.diagnostic_helper_binary_not_selected": {
+    "en": "The helper executable does not match the selected prepared binary.",
+    "ko": "helper 실행 파일이 선택한 준비 바이너리와 일치하지 않습니다.",
+    "zh": "辅助进程可执行文件与所选的已准备二进制文件不匹配。",
+    "ja": "ヘルパー実行ファイルが選択した準備済みバイナリと一致しません。"
+  },
+  "update.diagnostic_prepared_binary_missing": {
+    "en": "The prepared update binary is missing.",
+    "ko": "준비된 업데이트 바이너리가 없습니다.",
+    "zh": "缺少已准备的更新二进制文件。",
+    "ja": "準備済みの更新バイナリがありません。"
+  },
+  "update.diagnostic_profile_not_owned_scheduled_task": {
+    "en": "The profile does not use an owned Windows Scheduled Task.",
+    "ko": "프로필이 소유권이 확인된 Windows Scheduled Task를 사용하지 않습니다.",
+    "zh": "此配置未使用归属已确认的 Windows 计划任务。",
+    "ja": "プロファイルは所有権が確認された Windows スケジュールタスクを使用していません。"
+  },
+  "update.diagnostic_owned_task_mismatch": {
+    "en": "The owned Windows worker task does not match its ownership record.",
+    "ko": "소유한 Windows worker 작업이 소유권 기록과 일치하지 않습니다.",
+    "zh": "已登记归属的 Windows worker 任务与归属记录不匹配。",
+    "ja": "所有権が記録された Windows worker タスクが所有権記録と一致しません。"
+  }
+  }

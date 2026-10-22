@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use crate::i18n::{Language, MessageKey};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -251,7 +252,9 @@ impl UpdateStore {
             .latest_release
             .as_ref()
             .filter(|release| release.release_id == release_id)
-            .context("selected release is no longer the latest discovered release")?;
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticSelectedReleaseNotLatest),
+            )?;
         let pinned = PinnedRelease {
             release_id: release.release_id,
             version: release.version.clone(),
@@ -279,11 +282,14 @@ impl UpdateStore {
             .pending
             .as_ref()
             .filter(|target| target.release_id == release_id)
-            .context("selected release is no longer pending")?
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticSelectedReleaseNotPending),
+            )?
             .clone();
         ensure!(
             self.snapshot.status == UpdateStatus::Failed,
-            "only a failed update can be retried"
+            "{}",
+            Language::English.message(MessageKey::UpdateDiagnosticRetryRequiresFailedState)
         );
         self.snapshot.status = if self.snapshot.prepared.is_some() {
             UpdateStatus::Ready
@@ -318,7 +324,10 @@ impl UpdateStore {
                                             | UpdateStatus::Preparing
                                             | UpdateStatus::Ready
                                     ),
-                                "selected update changed before immediate request"
+                                "{}",
+                                Language::English.message(
+                                    MessageKey::UpdateDiagnosticSelectionChangedBeforeRequest
+                                )
                             );
                             snapshot.immediate_release_id = Some(release_id);
                             Ok(())
@@ -334,7 +343,10 @@ impl UpdateStore {
                                         .pending
                                         .as_ref()
                                         .is_some_and(|p| p.release_id == release_id),
-                                "failed update changed before immediate retry"
+                                "{}",
+                                Language::English.message(
+                                    MessageKey::UpdateDiagnosticFailedUpdateChangedBeforeRetry
+                                )
                             );
                             snapshot.status = if snapshot.prepared.is_some() {
                                 UpdateStatus::Ready
@@ -353,17 +365,25 @@ impl UpdateStore {
                     UpdateStatus::Idle | UpdateStatus::Applied => {}
                 }
             } else if snapshot.status == UpdateStatus::Applying {
-                bail!("another release is already applying");
+                bail!(
+                    "{}",
+                    Language::English.message(MessageKey::UpdateDiagnosticAnotherReleaseApplying)
+                );
             }
         } else if snapshot.status == UpdateStatus::Applying {
-            bail!("an update is already applying");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticUpdateAlreadyApplying)
+            );
         }
 
         let release = snapshot
             .latest_release
             .as_ref()
             .filter(|release| release.release_id == release_id)
-            .context("selected release is no longer the latest discovered release")?;
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticSelectedReleaseNotLatest),
+            )?;
         let target = PinnedRelease {
             release_id: release.release_id,
             version: release.version.clone(),
@@ -379,11 +399,13 @@ impl UpdateStore {
                     .latest_release
                     .as_ref()
                     .is_some_and(|release| release.release_id == release_id),
-                "selected release is no longer the latest discovered release"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticSelectedReleaseNotLatest)
             );
             ensure!(
                 snapshot.status != UpdateStatus::Applying,
-                "an update is already applying"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticUpdateAlreadyApplying)
             );
             snapshot.pending = Some(target.clone());
             snapshot.status = UpdateStatus::Selected;
@@ -528,14 +550,17 @@ impl UpdateStore {
         self.persist_with(|snapshot| {
             ensure!(
                 snapshot.result_notification_id.as_deref() == Some(notification_id),
-                "update result notification identity is stale"
+                "{}",
+                Language::English
+                    .message(MessageKey::UpdateDiagnosticStaleResultNotificationIdentity)
             );
             ensure!(
                 matches!(
                     snapshot.status,
                     UpdateStatus::Failed | UpdateStatus::Applied
                 ),
-                "update result is not terminal"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticResultNotTerminal)
             );
             snapshot.result_notified_id = Some(notification_id.to_owned());
             Ok(())
@@ -575,7 +600,8 @@ impl UpdateStore {
                 .pending
                 .as_ref()
                 .is_some_and(|p| p.release_id == release_id),
-            "release is not selected"
+            "{}",
+            Language::English.message(MessageKey::UpdateDiagnosticReleaseNotSelected)
         );
         self.snapshot.status = UpdateStatus::Preparing;
         self.snapshot.last_error = None;
@@ -589,7 +615,8 @@ impl UpdateStore {
                 .as_ref()
                 .is_some_and(|target| target.release_id == prepared.release_id
                     && target.commit == prepared.commit),
-            "prepared binary does not match the selected pinned release"
+            "{}",
+            Language::English.message(MessageKey::UpdateDiagnosticPreparedBinaryMismatch)
         );
         self.snapshot.prepared = Some(prepared);
         self.snapshot.status = UpdateStatus::Ready;
@@ -603,21 +630,24 @@ impl UpdateStore {
         self.persist_with(|snapshot| {
             ensure!(
                 snapshot.status == UpdateStatus::Ready,
-                "release is not ready to apply"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticReleaseNotReadyToApply)
             );
             ensure!(
                 snapshot
                     .prepared
                     .as_ref()
                     .is_some_and(|p| p.release_id == release_id),
-                "release is not prepared"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticReleaseNotPrepared)
             );
             ensure!(
                 snapshot
                     .pending
                     .as_ref()
                     .is_some_and(|p| p.release_id == release_id),
-                "release is no longer pending"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticReleaseNoLongerPending)
             );
             snapshot.status = UpdateStatus::Applying;
             snapshot.apply_attempt_id = Some(token);
@@ -636,13 +666,15 @@ impl UpdateStore {
         self.persist_with(|snapshot| {
             ensure!(
                 snapshot.status == UpdateStatus::Applying,
-                "update handoff is no longer active"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHandoffNoLongerActive)
             );
             ensure!(
                 snapshot.pending.as_ref().is_some_and(
                     |target| target.release_id == release_id && target.commit == commit
                 ),
-                "helper target no longer matches selected release"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHelperTargetMismatch)
             );
             ensure!(
                 snapshot
@@ -651,15 +683,18 @@ impl UpdateStore {
                     .is_some_and(
                         |prepared| prepared.release_id == release_id && prepared.commit == commit
                     ),
-                "helper binary no longer matches prepared target"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHelperBinaryMismatch)
             );
             ensure!(
                 snapshot.apply_attempt_id.as_deref() == Some(attempt.as_str()),
-                "update handoff ticket is no longer active"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHandoffTicketInactive)
             );
             ensure!(
                 snapshot.helper_started_attempt_id.is_none(),
-                "update helper already claimed this handoff"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHelperAlreadyClaimedHandoff)
             );
             snapshot.helper_started_attempt_id = Some(attempt);
             snapshot.helper_pid = Some(std::process::id());
@@ -784,34 +819,53 @@ impl UpdateStore {
     ) -> Result<()> {
         ensure!(
             self.writable,
-            "update state is unavailable; refusing updater actions"
+            "{}",
+            Language::English.message(MessageKey::UpdateDiagnosticStateUnavailable)
         );
         let parent = self
             .path
             .parent()
-            .context("update state path has no parent")?;
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+            .context(Language::English.message(MessageKey::UpdateDiagnosticStatePathHasNoParent))?;
+        fs::create_dir_all(parent).with_context(|| {
+            Language::English
+                .message(MessageKey::UpdateDiagnosticCreateStateDirectory)
+                .replace("{0}", &parent.display().to_string())
+        })?;
         let lock_path = self.path.with_extension("json.lock");
         let lock = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(&lock_path)
-            .with_context(|| format!("open update state lock {}", lock_path.display()))?;
-        lock.lock().context("lock update state")?;
+            .with_context(|| {
+                Language::English
+                    .message(MessageKey::UpdateDiagnosticOpenStateLock)
+                    .replace("{0}", &lock_path.display().to_string())
+            })?;
+        lock.lock()
+            .context(Language::English.message(MessageKey::UpdateDiagnosticLockUpdateState))?;
         let disk = read_snapshot(&self.path)?;
         let mut merged = merge_snapshot(&self.base, &self.snapshot, &disk);
         update(&mut merged)?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent).context("stage update state")?;
+        let mut temp = tempfile::NamedTempFile::new_in(parent)
+            .context(Language::English.message(MessageKey::UpdateDiagnosticStageUpdateState))?;
         let file = UpdateFile {
             format_version: 1,
             snapshot: merged.clone(),
         };
-        serde_json::to_writer_pretty(&mut temp, &file).context("serialize update state")?;
+        serde_json::to_writer_pretty(&mut temp, &file)
+            .context(Language::English.message(MessageKey::UpdateDiagnosticSerializeUpdateState))?;
         temp.write_all(b"\n")?;
-        temp.as_file().sync_all().context("flush update state")?;
-        temp.persist(&self.path)
-            .map_err(|error| anyhow!("replace update state: {}", error.error))?;
+        temp.as_file()
+            .sync_all()
+            .context(Language::English.message(MessageKey::UpdateDiagnosticFlushUpdateState))?;
+        temp.persist(&self.path).map_err(|error| {
+            anyhow::Error::new(error.error).context(
+                Language::English
+                    .message(MessageKey::UpdateDiagnosticReplaceUpdateState)
+                    .to_owned(),
+            )
+        })?;
         self.snapshot = merged.clone();
         self.base = merged;
         Ok(())
@@ -821,13 +875,24 @@ impl UpdateStore {
 fn read_snapshot(path: &Path) -> Result<UpdateSnapshot> {
     match fs::read(path) {
         Ok(bytes) => {
-            let file: UpdateFile = serde_json::from_slice(&bytes)
-                .with_context(|| format!("read update state {}", path.display()))?;
-            ensure!(file.format_version == 1, "unsupported update state version");
+            let file: UpdateFile = serde_json::from_slice(&bytes).with_context(|| {
+                Language::English
+                    .message(MessageKey::UpdateDiagnosticReadUpdateState)
+                    .replace("{0}", &path.display().to_string())
+            })?;
+            ensure!(
+                file.format_version == 1,
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticUnsupportedStateVersion)
+            );
             Ok(file.snapshot)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(UpdateSnapshot::default()),
-        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+        Err(error) => Err(error).with_context(|| {
+            Language::English
+                .message(MessageKey::UpdateDiagnosticReadPath)
+                .replace("{0}", &path.display().to_string())
+        }),
     }
 }
 
@@ -895,7 +960,9 @@ pub fn check_release(
     if let Some(etag) = etag.as_deref() {
         request = request.header(reqwest::header::IF_NONE_MATCH, etag);
     }
-    let response = request.send().context("check Discodex releases")?;
+    let response = request
+        .send()
+        .context(Language::English.message(MessageKey::UpdateDiagnosticCheckReleases))?;
     let checked_etag = response
         .headers()
         .get(reqwest::header::ETAG)
@@ -916,9 +983,11 @@ pub fn check_release(
     }
     let release: GithubRelease = response
         .error_for_status()
-        .context("GitHub releases endpoint returned an error")?
+        .context(
+            Language::English.message(MessageKey::UpdateDiagnosticGithubReleasesEndpointError),
+        )?
         .json()
-        .context("parse latest stable Discodex release")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticParseLatestRelease))?;
     if release.draft
         || release.prerelease
         || !is_newer_version(&release.tag_name, installed_version)
@@ -933,11 +1002,11 @@ pub fn check_release(
         .get(format!("{COMMIT_URL}{}", release.tag_name))
         .header("Accept", "application/vnd.github+json")
         .send()
-        .context("resolve release tag to a commit")?
+        .context(Language::English.message(MessageKey::UpdateDiagnosticResolveReleaseTagCommit))?
         .error_for_status()
-        .context("GitHub could not resolve release tag")?
+        .context(Language::English.message(MessageKey::UpdateDiagnosticGithubResolveReleaseTag))?
         .json()
-        .context("parse release commit")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticParseReleaseCommit))?;
     if commit.sha == installed_commit {
         return Ok(CheckResult::Modified {
             checked_at_unix: now_unix,
@@ -985,7 +1054,8 @@ fn is_newer_version(candidate: &str, installed: &str) -> bool {
 pub fn prepare_update(mut pinned: PinnedRelease, state_dir: &Path) -> Result<PreparedUpdate> {
     ensure!(
         !pinned.commit.is_empty(),
-        "pinned release has no commit SHA"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticPinnedReleaseMissingCommit)
     );
     let asset_name = platform_asset_name()?;
     let client = Client::builder()
@@ -997,21 +1067,29 @@ pub fn prepare_update(mut pinned: PinnedRelease, state_dir: &Path) -> Result<Pre
             .get(format!("{RELEASE_BY_ID_URL}{}", pinned.release_id))
             .header("Accept", "application/vnd.github+json")
             .send()
-            .context("resolve selected GitHub release assets")?
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticResolveSelectedReleaseAssets),
+            )?
             .error_for_status()
-            .context("GitHub could not resolve selected release")?
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticGithubResolveSelectedRelease),
+            )?
             .json()
-            .context("parse selected release assets")?;
+            .context(
+                Language::English.message(MessageKey::UpdateDiagnosticParseSelectedReleaseAssets),
+            )?;
         ensure!(
             release.id == pinned.release_id,
-            "GitHub returned a different release ID"
+            "{}",
+            Language::English.message(MessageKey::UpdateDiagnosticGithubReleaseIdMismatch)
         );
         pinned.asset = release_asset(release.assets, asset_name);
     }
     let asset = require_release_asset(pinned.asset.clone(), &pinned.tag, asset_name)?;
     ensure!(
         asset.name == asset_name,
-        "pinned release asset does not match this platform"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticPinnedAssetPlatformMismatch)
     );
     let update_root = state_dir.join("updates");
     let binary_root = update_root
@@ -1022,16 +1100,18 @@ pub fn prepare_update(mut pinned: PinnedRelease, state_dir: &Path) -> Result<Pre
         .get(&asset.download_url)
         .header("Accept", "application/octet-stream")
         .send()
-        .context("download prebuilt release executable")?
+        .context(Language::English.message(MessageKey::UpdateDiagnosticDownloadPrebuiltExecutable))?
         .error_for_status()
-        .context("GitHub rejected prebuilt release executable download")?;
+        .context(
+            Language::English.message(MessageKey::UpdateDiagnosticGithubRejectedExecutableDownload),
+        )?;
     let binary = binary_root.join(asset_name);
     let staged = tempfile::NamedTempFile::new_in(&binary_root)?;
     let mut output = staged.reopen()?;
     copy_verified_asset(&mut response, &mut output, &asset)?;
     output
         .sync_all()
-        .context("flush prepared release executable")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticFlushPreparedExecutable))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1040,9 +1120,14 @@ pub fn prepare_update(mut pinned: PinnedRelease, state_dir: &Path) -> Result<Pre
             .set_permissions(fs::Permissions::from_mode(0o755))?;
     }
     drop(output);
-    staged
-        .persist(&binary)
-        .map_err(|error| anyhow!("save prepared update: {}", error.error))?;
+    staged.persist(&binary).map_err(|error| {
+        let detail = error.error.to_string();
+        anyhow::Error::new(error.error).context(
+            Language::English
+                .message(MessageKey::UpdateDiagnosticSavePreparedUpdate)
+                .replace("{0}", &detail),
+        )
+    })?;
     Ok(PreparedUpdate {
         release_id: pinned.release_id,
         version: pinned.version,
@@ -1059,39 +1144,44 @@ fn copy_verified_asset(
     let digest = asset
         .digest
         .as_deref()
-        .context("GitHub release asset has no SHA-256 digest")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticMissingAssetSha256))?;
     let expected_hash = digest
         .strip_prefix("sha256:")
-        .context("GitHub release asset digest is not SHA-256")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticInvalidAssetSha256))?;
     ensure!(
         expected_hash.len() == 64 && expected_hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "GitHub release asset SHA-256 digest is malformed"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticMalformedReleaseSha256)
     );
     let mut hasher = Sha256::new();
     let mut size = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
-        let read = reader
-            .read(&mut buffer)
-            .context("read prebuilt release executable")?;
+        let read = reader.read(&mut buffer).context(
+            Language::English.message(MessageKey::UpdateDiagnosticReadPrebuiltExecutable),
+        )?;
         if read == 0 {
             break;
         }
-        output
-            .write_all(&buffer[..read])
-            .context("save prebuilt release executable")?;
+        output.write_all(&buffer[..read]).context(
+            Language::English.message(MessageKey::UpdateDiagnosticSavePrebuiltExecutable),
+        )?;
         hasher.update(&buffer[..read]);
         size += read as u64;
     }
     ensure!(
         size == asset.size,
-        "release executable size mismatch (expected {}, received {size})",
-        asset.size
+        "{}",
+        Language::English
+            .message(MessageKey::UpdateDiagnosticReleaseSizeMismatch)
+            .replace("{0}", &asset.size.to_string())
+            .replace("{1}", &size.to_string())
     );
     let actual_hash = format!("{:x}", hasher.finalize());
     ensure!(
         actual_hash.eq_ignore_ascii_case(expected_hash),
-        "release executable SHA-256 mismatch"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticReleaseSha256Mismatch)
     );
     Ok(())
 }
@@ -1113,8 +1203,14 @@ fn require_release_asset(
     release_tag: &str,
     asset_name: &str,
 ) -> Result<ReleaseAsset> {
-    asset.with_context(|| {
-        format!("release {release_tag} has no prebuilt executable for this platform ({asset_name})")
+    asset.ok_or_else(|| {
+        anyhow!(
+            "{}",
+            Language::English
+                .message(MessageKey::UpdateErrorMissingPlatformAsset)
+                .replace("{0}", release_tag)
+                .replace("{1}", asset_name)
+        )
     })
 }
 
@@ -1130,7 +1226,13 @@ fn platform_asset_name_for(os: &str, arch: &str) -> Result<&'static str> {
         ("macos", "aarch64") => Ok("discodex-aarch64-apple-darwin"),
         ("windows", "x86_64") => Ok("discodex-x86_64-pc-windows-msvc.exe"),
         ("windows", "aarch64") => Ok("discodex-aarch64-pc-windows-msvc.exe"),
-        (os, arch) => bail!("automatic release updates are not available for {arch}-{os}"),
+        (os, arch) => bail!(
+            "{}",
+            Language::English
+                .message(MessageKey::UpdateUnsupportedPlatform)
+                .replacen("%s", arch, 1)
+                .replacen("%s", os, 1)
+        ),
     }
 }
 
@@ -1155,15 +1257,19 @@ fn parse_helper_args(args: &[String]) -> Result<HelperArgs> {
                 option,
                 "--source" | "--config" | "--release-id" | "--attempt-id"
             ),
-            "unknown update-helper option {option}"
+            "{}",
+            Language::English
+                .message(MessageKey::UpdateDiagnosticUnknownHelperOption)
+                .replace("{0}", option)
         );
-        let value = args
-            .get(index + 1)
-            .context("update-helper option requires a value")?;
+        let value = args.get(index + 1).context(
+            Language::English.message(MessageKey::UpdateDiagnosticHelperOptionRequiresValue),
+        )?;
         if option != "--release-id" {
             ensure!(
                 !value.starts_with('-'),
-                "update-helper option requires a path"
+                "{}",
+                Language::English.message(MessageKey::UpdateDiagnosticHelperOptionRequiresPath)
             );
         }
         let slot = match option {
@@ -1174,17 +1280,25 @@ fn parse_helper_args(args: &[String]) -> Result<HelperArgs> {
         };
         ensure!(
             slot.replace(value.clone()).is_none(),
-            "{option} may be used only once"
+            "{}",
+            Language::English
+                .message(MessageKey::UpdateDiagnosticHelperOptionRepeated)
+                .replace("{0}", option)
         );
         index += 2;
     }
-    let source = source.context("update-helper requires --source")?;
-    let config_path = PathBuf::from(config_path.context("update-helper requires --config")?);
+    let source = source
+        .context(Language::English.message(MessageKey::UpdateDiagnosticHelperRequiresSource))?;
+    let config_path = PathBuf::from(
+        config_path
+            .context(Language::English.message(MessageKey::UpdateDiagnosticHelperRequiresConfig))?,
+    );
     let release_id: u64 = release_id
-        .context("update-helper requires --release-id")?
+        .context(Language::English.message(MessageKey::UpdateDiagnosticHelperRequiresReleaseId))?
         .parse()
-        .context("invalid update release ID")?;
-    let attempt_id = attempt_id.context("update-helper requires --attempt-id")?;
+        .context(Language::English.message(MessageKey::UpdateDiagnosticInvalidReleaseId))?;
+    let attempt_id = attempt_id
+        .context(Language::English.message(MessageKey::UpdateDiagnosticHelperRequiresAttemptId))?;
     Ok(HelperArgs {
         source,
         config_path,
@@ -1202,12 +1316,15 @@ pub fn run_helper(args: &[String]) -> Result<()> {
         attempt_id,
     } = parse_helper_args(args)?;
     let config = crate::config::Config::load(&config_path)?;
-    let source_path = PathBuf::from(&source)
-        .canonicalize()
-        .context("resolve prepared updater executable")?;
+    let source_path = PathBuf::from(&source).canonicalize().context(
+        config
+            .language
+            .message(MessageKey::UpdateDiagnosticResolvePreparedExecutable),
+    )?;
     ensure!(
         std::env::current_exe()?.canonicalize()? == source_path,
-        "helper executable does not match selected prepared binary"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticHelperBinaryNotSelected)
     );
     let mut store = UpdateStore::load(&config.state_dir)?;
     store.begin_helper(release_id, &attempt_id, current_build_commit())?;
@@ -1232,11 +1349,12 @@ pub fn run_helper(args: &[String]) -> Result<()> {
 pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) -> Result<()> {
     ensure!(
         prepared.binary.is_file(),
-        "prepared update binary is missing"
+        "{}",
+        Language::English.message(MessageKey::UpdateDiagnosticPreparedBinaryMissing)
     );
-    let config = config
-        .canonicalize()
-        .context("resolve selected profile config")?;
+    let config = config.canonicalize().context(
+        Language::English.message(MessageKey::UpdateDiagnosticResolveSelectedProfileConfig),
+    )?;
     let config_data = crate::config::Config::load(&config)?;
     let label = helper_label(attempt_id);
     #[cfg(target_os = "macos")]
@@ -1260,8 +1378,22 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .context("start independent launchd update job")?;
-        ensure!(status.success(), "launchctl submit failed: {status}");
+            .context(
+                config_data
+                    .language
+                    .message(MessageKey::UpdateDiagnosticStartLaunchdJob),
+            )?;
+        if !status.success() {
+            bail!(
+                "{}",
+                config_data
+                    .language
+                    .message(MessageKey::UpdateErrorLaunchJob)
+                    .replace("{0}", "launchctl")
+                    .replace("{1}", &status.to_string())
+                    .replace("{2}", "submit")
+            );
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -1285,8 +1417,22 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .context("start independent systemd user update job")?;
-        ensure!(status.success(), "systemd-run failed: {status}");
+            .context(
+                config_data
+                    .language
+                    .message(MessageKey::UpdateDiagnosticStartSystemdJob),
+            )?;
+        if !status.success() {
+            bail!(
+                "{}",
+                config_data
+                    .language
+                    .message(MessageKey::UpdateErrorLaunchJob)
+                    .replace("{0}", "systemd-run")
+                    .replace("{1}", &status.to_string())
+                    .replace("{2}", "start")
+            );
+        }
     }
     #[cfg(windows)]
     {
@@ -1301,7 +1447,12 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     return Err(anyhow!(
-        "detached update handoff is unsupported on this platform"
+        "{}",
+        config_data
+            .language
+            .message(MessageKey::UpdateUnsupportedPlatform)
+            .replacen("%s", std::env::consts::ARCH, 1)
+            .replacen("%s", std::env::consts::OS, 1)
     ));
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
@@ -1309,20 +1460,33 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
         if snapshot.status != UpdateStatus::Applying
             || snapshot.apply_attempt_id.as_deref() != Some(attempt_id)
         {
-            bail!("update handoff was cancelled before helper startup");
+            bail!(
+                "{}",
+                config_data
+                    .language
+                    .message(MessageKey::UpdateErrorHandoffCancelled)
+                    .replace("{0}", &format!("{:?}", snapshot.status))
+                    .replace("{1}", attempt_id)
+                    .replace("{2}", snapshot.last_error.as_deref().unwrap_or(""))
+            );
         }
         if snapshot.helper_started_attempt_id.as_deref() == Some(attempt_id) {
             return Ok(());
         }
         if std::time::Instant::now() >= deadline {
             let mut store = UpdateStore::load(&config_data.state_dir)?;
+            let unacknowledged_detail = config_data
+                .language
+                .message(MessageKey::UpdateDetailHelperStartupUnacknowledged)
+                .to_owned();
             let cancelled = store.cancel_unstarted_handoff(
                 prepared.release_id,
                 attempt_id,
-                "Detached updater did not acknowledge startup".into(),
+                unacknowledged_detail,
             )?;
+            let mut latest = store.snapshot();
             if !cancelled {
-                let latest = UpdateStore::load(&config_data.state_dir)?.snapshot();
+                latest = UpdateStore::load(&config_data.state_dir)?.snapshot();
                 if latest.status == UpdateStatus::Applying
                     && latest.apply_attempt_id.as_deref() == Some(attempt_id)
                     && latest.helper_started_attempt_id.as_deref() == Some(attempt_id)
@@ -1330,7 +1494,15 @@ pub fn launch_apply(prepared: &PreparedUpdate, config: &Path, attempt_id: &str) 
                     return Ok(());
                 }
             }
-            bail!("detached update helper did not acknowledge startup");
+            bail!(
+                "{}",
+                config_data
+                    .language
+                    .message(MessageKey::UpdateErrorHandoffUnacknowledged)
+                    .replace("{0}", &cancelled.to_string())
+                    .replace("{1}", &format!("{:?}", latest.status))
+                    .replace("{2}", latest.last_error.as_deref().unwrap_or(""))
+            );
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -1374,7 +1546,10 @@ pub fn helper_running(
             .args(["-NoProfile", "-NonInteractive", "-Command", &script])
             .stdin(Stdio::null())
             .output()
-            .context("inspect detached Scheduled Task updater")?;
+            .context(
+                language
+                    .message(crate::i18n::MessageKey::UpdateDiagnosticInspectScheduledTaskHelper),
+            )?;
         if !output.status.success() {
             let detail = native_command_detail(&output.stdout, &output.stderr);
             bail!(
@@ -1398,7 +1573,9 @@ pub fn helper_running(
         let output = Command::new("ps")
             .args(["-p", &pid.to_string(), "-o", "args="])
             .output()
-            .context("inspect detached update helper process")?;
+            .context(
+                language.message(crate::i18n::MessageKey::UpdateDiagnosticInspectHelperProcess),
+            )?;
         let Some(command) = classify_unix_ps_output(
             output.status.code(),
             &output.stdout,
@@ -1437,12 +1614,12 @@ fn launch_windows_task(
     let ownership = super::resolve_profile_ownership(config)?;
     ensure!(
         ownership.service_kind.as_deref() == Some("scheduled-task-user"),
-        "profile does not use an owned Windows Scheduled Task"
+        "{}",
+        language.message(crate::i18n::MessageKey::UpdateDiagnosticProfileNotOwnedScheduledTask)
     );
-    let service_executable = ownership
-        .worker_executable
-        .as_ref()
-        .context("owned Windows worker executable is missing")?;
+    let service_executable = ownership.worker_executable.as_ref().context(
+        language.message(crate::i18n::MessageKey::UpdateDiagnosticMissingOwnedWorkerExecutable),
+    )?;
     let task_executable = super::windows_task_executable_path(service_executable)?;
     let expected_executable = super::ps_single_quote(&task_executable.display().to_string());
     // Compare against the ownership record's original spelling. The canonical
@@ -1453,7 +1630,8 @@ fn launch_windows_task(
         super::inspect_owned_windows_task(&expected_executable, &expected_arguments, &ownership)?;
     ensure!(
         task_state == "matching",
-        "owned Windows worker task does not match its ownership record"
+        "{}",
+        language.message(crate::i18n::MessageKey::UpdateDiagnosticOwnedTaskMismatch)
     );
 
     let task_path = state_dir.join("updates");
@@ -1467,7 +1645,8 @@ fn launch_windows_task(
         prepared.release_id,
         ps_quote(attempt_id),
     );
-    fs::write(&task_script, task_script_body).context("write temporary updater task wrapper")?;
+    fs::write(&task_script, task_script_body)
+        .context(language.message(crate::i18n::MessageKey::UpdateDiagnosticWriteTaskWrapper))?;
     let run_level = run_level.powershell();
     let task = label.to_owned();
     let script_path = ps_quote(&task_script.display().to_string());
@@ -1486,7 +1665,7 @@ fn launch_windows_task(
         ])
         .stdin(Stdio::null())
         .output()
-        .context("start independent Scheduled Task updater")?;
+        .context(language.message(crate::i18n::MessageKey::UpdateDiagnosticStartScheduledTask))?;
     if !output.status.success() {
         let cleanup = fs::remove_file(&task_script)
             .err()

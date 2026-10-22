@@ -115,7 +115,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-アクティブなcatalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。同一provider内の変更はすぐ適用でき、プロバイダー・実行器の変更は、実行中の応答や音声通話が終わってから再選択します。キューには入りません。機能と推論強度の選択肢はネイティブのメタデータに従います。互換カタログに使う既定値は、プロバイダーの実際の機能を検証した結果ではありません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
+アクティブなcatalogと登録済みprofileがモデル候補になります。モデル選択時は同じ永続threadでproviderを切り替え、履歴を引き継ぎます。実際のprovider・実行器の切り替えには、ネイティブフォークの履歴を保つ遷移を使います。同一provider内の変更はすぐ適用でき、プロバイダー・実行器の変更は、実行中の応答や音声通話が終わってから再選択します。キューには入りません。機能と推論強度の選択肢はネイティブのメタデータに従います。互換カタログに使う既定値は、プロバイダーの実際の機能を検証した結果ではありません。[Codex provider設定ガイド](https://developers.openai.com/codex/config-advanced/)と[公式モデルmetadataスキーマ](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)を参照してください。
 
 メイン・既定子モデルの選択では実行器・プロバイダー・モデルを一緒に保持し、子は親を切り替えず別の登録プロバイダーを利用できます。`[model_providers.<id>.capabilities]`の`encrypted_content`と`agent_messages`は独立した任意の真偽値です。省略時はネイティブ既定値に従い、OpenAI・Azure Responsesは暗号化履歴の再利用対応、ネイティブOpenAI分類のみが`AgentMessage`形式対応となります。明示値は実際のプロトコル対応に合わせてください。`encrypted_content = true`でもネイティブagent-message形式に非対応なら、その不透明な本文は通常のassistantメッセージ内で利用不可と明示します。原本の履歴は変更しません。[履歴の互換性](design.ja.md#プロバイダー切り替えと暗号化履歴)を参照してください。
 

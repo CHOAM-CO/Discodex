@@ -115,7 +115,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-当前 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；同一 provider 内的更改可立即应用，跨提供商或执行器的更改需要在当前回复或语音结束后重新选择，不会排入队列。能力和推理强度选项遵循原生元数据；兼容目录所用的默认值不代表已验证提供商的实际能力。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
+当前 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；实际的 provider 或 executor 切换使用原生分支的历史保留转换。同一 provider 内的更改可立即应用，跨提供商或执行器的更改需要在当前回复或语音结束后重新选择，不会排入队列。能力和推理强度选项遵循原生元数据；兼容目录所用的默认值不代表已验证提供商的实际能力。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
 
 主模型和默认子模型的选择同时保存执行器、提供商与模型；子会话可使用其他已注册提供商而不切换父会话。`[model_providers.<id>.capabilities]` 下的 `encrypted_content` 和 `agent_messages` 是独立的可选布尔值。省略时沿用原生默认分类：OpenAI 与 Azure Responses 默认支持加密历史重放，只有原生 OpenAI 分类默认支持 `AgentMessage`。显式值应符合提供商的实际协议支持。即使 `encrypted_content = true`，不支持原生 agent-message 格式时，其不透明正文也会在普通 assistant 消息中标明不可用。原始历史保持不变；详见[历史兼容性](design.zh-CN.md#提供商切换与加密历史)。
 

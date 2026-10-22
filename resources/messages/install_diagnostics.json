@@ -1,0 +1,1808 @@
+{
+  "install_diagnostics.resolve_update_source": {
+    "en": "Resolve update source.",
+    "ko": "업데이트 원본 경로를 확인합니다.",
+    "zh": "解析更新源路径。",
+    "ja": "更新元のパスを解決します。"
+  },
+  "install_diagnostics.update_source_not_regular_file": {
+    "en": "Update source is not a regular file.",
+    "ko": "업데이트 원본이 일반 파일이 아닙니다.",
+    "zh": "更新源不是普通文件。",
+    "ja": "更新元が通常のファイルではありません。"
+  },
+  "install_diagnostics.resolve_selected_config": {
+    "en": "Resolve selected config.",
+    "ko": "선택한 설정 파일 경로를 확인합니다.",
+    "zh": "解析所选配置文件路径。",
+    "ja": "選択した設定ファイルのパスを解決します。"
+  },
+  "install_diagnostics.selected_config_ownership_mismatch": {
+    "en": "Selected config differs from ownership record.",
+    "ko": "선택한 설정이 소유권 기록과 일치하지 않습니다.",
+    "zh": "所选配置与所有权记录不一致。",
+    "ja": "選択した設定が所有権レコードと一致しません。"
+  },
+  "install_diagnostics.owned_state_data_root_missing": {
+    "en": "Owned state directory has no data root.",
+    "ko": "소유권이 확인된 상태 디렉터리에 데이터 루트가 없습니다.",
+    "zh": "所有的状态目录没有数据根目录。",
+    "ja": "所有対象の状態ディレクトリにデータルートがありません。"
+  },
+  "install_diagnostics.owned_state_layout_invalid": {
+    "en": "Owned state directory layout is invalid.",
+    "ko": "소유권이 확인된 상태 디렉터리 구조가 올바르지 않습니다.",
+    "zh": "所有的状态目录布局无效。",
+    "ja": "所有対象の状態ディレクトリ構成が無効です。"
+  },
+  "install_diagnostics.ownership_worker_missing": {
+    "en": "Ownership record has no validated worker executable.",
+    "ko": "소유권 기록에 검증된 워커 실행 파일이 없습니다.",
+    "zh": "所有权记录中没有经过验证的工作程序可执行文件。",
+    "ja": "所有権レコードに検証済みワーカー実行ファイルがありません。"
+  },
+  "install_diagnostics.update_source_is_installed_worker": {
+    "en": "Update source must be separate from the installed executable.",
+    "ko": "업데이트 원본은 설치된 실행 파일과 별도여야 합니다.",
+    "zh": "更新源必须与已安装的可执行文件分开。",
+    "ja": "更新元はインストール済みの実行ファイルとは別である必要があります。"
+  },
+  "install_diagnostics.owned_worker_name_invalid": {
+    "en": "Owned executable does not use the Discodex worker filename.",
+    "ko": "소유권이 확인된 실행 파일 이름이 Discodex 워커 파일 이름과 다릅니다.",
+    "zh": "所有的可执行文件未使用 Discodex 工作程序文件名。",
+    "ja": "所有対象の実行ファイル名が Discodex ワーカーのファイル名ではありません。"
+  },
+  "install_diagnostics.profile_ownership_mismatch": {
+    "en": "Profile config differs from ownership record.",
+    "ko": "프로필 설정이 소유권 기록과 일치하지 않습니다.",
+    "zh": "配置文件与所有权记录不一致。",
+    "ja": "プロファイル設定が所有権レコードと一致しません。"
+  },
+  "install_diagnostics.snapshot_owned_worker": {
+    "en": "Snapshot owned worker.",
+    "ko": "소유권이 확인된 워커의 현재 상태를 저장합니다.",
+    "zh": "保存所有工作程序的当前快照。",
+    "ja": "所有対象のワーカーの現在の状態を保存します。"
+  },
+  "install_diagnostics.worker_parent_missing": {
+    "en": "Worker executable has no parent directory.",
+    "ko": "워커 실행 파일에 상위 디렉터리가 없습니다.",
+    "zh": "工作程序可执行文件没有父目录。",
+    "ja": "ワーカー実行ファイルに親ディレクトリがありません。"
+  },
+  "install_diagnostics.replace_owned_worker": {
+    "en": "Replace owned worker",
+    "ko": "소유권이 확인된 워커 교체",
+    "zh": "替换所有的工作程序",
+    "ja": "所有対象のワーカーを置き換え"
+  },
+  "install_diagnostics.updated_worker_empty": {
+    "en": "Updated worker is empty.",
+    "ko": "업데이트된 워커 파일이 비어 있습니다.",
+    "zh": "更新后的工作程序文件为空。",
+    "ja": "更新後のワーカーファイルが空です。"
+  },
+  "install_diagnostics.updated_worker_inactive": {
+    "en": "Updated Discodex worker did not become active.",
+    "ko": "업데이트한 Discodex 워커가 활성 상태가 되지 않았습니다.",
+    "zh": "更新后的 Discodex 工作程序未能进入活动状态。",
+    "ja": "更新した Discodex ワーカーがアクティブになりませんでした。"
+  },
+  "install_diagnostics.updated_service_enable_state": {
+    "en": "Updated systemd unit did not retain its previous enabled state.",
+    "ko": "업데이트한 systemd 유닛의 활성화 설정이 이전 상태와 달라졌습니다.",
+    "zh": "更新后的 systemd 单元未保留原有的启用状态。",
+    "ja": "更新した systemd ユニットの有効状態が以前の状態に保たれませんでした。"
+  },
+  "install_diagnostics.updated_task_state": {
+    "en": "Updated scheduled task did not return to its previous enabled/running state.",
+    "ko": "업데이트한 예약 작업이 이전의 활성화 및 실행 상태로 돌아오지 않았습니다.",
+    "zh": "更新后的计划任务未恢复到先前的启用和运行状态。",
+    "ja": "更新したスケジュールタスクが以前の有効・実行状態に戻りませんでした。"
+  },
+  "install_diagnostics.stop_updated_service_for_restore": {
+    "en": "Could not stop the updated service before restoring the worker.",
+    "ko": "워커를 복원하기 전에 업데이트된 서비스를 중지하지 못했습니다.",
+    "zh": "恢复工作程序前无法停止已更新的服务。",
+    "ja": "ワーカーを復元する前に更新済みサービスを停止できませんでした。"
+  },
+  "install_diagnostics.stop_updated_task_for_restore": {
+    "en": "Could not stop the updated task before restoring the worker.",
+    "ko": "워커를 복원하기 전에 업데이트된 작업을 중지하지 못했습니다.",
+    "zh": "恢复工作程序前无法停止已更新的任务。",
+    "ja": "ワーカーを復元する前に更新済みタスクを停止できませんでした。"
+  },
+  "install_diagnostics.updated_task_still_running": {
+    "en": "Windows task is still enabled or running.",
+    "ko": "Windows 작업이 아직 활성화되어 있거나 실행 중입니다.",
+    "zh": "Windows 任务仍处于启用或运行状态。",
+    "ja": "Windows タスクはまだ有効か実行中です。"
+  },
+  "install_diagnostics.worker_restore_failed": {
+    "en": "Worker binary restore failed.",
+    "ko": "워커 바이너리를 복원하지 못했습니다.",
+    "zh": "恢复工作程序二进制文件失败。",
+    "ja": "ワーカーバイナリを復元できませんでした。"
+  },
+  "install_diagnostics.profile_runtime_restore_failed": {
+    "en": "Profile runtime restore failed.",
+    "ko": "프로필 런타임을 복원하지 못했습니다.",
+    "zh": "恢复配置文件运行时失败。",
+    "ja": "プロファイルランタイムを復元できませんでした。"
+  },
+  "install_diagnostics.previous_service_restart_failed": {
+    "en": "Could not restart the previous service.",
+    "ko": "이전 서비스를 다시 시작하지 못했습니다.",
+    "zh": "无法重新启动先前的服务。",
+    "ja": "以前のサービスを再起動できませんでした。"
+  },
+  "install_diagnostics.previous_service_active_state": {
+    "en": "Previous systemd unit did not return to its prior active state.",
+    "ko": "이전 systemd 유닛이 원래 활성 상태로 돌아오지 않았습니다.",
+    "zh": "先前的 systemd 单元未恢复到原有活动状态。",
+    "ja": "以前の systemd ユニットが元のアクティブ状態に戻りませんでした。"
+  },
+  "install_diagnostics.previous_service_enabled_state": {
+    "en": "Previous systemd unit did not retain its prior enabled state.",
+    "ko": "이전 systemd 유닛의 활성화 설정이 원래 상태로 복원되지 않았습니다.",
+    "zh": "先前的 systemd 单元未恢复原有的启用状态。",
+    "ja": "以前の systemd ユニットの有効状態が元に戻りませんでした。"
+  },
+  "install_diagnostics.previous_task_restore_failed": {
+    "en": "Previous task state restore failed.",
+    "ko": "이전 작업 상태를 복원하지 못했습니다.",
+    "zh": "恢复先前任务状态失败。",
+    "ja": "以前のタスク状態を復元できませんでした。"
+  },
+  "install_diagnostics.previous_task_state": {
+    "en": "Previous scheduled task did not return to its prior enabled/running state.",
+    "ko": "이전 예약 작업이 원래의 활성화 및 실행 상태로 돌아오지 않았습니다.",
+    "zh": "先前的计划任务未恢复到原有的启用和运行状态。",
+    "ja": "以前のスケジュールタスクが元の有効・実行状態に戻りませんでした。"
+  },
+  "install_diagnostics.staged_runtime_cleanup_failed": {
+    "en": "Staged runtime cleanup failed.",
+    "ko": "준비된 런타임을 정리하지 못했습니다.",
+    "zh": "清理暂存的运行时失败。",
+    "ja": "ステージ済みランタイムをクリーンアップできませんでした。"
+  },
+  "install_diagnostics.mac_resolve_ownership_record": {
+    "en": "Resolve ownership record.",
+    "ko": "소유권 기록 경로를 확인합니다.",
+    "zh": "解析所有权记录。",
+    "ja": "所有権レコードを解決します。"
+  },
+  "install_diagnostics.mac_read_ownership_record": {
+    "en": "Read owned installation record.",
+    "ko": "소유권이 확인된 설치 기록을 읽습니다.",
+    "zh": "读取所有权安装记录。",
+    "ja": "所有対象のインストールレコードを読み込みます。"
+  },
+  "install_diagnostics.mac_resolve_profile_config": {
+    "en": "Resolve owned profile config.",
+    "ko": "소유 프로필 설정 경로를 확인합니다.",
+    "zh": "解析所有配置文件路径。",
+    "ja": "所有対象のプロファイル設定を解決します。"
+  },
+  "install_diagnostics.mac_config_does_not_match_ownership": {
+    "en": "--config does not identify the config recorded by this ownership record.",
+    "ko": "--config이 이 소유권 기록에 지정된 설정 파일을 가리키지 않습니다.",
+    "zh": "--config 未指向此所有权记录所登记的配置文件。",
+    "ja": "--config がこの所有権レコードに記録された設定ファイルを示していません。"
+  },
+  "install_diagnostics.mac_owned_config_parent_missing": {
+    "en": "Owned config has no parent directory.",
+    "ko": "소유권이 확인된 설정 파일에 상위 디렉터리가 없습니다.",
+    "zh": "所有的配置文件没有父目录。",
+    "ja": "所有対象の設定ファイルに親ディレクトリがありません。"
+  },
+  "install_diagnostics.mac_resolve_adjacent_ownership": {
+    "en": "Resolve ownership record beside config.",
+    "ko": "설정 파일 옆의 소유권 기록 경로를 확인합니다.",
+    "zh": "解析配置文件旁的所有权记录。",
+    "ja": "設定ファイルの隣にある所有権レコードを解決します。"
+  },
+  "install_diagnostics.mac_ownership_not_adjacent": {
+    "en": "Ownership record is not beside its owned profile config.",
+    "ko": "소유권 기록이 해당 프로필 설정 파일 옆에 있지 않습니다.",
+    "zh": "所有权记录不在其配置文件旁边。",
+    "ja": "所有権レコードが対象プロファイル設定の隣にありません。"
+  },
+  "install_diagnostics.mac_worker_not_recorded": {
+    "en": "Owned install has no recorded worker executable.",
+    "ko": "소유 설치 기록에 워커 실행 파일이 없습니다.",
+    "zh": "所有的安装记录中没有工作程序可执行文件。",
+    "ja": "所有対象のインストールにワーカー実行ファイルの記録がありません。"
+  },
+  "install_diagnostics.mac_resolve_worker": {
+    "en": "Resolve recorded worker executable.",
+    "ko": "기록된 워커 실행 파일 경로를 확인합니다.",
+    "zh": "解析记录的工作程序可执行文件。",
+    "ja": "記録されたワーカー実行ファイルを解決します。"
+  },
+  "install_diagnostics.mac_worker_path_not_canonical": {
+    "en": "Recorded worker path is not its canonical owned executable path.",
+    "ko": "기록된 워커 경로가 소유권이 확인된 정규 실행 파일 경로가 아닙니다.",
+    "zh": "记录的工作程序路径不是其规范所有可执行文件路径。",
+    "ja": "記録されたワーカーパスが所有対象の正規実行ファイルパスではありません。"
+  },
+  "install_diagnostics.mac_worker_outside_owned_bin": {
+    "en": "Recorded worker executable is not a regular file in the canonical owned bin directory.",
+    "ko": "기록된 워커 실행 파일이 소유권이 확인된 정규 bin 디렉터리의 일반 파일이 아닙니다.",
+    "zh": "记录的工作程序可执行文件不是规范所有 bin 目录中的普通文件。",
+    "ja": "記録されたワーカー実行ファイルが所有対象の正規 bin ディレクトリ内の通常ファイルではありません。"
+  },
+  "install_diagnostics.mac_not_owned_launch_agent": {
+    "en": "Ownership record does not identify an owned macOS LaunchAgent.",
+    "ko": "소유권 기록이 소유된 macOS LaunchAgent를 가리키지 않습니다.",
+    "zh": "所有权记录未指向所有的 macOS LaunchAgent。",
+    "ja": "所有権レコードが所有対象の macOS LaunchAgent を示していません。"
+  },
+  "install_diagnostics.mac_launch_agent_path_mismatch": {
+    "en": "Recorded LaunchAgent path does not match this owned profile.",
+    "ko": "기록된 LaunchAgent 경로가 이 프로필의 소유 경로와 일치하지 않습니다.",
+    "zh": "记录的 LaunchAgent 路径与此配置文件不匹配。",
+    "ja": "記録された LaunchAgent のパスがこのプロファイルと一致しません。"
+  },
+  "install_diagnostics.mac_launch_agent_plist_missing": {
+    "en": "Owned LaunchAgent plist is missing.",
+    "ko": "소유된 LaunchAgent plist가 없습니다.",
+    "zh": "缺少所有的 LaunchAgent plist。",
+    "ja": "所有対象の LaunchAgent plist がありません。"
+  },
+  "install_diagnostics.mac_resolve_update_source": {
+    "en": "Resolve update source.",
+    "ko": "업데이트 원본 경로를 확인합니다.",
+    "zh": "解析更新源路径。",
+    "ja": "更新元のパスを解決します。"
+  },
+  "install_diagnostics.mac_update_source_not_regular": {
+    "en": "Update source is not a regular file: {0}",
+    "ko": "업데이트 원본이 일반 파일이 아닙니다: {0}",
+    "zh": "更新源不是普通文件：{0}",
+    "ja": "更新元が通常のファイルではありません: {0}"
+  },
+  "install_diagnostics.mac_update_source_is_installed_worker": {
+    "en": "Update source must be separate from the installed worker executable.",
+    "ko": "업데이트 원본은 설치된 워커 실행 파일과 별도여야 합니다.",
+    "zh": "更新源必须与已安装的工作程序可执行文件分开。",
+    "ja": "更新元はインストール済みのワーカー実行ファイルとは別である必要があります。"
+  },
+  "install_diagnostics.mac_preserve_signing_identity": {
+    "en": "Preserve the verified owned signing identity.",
+    "ko": "검증된 소유 서명 ID를 보존합니다.",
+    "zh": "保留经过验证的所有签名身份。",
+    "ja": "検証済みの所有署名 ID を保持します。"
+  },
+  "install_diagnostics.mac_verify_pinned_installed_binary": {
+    "en": "Verify installed binary against pinned signing identity.",
+    "ko": "설치된 바이너리가 고정된 서명 ID와 일치하는지 확인합니다.",
+    "zh": "根据固定的签名身份验证已安装的二进制文件。",
+    "ja": "インストール済みバイナリを固定署名 ID と照合して検証します。"
+  },
+  "install_diagnostics.mac_inspect_installed_signature": {
+    "en": "Inspect installed signature.",
+    "ko": "설치된 서명을 확인합니다.",
+    "zh": "检查已安装的签名。",
+    "ja": "インストール済み署名を確認します。"
+  },
+  "install_diagnostics.mac_installed_worker_parent_missing": {
+    "en": "Installed executable has no parent directory.",
+    "ko": "설치된 실행 파일에 상위 디렉터리가 없습니다.",
+    "zh": "已安装的可执行文件没有父目录。",
+    "ja": "インストール済み実行ファイルに親ディレクトリがありません。"
+  },
+  "install_diagnostics.mac_snapshot_installed_worker": {
+    "en": "Snapshot installed executable.",
+    "ko": "설치된 실행 파일의 현재 상태를 저장합니다.",
+    "zh": "保存已安装可执行文件的当前快照。",
+    "ja": "インストール済み実行ファイルの現在の状態を保存します。"
+  },
+  "install_diagnostics.mac_snapshot_ownership_record": {
+    "en": "Snapshot ownership record.",
+    "ko": "소유권 기록의 현재 상태를 저장합니다.",
+    "zh": "保存所有权记录的当前快照。",
+    "ja": "所有権レコードの現在の状態を保存します。"
+  },
+  "install_diagnostics.mac_stage_beside_worker": {
+    "en": "Stage beside installed executable.",
+    "ko": "설치된 실행 파일 옆에 업데이트를 준비합니다.",
+    "zh": "在已安装的可执行文件旁暂存更新。",
+    "ja": "インストール済み実行ファイルの隣に更新をステージします。"
+  },
+  "install_diagnostics.mac_copy_update_to_stage": {
+    "en": "Copy update source into staging file.",
+    "ko": "업데이트 원본을 준비 파일로 복사합니다.",
+    "zh": "将更新源复制到暂存文件。",
+    "ja": "更新元をステージ用ファイルにコピーします。"
+  },
+  "install_diagnostics.mac_sign_staged_worker": {
+    "en": "Sign staged executable.",
+    "ko": "준비된 실행 파일에 서명합니다.",
+    "zh": "对暂存的可执行文件签名。",
+    "ja": "ステージ済み実行ファイルに署名します。"
+  },
+  "install_diagnostics.mac_flush_signed_stage": {
+    "en": "Flush signed staged executable.",
+    "ko": "서명된 준비 파일을 디스크에 기록합니다.",
+    "zh": "将已签名的暂存可执行文件写入磁盘。",
+    "ja": "署名済みステージファイルをディスクに書き込みます。"
+  },
+  "install_diagnostics.mac_update_signer_mismatch": {
+    "en": "Update signer does not match pinned installation identity.",
+    "ko": "업데이트 서명자가 고정된 설치 서명 ID와 일치하지 않습니다.",
+    "zh": "更新签名者与固定的安装身份不匹配。",
+    "ja": "更新の署名者が固定されたインストール ID と一致しません。"
+  },
+  "install_diagnostics.mac_verify_staged_worker": {
+    "en": "Verify staged executable.",
+    "ko": "준비된 실행 파일을 검증합니다.",
+    "zh": "验证暂存的可执行文件。",
+    "ja": "ステージ済み実行ファイルを検証します。"
+  },
+  "install_diagnostics.mac_replace_worker": {
+    "en": "Atomically replace executable",
+    "ko": "실행 파일을 원자적으로 교체",
+    "zh": "原子替换可执行文件",
+    "ja": "実行ファイルをアトミックに置き換え"
+  },
+  "install_diagnostics.mac_verify_replaced_worker": {
+    "en": "Verify replaced executable.",
+    "ko": "교체된 실행 파일을 검증합니다.",
+    "zh": "验证已替换的可执行文件。",
+    "ja": "置き換えた実行ファイルを検証します。"
+  },
+  "install_diagnostics.mac_launch_agent_path_not_utf8": {
+    "en": "LaunchAgent path is not UTF-8.",
+    "ko": "LaunchAgent 경로가 UTF-8이 아닙니다.",
+    "zh": "LaunchAgent 路径不是 UTF-8。",
+    "ja": "LaunchAgent のパスが UTF-8 ではありません。"
+  },
+  "install_diagnostics.mac_updated_launch_agent_not_loaded": {
+    "en": "Updated LaunchAgent did not load.",
+    "ko": "업데이트된 LaunchAgent가 로드되지 않았습니다.",
+    "zh": "更新后的 LaunchAgent 未能加载。",
+    "ja": "更新した LaunchAgent が読み込まれませんでした。"
+  },
+  "install_diagnostics.mac_restore_ownership_record": {
+    "en": "Restore ownership record.",
+    "ko": "소유권 기록을 복원합니다.",
+    "zh": "恢复所有权记录。",
+    "ja": "所有権レコードを復元します。"
+  },
+  "install_diagnostics.mac_restore_previous_profile_runtime": {
+    "en": "Restore previous profile runtime.",
+    "ko": "이전 프로필 런타임을 복원합니다.",
+    "zh": "恢复先前的配置文件运行时。",
+    "ja": "以前のプロファイルランタイムを復元します。"
+  },
+  "install_diagnostics.mac_previous_launch_agent_not_loaded": {
+    "en": "Previous LaunchAgent did not return to loaded state.",
+    "ko": "이전 LaunchAgent가 로드된 상태로 돌아오지 않았습니다.",
+    "zh": "先前的 LaunchAgent 未恢复到已加载状态。",
+    "ja": "以前の LaunchAgent が読み込み済み状態に戻りませんでした。"
+  },
+  "install_diagnostics.mac_update_failed_rollback_restored": {
+    "en": "Update failed; previous executable, ownership record, and loaded state were restored.",
+    "ko": "업데이트는 실패했지만 이전 실행 파일, 소유권 기록, 로드 상태를 복원했습니다.",
+    "zh": "更新失败；已恢复先前的可执行文件、所有权记录和加载状态。",
+    "ja": "更新に失敗しました。以前の実行ファイル、所有権レコード、読み込み状態を復元しました。"
+  },
+  "install_diagnostics.mac_update_failed_service_restored": {
+    "en": "Update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored.",
+    "ko": "교체 전에 업데이트가 실패했습니다. 기존 실행 파일과 프로필은 유지했고 이전 서비스 상태를 복원했습니다.",
+    "zh": "替换前更新失败；现有可执行文件和配置文件未更改，并已恢复先前的服务状态。",
+    "ja": "置き換え前に更新に失敗しました。既存の実行ファイルとプロファイルは変更されず、以前のサービス状態を復元しました。"
+  },
+  "install_diagnostics.mac_update_failed_before_replacement": {
+    "en": "Update failed before replacement; existing executable, profile, and service were unchanged.",
+    "ko": "교체 전에 업데이트가 실패했습니다. 기존 실행 파일, 프로필, 서비스는 변경되지 않았습니다.",
+    "zh": "替换前更新失败；现有可执行文件、配置文件和服务均未更改。",
+    "ja": "置き換え前に更新に失敗しました。既存の実行ファイル、プロファイル、サービスは変更されていません。"
+  },
+  "install_diagnostics.mac_update_and_rollback_failed": {
+    "en": "Update failed ({0}); rollback failed ({1}).",
+    "ko": "업데이트 실패({0}); 롤백 실패({1}).",
+    "zh": "更新失败（{0}）；回滚失败（{1}）。",
+    "ja": "更新に失敗しました（{0}）。ロールバックにも失敗しました（{1}）。"
+  },
+  "install_diagnostics.mac_update_completed": {
+    "en": "Updated owned macOS worker and runtime at {0}.",
+    "ko": "소유권이 확인된 macOS 워커와 런타임을 {0}에서 업데이트했습니다.",
+    "zh": "已在 {0} 更新所有的 macOS 工作程序和运行时。",
+    "ja": "所有対象の macOS ワーカーとランタイムを {0} で更新しました。"
+  },
+  "install_diagnostics.update_option_requires_path": {
+    "en": "Update option requires a path.",
+    "ko": "업데이트 옵션에 경로가 필요합니다.",
+    "zh": "更新选项需要路径。",
+    "ja": "更新オプションにはパスが必要です。"
+  },
+  "install_diagnostics.update_option_repeated": {
+    "en": "{0} may be used only once.",
+    "ko": "{0} 옵션은 한 번만 사용할 수 있습니다.",
+    "zh": "{0} 只能使用一次。",
+    "ja": "{0} は一度だけ指定できます。"
+  },
+  "install_diagnostics.mac_migrate_option_repeated": {
+    "en": "--migrate-adhoc may be used only once.",
+    "ko": "--migrate-adhoc은 한 번만 사용할 수 있습니다.",
+    "zh": "--migrate-adhoc 只能使用一次。",
+    "ja": "--migrate-adhoc は一度だけ指定できます。"
+  },
+  "install_diagnostics.mac_unknown_option": {
+    "en": "Unknown mac-update option `{0}`.",
+    "ko": "알 수 없는 mac-update 옵션입니다: `{0}`.",
+    "zh": "未知的 mac-update 选项 `{0}`。",
+    "ja": "不明な mac-update オプション `{0}`。"
+  },
+  "install_diagnostics.mac_update_source_required": {
+    "en": "mac-update requires --source <new-build-binary>.",
+    "ko": "mac-update에는 --source <new-build-binary>가 필요합니다.",
+    "zh": "mac-update 需要 --source <new-build-binary>。",
+    "ja": "mac-update には --source <new-build-binary> が必要です。"
+  },
+  "install_diagnostics.mac_config_or_ownership_exclusive": {
+    "en": "mac-update accepts either --config or --ownership, not both.",
+    "ko": "mac-update에는 --config과 --ownership 중 하나만 지정할 수 있습니다.",
+    "zh": "mac-update 只能指定 --config 或 --ownership 其中之一。",
+    "ja": "mac-update では --config と --ownership のどちらか一方のみ指定できます。"
+  },
+  "install_diagnostics.mac_migrate_requires_unpinned": {
+    "en": "--migrate-adhoc is only valid for an installation without a pinned signing identity.",
+    "ko": "--migrate-adhoc은 고정된 서명 ID가 없는 설치에서만 사용할 수 있습니다.",
+    "zh": "--migrate-adhoc 仅适用于未固定签名身份的安装。",
+    "ja": "--migrate-adhoc は署名 ID が固定されていないインストールでのみ使用できます。"
+  },
+  "install_diagnostics.mac_migration_flag_required": {
+    "en": "No signing identity is pinned; pass --migrate-adhoc once to migrate the ad-hoc build.",
+    "ko": "고정된 서명 ID가 없습니다. 임시 서명 빌드를 이전하려면 --migrate-adhoc을 한 번 지정하세요.",
+    "zh": "未固定签名身份；请传递一次 --migrate-adhoc 以迁移临时签名构建。",
+    "ja": "署名 ID が固定されていません。アドホック署名ビルドを移行するには --migrate-adhoc を一度指定してください。"
+  },
+  "install_diagnostics.mac_adhoc_signature_not_verified": {
+    "en": "The unpinned installation is not verified as ad-hoc signed; migration refused.",
+    "ko": "고정되지 않은 설치가 임시 서명 상태로 검증되지 않아 이전을 중단했습니다.",
+    "zh": "未固定的安装未验证为临时签名；拒绝迁移。",
+    "ja": "署名 ID が固定されていないインストールがアドホック署名と確認できないため、移行を拒否しました。"
+  },
+  "install_diagnostics.mac_migration_fda_reason": {
+    "en": "Ad-hoc migration can stop or replace the service.",
+    "ko": "임시 서명 이전 과정에서 서비스가 중지되거나 교체될 수 있습니다.",
+    "zh": "临时签名迁移可能会停止或替换服务。",
+    "ja": "アドホック署名の移行中にサービスが停止または置き換えられる場合があります。"
+  },
+  "install_diagnostics.resolve_legacy_config": {
+    "en": "Resolve selected legacy config: {0}",
+    "ko": "선택한 이전 설정 경로를 확인합니다: {0}",
+    "zh": "解析所选旧配置：{0}",
+    "ja": "選択した旧設定を解決します: {0}"
+  },
+  "install_diagnostics.legacy_config_parent_missing": {
+    "en": "Legacy config path has no parent directory.",
+    "ko": "이전 설정 경로에 상위 디렉터리가 없습니다.",
+    "zh": "旧配置路径没有父目录。",
+    "ja": "旧設定のパスに親ディレクトリがありません。"
+  },
+  "install_diagnostics.migration_config_must_be_legacy": {
+    "en": "Migration requires an explicit config inside a {0} profile directory.",
+    "ko": "이전하려면 {0} 프로필 디렉터리 안의 설정 파일을 명시해야 합니다.",
+    "zh": "迁移需要明确指定 {0} 配置文件目录中的配置。",
+    "ja": "移行には {0} プロファイルディレクトリ内の設定ファイルを明示する必要があります。"
+  },
+  "install_diagnostics.read_legacy_ownership": {
+    "en": "Read legacy ownership record: {0}",
+    "ko": "이전 소유권 기록을 읽습니다: {0}",
+    "zh": "读取旧所有权记录：{0}",
+    "ja": "旧所有権レコードを読み込みます: {0}"
+  },
+  "install_diagnostics.legacy_state_data_root_missing": {
+    "en": "Legacy state directory has no data root.",
+    "ko": "이전 상태 디렉터리에 데이터 루트가 없습니다.",
+    "zh": "旧状态目录没有数据根目录。",
+    "ja": "旧状態ディレクトリにデータルートがありません。"
+  },
+  "install_diagnostics.legacy_ownership_layout_invalid": {
+    "en": "Legacy ownership does not identify the expected codex-worker state layout.",
+    "ko": "이전 소유권 기록이 예상한 codex-worker 상태 구조를 가리키지 않습니다.",
+    "zh": "旧所有权记录未指向预期的 codex-worker 状态布局。",
+    "ja": "旧所有権レコードが想定される codex-worker の状態構成を示していません。"
+  },
+  "install_diagnostics.discodex_config_parent_missing": {
+    "en": "Discodex config path has no parent directory.",
+    "ko": "Discodex 설정 경로에 상위 디렉터리가 없습니다.",
+    "zh": "Discodex 配置路径没有父目录。",
+    "ja": "Discodex 設定パスに親ディレクトリがありません。"
+  },
+  "install_diagnostics.migration_destination_exists": {
+    "en": "Discodex profile paths already exist; migration will not overwrite them.",
+    "ko": "Discodex 프로필 경로가 이미 있어 이전 과정에서 덮어쓰지 않습니다.",
+    "zh": "Discodex 配置文件路径已存在；迁移不会覆盖它们。",
+    "ja": "Discodex プロファイルのパスが既に存在するため、移行で上書きしません。"
+  },
+  "install_diagnostics.migration_stop_legacy_service_failed": {
+    "en": "Could not stop the verified legacy service before Discodex startup.",
+    "ko": "Discodex를 시작하기 전에 검증된 이전 서비스를 중지하지 못했습니다.",
+    "zh": "启动 Discodex 前无法停止经过验证的旧服务。",
+    "ja": "Discodex の起動前に検証済みの旧サービスを停止できませんでした。"
+  },
+  "install_diagnostics.migration_copy_legacy_state_failed": {
+    "en": "Could not copy legacy state after stopping its service.",
+    "ko": "이전 서비스를 중지한 후 이전 상태를 복사하지 못했습니다.",
+    "zh": "停止旧服务后无法复制旧状态。",
+    "ja": "旧サービスを停止した後に旧状態をコピーできませんでした。"
+  },
+  "install_diagnostics.migration_marker_remove_failed": {
+    "en": "Discodex is installed, but its migration marker could not be removed: {0}",
+    "ko": "Discodex가 설치되었지만 이전 표시 파일을 제거하지 못했습니다: {0}",
+    "zh": "Discodex 已安装，但无法删除迁移标记：{0}",
+    "ja": "Discodex はインストールされましたが、移行マーカーを削除できませんでした: {0}"
+  },
+  "install_diagnostics.migration_completed": {
+    "en": "Migrated profile {0} to Discodex. Legacy config and native data remain at {1}.",
+    "ko": "프로필 {0}을 Discodex로 이전했습니다. 이전 설정과 네이티브 데이터는 {1}에 남아 있습니다.",
+    "zh": "已将配置文件 {0} 迁移到 Discodex。旧配置和原生数据仍保留在 {1}。",
+    "ja": "プロファイル {0} を Discodex に移行しました。旧設定とネイティブデータは {1} に残っています。"
+  },
+  "install_diagnostics.legacy_signed_worker_missing": {
+    "en": "Legacy ownership has no signed worker executable.",
+    "ko": "이전 소유권 기록에 서명된 워커 실행 파일이 없습니다.",
+    "zh": "旧所有权记录中没有已签名的工作程序可执行文件。",
+    "ja": "旧所有権レコードに署名済みワーカー実行ファイルがありません。"
+  },
+  "install_diagnostics.resolve_legacy_signed_worker": {
+    "en": "Resolve legacy signed worker executable.",
+    "ko": "서명된 이전 워커 실행 파일 경로를 확인합니다.",
+    "zh": "解析旧的已签名工作程序可执行文件。",
+    "ja": "旧署名済みワーカー実行ファイルを解決します。"
+  },
+  "install_diagnostics.preserve_legacy_signing_identity": {
+    "en": "Preserve the verified legacy macOS signing identity.",
+    "ko": "검증된 이전 macOS 서명 ID를 보존합니다.",
+    "zh": "保留经过验证的旧 macOS 签名身份。",
+    "ja": "検証済みの旧 macOS 署名 ID を保持します。"
+  },
+  "install_diagnostics.worker_stage_and_cleanup_failed": {
+    "en": "Worker staging failed and staged migration files could not be removed.",
+    "ko": "워커 준비에 실패했고 이전용 임시 파일도 제거하지 못했습니다.",
+    "zh": "工作程序暂存失败，且无法删除暂存的迁移文件。",
+    "ja": "ワーカーのステージに失敗し、移行用ステージファイルも削除できませんでした。"
+  },
+  "install_diagnostics.stage_worker_before_stop_failed": {
+    "en": "Could not stage the Discodex worker before stopping the legacy service.",
+    "ko": "이전 서비스를 중지하기 전에 Discodex 워커를 준비하지 못했습니다.",
+    "zh": "停止旧服务前无法暂存 Discodex 工作程序。",
+    "ja": "旧サービスを停止する前に Discodex ワーカーをステージできませんでした。"
+  },
+  "install_diagnostics.worker_sign_and_cleanup_failed": {
+    "en": "Worker signing failed and staged migration files could not be removed.",
+    "ko": "워커 서명에 실패했고 이전용 임시 파일도 제거하지 못했습니다.",
+    "zh": "工作程序签名失败，且无法删除暂存的迁移文件。",
+    "ja": "ワーカーの署名に失敗し、移行用ステージファイルも削除できませんでした。"
+  },
+  "install_diagnostics.prepare_signed_worker_before_stop_failed": {
+    "en": "Could not prepare the signed Discodex worker before stopping the legacy service.",
+    "ko": "이전 서비스를 중지하기 전에 서명된 Discodex 워커를 준비하지 못했습니다.",
+    "zh": "停止旧服务前无法准备已签名的 Discodex 工作程序。",
+    "ja": "旧サービスを停止する前に署名済み Discodex ワーカーを準備できませんでした。"
+  },
+  "install_diagnostics.create_config_directory": {
+    "en": "Create config directory {0}.",
+    "ko": "설정 디렉터리 {0}을 만듭니다.",
+    "zh": "创建配置目录 {0}。",
+    "ja": "設定ディレクトリ {0} を作成します。"
+  },
+  "install_diagnostics.create_data_directory": {
+    "en": "Create data directory {0}.",
+    "ko": "데이터 디렉터리 {0}을 만듭니다.",
+    "zh": "创建数据目录 {0}。",
+    "ja": "データディレクトリ {0} を作成します。"
+  },
+  "install_diagnostics.ownership_other_profile": {
+    "en": "Ownership record belongs to another profile; existing files were preserved.",
+    "ko": "소유권 기록이 다른 프로필에 속해 있어 기존 파일을 보존했습니다.",
+    "zh": "所有权记录属于其他配置文件；现有文件已保留。",
+    "ja": "所有権レコードが別のプロファイルに属するため、既存ファイルを保持しました。"
+  },
+  "install_diagnostics.read_existing_profile_config": {
+    "en": "Read existing profile settings from {0}; refusing to replace an unreadable config.",
+    "ko": "기존 프로필 설정을 {0}에서 읽습니다. 읽을 수 없는 설정 파일은 교체하지 않습니다.",
+    "zh": "从 {0} 读取现有配置；拒绝替换无法读取的配置文件。",
+    "ja": "既存プロファイル設定を {0} から読み込みます。読み取れない設定は置き換えません。"
+  },
+  "install_diagnostics.codex_home_empty": {
+    "en": "CODEX_HOME must not be empty.",
+    "ko": "CODEX_HOME은 비어 있을 수 없습니다.",
+    "zh": "CODEX_HOME 不能为空。",
+    "ja": "CODEX_HOME を空にすることはできません。"
+  },
+  "install_diagnostics.inspect_saved_credentials": {
+    "en": "Inspect saved Discord credential file.",
+    "ko": "저장된 Discord 자격 증명 파일을 확인합니다.",
+    "zh": "检查已保存的 Discord 凭据文件。",
+    "ja": "保存済み Discord 資格情報ファイルを確認します。"
+  },
+  "install_diagnostics.saved_credentials_not_regular": {
+    "en": "Saved Discord credentials are not a regular file; refusing to replace them.",
+    "ko": "저장된 Discord 자격 증명이 일반 파일이 아니므로 교체하지 않습니다.",
+    "zh": "已保存的 Discord 凭据不是普通文件；拒绝替换。",
+    "ja": "保存済み Discord 資格情報が通常のファイルではないため、置き換えません。"
+  },
+  "install_diagnostics.read_saved_credentials": {
+    "en": "Read saved Discord credential file.",
+    "ko": "저장된 Discord 자격 증명 파일을 읽습니다.",
+    "zh": "读取已保存的 Discord 凭据文件。",
+    "ja": "保存済み Discord 資格情報ファイルを読み込みます。"
+  },
+  "install_diagnostics.read_discord_token_privately": {
+    "en": "Read Discord token privately.",
+    "ko": "Discord 토큰을 비공개로 입력합니다.",
+    "zh": "私下读取 Discord 令牌。",
+    "ja": "Discord トークンを非公開で読み込みます。"
+  },
+  "install_diagnostics.discord_token_empty": {
+    "en": "Discord token was empty; no credential file was written.",
+    "ko": "Discord 토큰이 비어 있어 자격 증명 파일을 쓰지 않았습니다.",
+    "zh": "Discord 令牌为空；未写入凭据文件。",
+    "ja": "Discord トークンが空だったため、資格情報ファイルは書き込まれませんでした。"
+  },
+  "install_diagnostics.message_policy_missing": {
+    "en": "New installation plan did not include a message receive policy.",
+    "ko": "새 설치 계획에 메시지 수신 정책이 포함되지 않았습니다.",
+    "zh": "新的安装计划未包含消息接收策略。",
+    "ja": "新しいインストール計画にメッセージ受信ポリシーがありません。"
+  },
+  "install_diagnostics.discord_profile_check_failed": {
+    "en": "Discord profile check failed; saved installation list and private config remain for correction.",
+    "ko": "Discord 프로필 확인에 실패했습니다. 수정할 수 있도록 설치 목록과 비공개 설정을 보존했습니다.",
+    "zh": "Discord 配置文件检查失败；已保留安装列表和私有配置以供修正。",
+    "ja": "Discord プロファイルの確認に失敗しました。修正できるよう、保存済みのインストール一覧と非公開設定を保持しています。"
+  },
+  "install_diagnostics.discord_text_channel_omitted": {
+    "en": "Discord validation omitted configured text channel {0}.",
+    "ko": "Discord 확인 결과에 설정된 텍스트 채널 {0}이 없습니다.",
+    "zh": "Discord 验证结果中缺少已配置的文本频道 {0}。",
+    "ja": "Discord の検証結果に設定済みテキストチャンネル {0} がありません。"
+  },
+  "install_diagnostics.discord_text_channel_kind": {
+    "en": "Configured home/transcript channel {0} is {1}; expected a text channel.",
+    "ko": "설정된 홈/전사 채널 {0}의 유형은 {1}입니다. 텍스트 채널이어야 합니다.",
+    "zh": "已配置的主页/转录频道 {0} 类型为 {1}；预期为文本频道。",
+    "ja": "設定済みのホーム/文字起こしチャンネル {0} は {1} です。テキストチャンネルが必要です。"
+  },
+  "install_diagnostics.discord_voice_channel_omitted": {
+    "en": "Discord validation omitted configured voice channel {0}.",
+    "ko": "Discord 확인 결과에 설정된 음성 채널 {0}이 없습니다.",
+    "zh": "Discord 验证结果中缺少已配置的语音频道 {0}。",
+    "ja": "Discord の検証結果に設定済み音声チャンネル {0} がありません。"
+  },
+  "install_diagnostics.discord_voice_channel_kind": {
+    "en": "Configured voice channel {0} is {1}; expected voice or stage.",
+    "ko": "설정된 음성 채널 {0}의 유형은 {1}입니다. 음성 또는 스테이지 채널이어야 합니다.",
+    "zh": "已配置的语音频道 {0} 类型为 {1}；预期为语音或舞台频道。",
+    "ja": "設定済み音声チャンネル {0} は {1} です。音声またはステージチャンネルが必要です。"
+  },
+  "install_diagnostics.discord_command_registration_failed": {
+    "en": "Discord /discodex command registration failed; saved setup files remain for retry.",
+    "ko": "Discord /discodex 명령 등록에 실패했습니다. 재시도할 수 있도록 설치 파일을 보존했습니다.",
+    "zh": "Discord /discodex 命令注册失败；已保留设置文件以便重试。",
+    "ja": "Discord /discodex コマンドの登録に失敗しました。再試行できるよう設定ファイルを保持しています。"
+  },
+  "install_diagnostics.codex_account_or_permission_check_failed": {
+    "en": "Codex account or Full Access profile check failed; saved setup files remain for retry.",
+    "ko": "Codex 계정 또는 Full Access 프로필 확인에 실패했습니다. 재시도할 수 있도록 설치 파일을 보존했습니다.",
+    "zh": "Codex 账户或 Full Access 配置文件检查失败；已保留设置文件以便重试。",
+    "ja": "Codex アカウントまたは Full Access プロファイルの確認に失敗しました。再試行できるよう設定ファイルを保持しています。"
+  },
+  "install_diagnostics.inspect_legacy_service_state": {
+    "en": "Inspect the legacy user service state.",
+    "ko": "이전 사용자 서비스 상태를 확인합니다.",
+    "zh": "检查旧用户服务状态。",
+    "ja": "旧ユーザーサービスの状態を確認します。"
+  },
+  "install_diagnostics.unexpected_systemctl_state": {
+    "en": "Unexpected systemctl {0} state for {1}: {2}",
+    "ko": "{1}의 systemctl {0} 상태가 예상과 다릅니다: {2}",
+    "zh": "{1} 的 systemctl {0} 状态异常：{2}",
+    "ja": "{1} の systemctl {0} 状態が想定外です: {2}"
+  },
+  "install_diagnostics.inspect_windows_task_state": {
+    "en": "Inspect Windows task state.",
+    "ko": "Windows 작업 상태를 확인합니다.",
+    "zh": "检查 Windows 任务状态。",
+    "ja": "Windows タスクの状態を確認します。"
+  },
+  "install_diagnostics.read_windows_task_state_failed": {
+    "en": "Could not read Windows task state.",
+    "ko": "Windows 작업 상태를 읽지 못했습니다.",
+    "zh": "无法读取 Windows 任务状态。",
+    "ja": "Windows タスクの状態を読み取れませんでした。"
+  },
+  "install_diagnostics.windows_task_state_invalid": {
+    "en": "Windows task returned an invalid state.",
+    "ko": "Windows 작업이 유효하지 않은 상태를 반환했습니다.",
+    "zh": "Windows 任务返回了无效状态。",
+    "ja": "Windows タスクが無効な状態を返しました。"
+  },
+  "install_diagnostics.windows_task_transitional": {
+    "en": "Windows task is in a transitional state; operation refused.",
+    "ko": "Windows 작업이 전환 중인 상태여서 작업을 거부했습니다.",
+    "zh": "Windows 任务处于过渡状态；已拒绝操作。",
+    "ja": "Windows タスクが遷移状態のため、操作を拒否しました。"
+  },
+  "install_diagnostics.windows_task_state_disagrees": {
+    "en": "Windows task enabled flag and state disagree.",
+    "ko": "Windows 작업의 활성화 플래그와 상태가 일치하지 않습니다.",
+    "zh": "Windows 任务的启用标志与状态不一致。",
+    "ja": "Windows タスクの有効フラグと状態が一致しません。"
+  },
+  "install_diagnostics.legacy_worker_missing": {
+    "en": "Legacy ownership has no worker executable.",
+    "ko": "이전 소유권 기록에 워커 실행 파일이 없습니다.",
+    "zh": "旧所有权记录中没有工作程序可执行文件。",
+    "ja": "旧所有権レコードにワーカー実行ファイルがありません。"
+  },
+  "install_diagnostics.resolve_legacy_owned_worker": {
+    "en": "Resolve legacy owned worker executable.",
+    "ko": "소유권이 기록된 이전 워커 실행 파일 경로를 확인합니다.",
+    "zh": "解析旧的所有工作程序可执行文件。",
+    "ja": "旧所有対象ワーカー実行ファイルを解決します。"
+  },
+  "install_diagnostics.resolve_legacy_owned_config": {
+    "en": "Resolve legacy owned config.",
+    "ko": "소유권이 기록된 이전 설정 경로를 확인합니다.",
+    "zh": "解析旧的所有配置。",
+    "ja": "旧所有対象設定を解決します。"
+  },
+  "install_diagnostics.legacy_systemd_unit_missing": {
+    "en": "Legacy systemd ownership has no unit path.",
+    "ko": "이전 systemd 소유권 기록에 유닛 경로가 없습니다.",
+    "zh": "旧 systemd 所有权记录没有单元路径。",
+    "ja": "旧 systemd 所有権レコードにユニットパスがありません。"
+  },
+  "install_diagnostics.legacy_systemd_ownership_invalid": {
+    "en": "Legacy ownership does not identify the expected systemd user service.",
+    "ko": "이전 소유권 기록이 예상된 systemd 사용자 서비스를 가리키지 않습니다.",
+    "zh": "旧所有权记录未指向预期的 systemd 用户服务。",
+    "ja": "旧所有権レコードが想定された systemd ユーザーサービスを示していません。"
+  },
+  "install_diagnostics.read_legacy_systemd_unit": {
+    "en": "Read legacy systemd unit.",
+    "ko": "이전 systemd 유닛 파일을 읽습니다.",
+    "zh": "读取旧 systemd 单元文件。",
+    "ja": "旧 systemd ユニットを読み込みます。"
+  },
+  "install_diagnostics.legacy_systemd_unit_mismatch": {
+    "en": "Legacy systemd unit differs from its recorded executable and config.",
+    "ko": "이전 systemd 유닛이 기록된 실행 파일 및 설정과 다릅니다.",
+    "zh": "旧 systemd 单元与记录的可执行文件和配置不一致。",
+    "ja": "旧 systemd ユニットが記録された実行ファイルと設定と一致しません。"
+  },
+  "install_diagnostics.legacy_launch_agent_plist_missing": {
+    "en": "Legacy LaunchAgent ownership has no plist path.",
+    "ko": "이전 LaunchAgent 소유권 기록에 plist 경로가 없습니다.",
+    "zh": "旧 LaunchAgent 所有权记录没有 plist 路径。",
+    "ja": "旧 LaunchAgent 所有権レコードに plist パスがありません。"
+  },
+  "install_diagnostics.legacy_launch_agent_ownership_invalid": {
+    "en": "Legacy ownership does not identify the expected LaunchAgent.",
+    "ko": "이전 소유권 기록이 예상된 LaunchAgent를 가리키지 않습니다.",
+    "zh": "旧所有权记录未指向预期的 LaunchAgent。",
+    "ja": "旧所有権レコードが想定された LaunchAgent を示していません。"
+  },
+  "install_diagnostics.legacy_launch_agent_missing": {
+    "en": "Legacy LaunchAgent plist is missing.",
+    "ko": "이전 LaunchAgent plist가 없습니다.",
+    "zh": "旧 LaunchAgent plist 缺失。",
+    "ja": "旧 LaunchAgent plist がありません。"
+  },
+  "install_diagnostics.legacy_windows_task_ownership_invalid": {
+    "en": "Legacy ownership does not identify the expected Windows task.",
+    "ko": "이전 소유권 기록이 예상된 Windows 작업을 가리키지 않습니다.",
+    "zh": "旧所有权记录未指向预期的 Windows 任务。",
+    "ja": "旧所有権レコードが想定された Windows タスクを示していません。"
+  },
+  "install_diagnostics.legacy_windows_task_mismatch": {
+    "en": "Legacy Windows task differs from its ownership record.",
+    "ko": "이전 Windows 작업이 소유권 기록과 다릅니다.",
+    "zh": "旧 Windows 任务与所有权记录不一致。",
+    "ja": "旧 Windows タスクが所有権レコードと一致しません。"
+  },
+  "install_diagnostics.legacy_migration_unsupported_platform": {
+    "en": "Legacy service migration is supported on Linux, macOS, and Windows.",
+    "ko": "이전 서비스 마이그레이션은 Linux, macOS, Windows에서 지원됩니다.",
+    "zh": "旧服务迁移支持 Linux、macOS 和 Windows。",
+    "ja": "旧サービスの移行は Linux、macOS、Windows でサポートされています。"
+  },
+  "install_diagnostics.legacy_systemd_snapshot_missing": {
+    "en": "Legacy systemd unit snapshot is missing.",
+    "ko": "이전 systemd 유닛 스냅샷이 없습니다.",
+    "zh": "缺少旧 systemd 单元快照。",
+    "ja": "旧 systemd ユニットのスナップショットがありません。"
+  },
+  "install_diagnostics.legacy_systemd_unit_filename_invalid": {
+    "en": "Legacy systemd unit filename is invalid.",
+    "ko": "이전 systemd 유닛 파일 이름이 유효하지 않습니다.",
+    "zh": "旧 systemd 单元文件名无效。",
+    "ja": "旧 systemd ユニットのファイル名が無効です。"
+  },
+  "install_diagnostics.legacy_launch_agent_snapshot_missing": {
+    "en": "Legacy LaunchAgent snapshot is missing.",
+    "ko": "이전 LaunchAgent 스냅샷이 없습니다.",
+    "zh": "缺少旧 LaunchAgent 快照。",
+    "ja": "旧 LaunchAgent のスナップショットがありません。"
+  },
+  "install_diagnostics.existing_legacy_launch_agent_mismatch": {
+    "en": "Existing legacy LaunchAgent differs from its ownership record.",
+    "ko": "기존 이전 LaunchAgent가 소유권 기록과 다릅니다.",
+    "zh": "现有旧 LaunchAgent 与所有权记录不一致。",
+    "ja": "既存の旧 LaunchAgent が所有権レコードと一致しません。"
+  },
+  "install_diagnostics.restore_legacy_launch_agent": {
+    "en": "Restore legacy LaunchAgent {0}.",
+    "ko": "이전 LaunchAgent {0}을 복원합니다.",
+    "zh": "恢复旧 LaunchAgent {0}。",
+    "ja": "旧 LaunchAgent {0} を復元します。"
+  },
+  "install_diagnostics.legacy_launch_agent_path_not_utf8": {
+    "en": "Legacy LaunchAgent path is not UTF-8.",
+    "ko": "이전 LaunchAgent 경로가 UTF-8이 아닙니다.",
+    "zh": "旧 LaunchAgent 路径不是 UTF-8。",
+    "ja": "旧 LaunchAgent のパスが UTF-8 ではありません。"
+  },
+  "install_diagnostics.legacy_ownership_paths_mismatch": {
+    "en": "Legacy ownership paths do not match the selected profile; refusing migration.",
+    "ko": "이전 소유권 경로가 선택한 프로필과 일치하지 않아 이전을 거부했습니다.",
+    "zh": "旧所有权路径与所选配置文件不匹配；拒绝迁移。",
+    "ja": "旧所有権パスが選択したプロファイルと一致しないため、移行を拒否しました。"
+  },
+  "install_diagnostics.read_legacy_profile_settings": {
+    "en": "Read legacy profile settings.",
+    "ko": "이전 프로필 설정을 읽습니다.",
+    "zh": "读取旧配置文件设置。",
+    "ja": "旧プロファイル設定を読み込みます。"
+  },
+  "install_diagnostics.legacy_config_ownership_mismatch": {
+    "en": "Legacy config does not match its ownership record; refusing migration.",
+    "ko": "이전 설정이 소유권 기록과 일치하지 않아 이전을 거부했습니다.",
+    "zh": "旧配置与其所有权记录不匹配；拒绝迁移。",
+    "ja": "旧設定が所有権レコードと一致しないため、移行を拒否しました。"
+  },
+  "install_diagnostics.read_legacy_installation_list": {
+    "en": "Read legacy installation list.",
+    "ko": "이전 설치 목록을 읽습니다.",
+    "zh": "读取旧安装列表。",
+    "ja": "旧インストール一覧を読み込みます。"
+  },
+  "install_diagnostics.legacy_installation_list_mismatch": {
+    "en": "Legacy installation list does not match its ownership record; refusing migration.",
+    "ko": "이전 설치 목록이 소유권 기록과 일치하지 않아 이전을 거부했습니다.",
+    "zh": "旧安装列表与其所有权记录不匹配；拒绝迁移。",
+    "ja": "旧インストール一覧が所有権レコードと一致しないため、移行を拒否しました。"
+  },
+  "install_diagnostics.inspect_legacy_credentials": {
+    "en": "Inspect legacy Discord credential file.",
+    "ko": "이전 Discord 자격 증명 파일을 확인합니다.",
+    "zh": "检查旧 Discord 凭据文件。",
+    "ja": "旧 Discord 資格情報ファイルを確認します。"
+  },
+  "install_diagnostics.legacy_credentials_not_regular": {
+    "en": "Legacy Discord credentials are not a regular file; refusing migration.",
+    "ko": "이전 Discord 자격 증명이 일반 파일이 아니어서 이전을 거부했습니다.",
+    "zh": "旧 Discord 凭据不是普通文件；拒绝迁移。",
+    "ja": "旧 Discord 資格情報が通常ファイルではないため、移行を拒否しました。"
+  },
+  "install_diagnostics.legacy_worker_outside_owned_bin": {
+    "en": "Legacy worker executable is outside its recorded owned bin directory.",
+    "ko": "이전 워커 실행 파일이 기록된 소유 bin 디렉터리 밖에 있습니다.",
+    "zh": "旧工作程序可执行文件位于记录的所有 bin 目录之外。",
+    "ja": "旧ワーカー実行ファイルが記録された所有対象 bin ディレクトリの外にあります。"
+  },
+  "install_diagnostics.legacy_runtime_data_root_mismatch": {
+    "en": "Legacy runtime directory does not match its owned data root.",
+    "ko": "이전 런타임 디렉터리가 소유 데이터 루트와 일치하지 않습니다.",
+    "zh": "旧运行时目录与其所有数据根目录不匹配。",
+    "ja": "旧ランタイムディレクトリが所有対象データルートと一致しません。"
+  },
+  "install_diagnostics.resolve_running_discodex": {
+    "en": "Resolve running Discodex executable.",
+    "ko": "실행 중인 Discodex 실행 파일 경로를 확인합니다.",
+    "zh": "解析正在运行的 Discodex 可执行文件。",
+    "ja": "実行中の Discodex 実行ファイルを解決します。"
+  },
+  "install_diagnostics.running_discodex_not_regular": {
+    "en": "Running Discodex executable is not a regular file.",
+    "ko": "실행 중인 Discodex 파일이 일반 파일이 아닙니다.",
+    "zh": "正在运行的 Discodex 可执行文件不是普通文件。",
+    "ja": "実行中の Discodex 実行ファイルが通常ファイルではありません。"
+  },
+  "install_diagnostics.resolve_staged_discodex_worker": {
+    "en": "Resolve staged Discodex executable.",
+    "ko": "준비된 Discodex 실행 파일 경로를 확인합니다.",
+    "zh": "解析暂存的 Discodex 可执行文件。",
+    "ja": "ステージ済み Discodex 実行ファイルを解決します。"
+  },
+  "install_diagnostics.sign_staged_discodex_worker": {
+    "en": "Sign staged Discodex worker with the preserved macOS identity.",
+    "ko": "보존된 macOS 서명 ID로 준비된 Discodex 워커에 서명합니다.",
+    "zh": "使用保留的 macOS 身份为暂存的 Discodex 工作程序签名。",
+    "ja": "保持された macOS ID でステージ済み Discodex ワーカーに署名します。"
+  },
+  "install_diagnostics.staged_discodex_signing_identity_mismatch": {
+    "en": "Staged Discodex signing identity differs from the legacy pin.",
+    "ko": "준비된 Discodex 서명 ID가 이전에 고정된 값과 다릅니다.",
+    "zh": "暂存的 Discodex 签名身份与旧固定身份不同。",
+    "ja": "ステージ済み Discodex の署名 ID が旧固定値と異なります。"
+  },
+  "install_diagnostics.verify_staged_discodex_signature": {
+    "en": "Verify staged Discodex worker signature.",
+    "ko": "준비된 Discodex 워커 서명을 확인합니다.",
+    "zh": "验证暂存的 Discodex 工作程序签名。",
+    "ja": "ステージ済み Discodex ワーカーの署名を検証します。"
+  },
+  "install_diagnostics.owned_worker_data_layout_mismatch": {
+    "en": "Owned state directory does not match the worker data layout.",
+    "ko": "소유 상태 디렉터리가 워커 데이터 구조와 일치하지 않습니다.",
+    "zh": "所有状态目录与工作程序数据布局不匹配。",
+    "ja": "所有対象の状態ディレクトリがワーカーデータ構成と一致しません。"
+  },
+  "install_diagnostics.resolve_recorded_worker": {
+    "en": "Resolve recorded worker executable {0}.",
+    "ko": "기록된 워커 실행 파일 {0}의 경로를 확인합니다.",
+    "zh": "解析记录的工作程序可执行文件 {0}。",
+    "ja": "記録されたワーカー実行ファイル {0} を解決します。"
+  },
+  "install_diagnostics.recorded_worker_outside_owned_bin": {
+    "en": "Recorded worker executable is not a regular file in its canonical owned bin directory.",
+    "ko": "기록된 워커 실행 파일이 소유권이 확인된 정규 bin 디렉터리의 일반 파일이 아닙니다.",
+    "zh": "记录的工作程序可执行文件不是规范所有 bin 目录中的普通文件。",
+    "ja": "記録されたワーカー実行ファイルが所有対象の正規 bin ディレクトリ内の通常ファイルではありません。"
+  },
+  "install_diagnostics.inspect_migration_marker": {
+    "en": "Inspect migration marker.",
+    "ko": "이전 작업 표시 파일을 확인합니다.",
+    "zh": "检查迁移标记。",
+    "ja": "移行マーカーを確認します。"
+  },
+  "install_diagnostics.migration_marker_not_regular": {
+    "en": "Migration marker is not a regular file.",
+    "ko": "이전 작업 표시 파일이 일반 파일이 아닙니다.",
+    "zh": "迁移标记不是普通文件。",
+    "ja": "移行マーカーが通常ファイルではありません。"
+  },
+  "install_diagnostics.read_migration_marker": {
+    "en": "Read migration marker.",
+    "ko": "이전 작업 표시 파일을 읽습니다.",
+    "zh": "读取迁移标记。",
+    "ja": "移行マーカーを読み込みます。"
+  },
+  "install_diagnostics.parse_migration_marker": {
+    "en": "Parse migration marker.",
+    "ko": "이전 작업 표시 파일을 해석합니다.",
+    "zh": "解析迁移标记。",
+    "ja": "移行マーカーを解析します。"
+  },
+  "install_diagnostics.migration_marker_profile_mismatch": {
+    "en": "Migration marker does not map to the selected Discodex profile.",
+    "ko": "이전 작업 표시 파일이 선택한 Discodex 프로필과 연결되지 않습니다.",
+    "zh": "迁移标记与所选 Discodex 配置文件不匹配。",
+    "ja": "移行マーカーが選択した Discodex プロファイルに対応していません。"
+  },
+  "install_diagnostics.resolve_staged_migration_worker": {
+    "en": "Resolve staged migration worker.",
+    "ko": "준비된 이전 워커 경로를 확인합니다.",
+    "zh": "解析暂存的迁移工作程序。",
+    "ja": "ステージ済み移行ワーカーを解決します。"
+  },
+  "install_diagnostics.resolve_migration_data_root": {
+    "en": "Resolve migration data root.",
+    "ko": "이전 데이터 루트 경로를 확인합니다.",
+    "zh": "解析迁移数据根目录。",
+    "ja": "移行データルートを解決します。"
+  },
+  "install_diagnostics.staged_migration_worker_outside_owned_bin": {
+    "en": "Staged migration worker is outside the new profile's owned bin directory.",
+    "ko": "준비된 이전 워커가 새 프로필의 소유 bin 디렉터리 밖에 있습니다.",
+    "zh": "暂存的迁移工作程序位于新配置文件的所有 bin 目录之外。",
+    "ja": "ステージ済み移行ワーカーが新しいプロファイルの所有対象 bin ディレクトリ外にあります。"
+  },
+  "install_diagnostics.discodex_data_parent_missing": {
+    "en": "Discodex data path has no parent directory.",
+    "ko": "Discodex 데이터 경로에 상위 디렉터리가 없습니다.",
+    "zh": "Discodex 数据路径没有父目录。",
+    "ja": "Discodex データパスに親ディレクトリがありません。"
+  },
+  "install_diagnostics.publish_staged_config": {
+    "en": "Publish staged config at {0}.",
+    "ko": "준비된 설정을 {0}에 적용합니다.",
+    "zh": "在 {0} 发布暂存配置。",
+    "ja": "ステージ済み設定を {0} に公開します。"
+  },
+  "install_diagnostics.publish_staged_data": {
+    "en": "Publish staged data at {0}.",
+    "ko": "준비된 데이터를 {0}에 적용합니다.",
+    "zh": "在 {0} 发布暂存数据。",
+    "ja": "ステージ済みデータを {0} に公開します。"
+  },
+  "install_diagnostics.publish_staged_data_and_cleanup_failed": {
+    "en": "Could not publish staged data at {0} ({1}); cleanup of newly-created config path {2} also failed ({3}).",
+    "ko": "준비된 데이터를 {0}에 적용하지 못했습니다({1}). 새로 만든 설정 경로 {2}도 정리하지 못했습니다({3}).",
+    "zh": "无法在 {0} 发布暂存数据（{1}）；新建配置路径 {2} 的清理也失败（{3}）。",
+    "ja": "ステージ済みデータを {0} に公開できませんでした（{1}）。新規作成した設定パス {2} のクリーンアップにも失敗しました（{3}）。"
+  },
+  "install_diagnostics.write_migration_marker_and_cleanup": {
+    "en": "Write migration marker failed ({0}); staged root cleanup results: config={1}, data={2}.",
+    "ko": "이전 표시 파일을 쓰지 못했습니다({0}). 준비 경로 정리 결과: 설정={1}, 데이터={2}.",
+    "zh": "写入迁移标记失败（{0}）；暂存根目录清理结果：配置={1}，数据={2}。",
+    "ja": "移行マーカーの書き込みに失敗しました（{0}）。ステージ済みルートのクリーンアップ結果: 設定={1}、データ={2}。"
+  },
+  "install_diagnostics.remove_completed_migration_marker": {
+    "en": "Remove completed migration marker.",
+    "ko": "완료된 이전 표시 파일을 제거합니다.",
+    "zh": "删除已完成迁移的标记。",
+    "ja": "完了した移行マーカーを削除します。"
+  },
+  "install_diagnostics.verify_staged_migration_ownership": {
+    "en": "Verify ownership of staged migration roots.",
+    "ko": "준비된 이전 루트의 소유권을 확인합니다.",
+    "zh": "验证暂存迁移根目录的所有权。",
+    "ja": "ステージ済み移行ルートの所有権を確認します。"
+  },
+  "install_diagnostics.inspect_staged_migration_root": {
+    "en": "Inspect staged migration root {0}.",
+    "ko": "준비된 이전 루트 {0}을 확인합니다.",
+    "zh": "检查暂存迁移根目录 {0}。",
+    "ja": "ステージ済み移行ルート {0} を確認します。"
+  },
+  "install_diagnostics.staged_migration_root_not_directory": {
+    "en": "Staged migration root {0} is not a regular directory.",
+    "ko": "준비된 이전 루트 {0}이 일반 디렉터리가 아닙니다.",
+    "zh": "暂存迁移根目录 {0} 不是普通目录。",
+    "ja": "ステージ済み移行ルート {0} は通常のディレクトリではありません。"
+  },
+  "install_diagnostics.remove_staged_data": {
+    "en": "Remove staged data {0}.",
+    "ko": "준비된 데이터 {0}을 제거합니다.",
+    "zh": "删除暂存数据 {0}。",
+    "ja": "ステージ済みデータ {0} を削除します。"
+  },
+  "install_diagnostics.remove_staged_config": {
+    "en": "Remove staged config {0}.",
+    "ko": "준비된 설정 {0}을 제거합니다.",
+    "zh": "删除暂存配置 {0}。",
+    "ja": "ステージ済み設定 {0} を削除します。"
+  },
+  "install_diagnostics.inspect_migration_source": {
+    "en": "Inspect migration source {0}.",
+    "ko": "이전 원본 {0}을 확인합니다.",
+    "zh": "检查迁移源 {0}。",
+    "ja": "移行元 {0} を確認します。"
+  },
+  "install_diagnostics.migration_source_not_regular": {
+    "en": "Migration source {0} is not a regular file.",
+    "ko": "이전 원본 {0}이 일반 파일이 아닙니다.",
+    "zh": "迁移源 {0} 不是普通文件。",
+    "ja": "移行元 {0} は通常ファイルではありません。"
+  },
+  "install_diagnostics.create_staged_migration_file": {
+    "en": "Create staged migration file {0}.",
+    "ko": "준비된 이전 파일 {0}을 만듭니다.",
+    "zh": "创建暂存迁移文件 {0}。",
+    "ja": "ステージ済み移行ファイル {0} を作成します。"
+  },
+  "install_diagnostics.inspect_migration_state_directory": {
+    "en": "Inspect migration state directory {0}.",
+    "ko": "이전 상태 디렉터리 {0}을 확인합니다.",
+    "zh": "检查迁移状态目录 {0}。",
+    "ja": "移行状態ディレクトリ {0} を確認します。"
+  },
+  "install_diagnostics.migration_state_not_directory": {
+    "en": "Migration state path {0} is not a regular directory.",
+    "ko": "이전 상태 경로 {0}이 일반 디렉터리가 아닙니다.",
+    "zh": "迁移状态路径 {0} 不是普通目录。",
+    "ja": "移行状態パス {0} は通常のディレクトリではありません。"
+  },
+  "install_diagnostics.uninstall_worker_outside_owned_bin": {
+    "en": "Ownership records bridge executable {0} outside the canonical owned bin directory {1}; preserving config and ownership for investigation.",
+    "ko": "소유권 기록의 브리지 실행 파일 {0}이 정규 소유 bin 디렉터리 {1} 밖에 있어 조사할 수 있도록 설정과 소유권을 보존했습니다.",
+    "zh": "所有权记录中的桥接可执行文件 {0} 不在规范所有 bin 目录 {1} 内；已保留配置和所有权以供调查。",
+    "ja": "所有権レコードのブリッジ実行ファイル {0} が正規所有 bin ディレクトリ {1} 内にないため、調査用に設定と所有権を保持しました。"
+  },
+  "install_diagnostics.read_profile_before_uninstall": {
+    "en": "Read profile settings before uninstall; configuration and ownership were preserved.",
+    "ko": "제거 전에 프로필 설정을 읽습니다. 설정과 소유권은 보존했습니다.",
+    "zh": "卸载前读取配置文件设置；配置和所有权已保留。",
+    "ja": "アンインストール前にプロファイル設定を読み込みます。設定と所有権は保持されています。"
+  },
+  "install_diagnostics.remove_discord_command_failed": {
+    "en": "Could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry.",
+    "ko": "소유한 Discord 명령을 제거하지 못했습니다. 재시도를 위해 서비스는 중지하고 자격 증명·설정·소유권은 보존했습니다.",
+    "zh": "无法删除所有的 Discord 命令；服务已停止，并保留凭据、配置和所有权以便重试。",
+    "ja": "所有対象の Discord コマンドを削除できませんでした。再試行に備えてサービスを停止し、資格情報・設定・所有権を保持しました。"
+  },
+  "install_diagnostics.read_owned_installation_record": {
+    "en": "Read owned installation record {0}.",
+    "ko": "소유권이 확인된 설치 기록 {0}을 읽습니다.",
+    "zh": "读取所有的安装记录 {0}。",
+    "ja": "所有対象のインストールレコード {0} を読み込みます。"
+  },
+  "install_diagnostics.owned_worker_not_recorded": {
+    "en": "The owned installation has no recorded worker executable.",
+    "ko": "소유권이 확인된 설치에 워커 실행 파일 기록이 없습니다.",
+    "zh": "所有的安装没有记录工作程序可执行文件。",
+    "ja": "所有対象のインストールにワーカー実行ファイルの記録がありません。"
+  },
+  "install_diagnostics.resolve_owned_worker": {
+    "en": "Resolve the owned worker executable {0}.",
+    "ko": "소유권이 확인된 워커 실행 파일 {0}의 경로를 확인합니다.",
+    "zh": "解析所有的工作程序可执行文件 {0}。",
+    "ja": "所有対象のワーカー実行ファイル {0} を解決します。"
+  },
+  "install_diagnostics.recorded_worker_path_not_canonical": {
+    "en": "Recorded worker path is not canonical: {0}",
+    "ko": "기록된 워커 경로가 정규 경로가 아닙니다: {0}",
+    "zh": "记录的工作程序路径不是规范路径：{0}",
+    "ja": "記録されたワーカーパスが正規パスではありません: {0}"
+  },
+  "install_diagnostics.owned_worker_not_regular": {
+    "en": "The recorded worker executable is not a regular file in its canonical owned bin directory: {0}",
+    "ko": "기록된 워커 실행 파일이 정규 소유 bin 디렉터리의 일반 파일이 아닙니다: {0}",
+    "zh": "记录的工作程序可执行文件不是规范所有 bin 目录中的普通文件：{0}",
+    "ja": "記録されたワーカー実行ファイルが正規所有 bin ディレクトリ内の通常ファイルではありません: {0}"
+  },
+  "install_diagnostics.owned_worker_path_not_utf8": {
+    "en": "The owned worker executable path is not valid UTF-8.",
+    "ko": "소유권이 확인된 워커 실행 파일 경로가 유효한 UTF-8이 아닙니다.",
+    "zh": "所有的工作程序可执行文件路径不是有效的 UTF-8。",
+    "ja": "所有対象のワーカー実行ファイルパスが有効な UTF-8 ではありません。"
+  },
+  "install_diagnostics.mac_fda_needs_terminal": {
+    "en": "Full Disk Access setup must be reviewed in an interactive terminal before {0}; owned worker: {1}. Rerun the operation from a terminal.",
+    "ko": "전체 디스크 접근 설정은 {0} 전에 대화형 터미널에서 검토해야 합니다. 소유 워커: {1}. 터미널에서 작업을 다시 실행하세요.",
+    "zh": "在 {0} 之前，必须在交互式终端中检查“完全磁盘访问”设置；所有工作程序：{1}。请在终端中重新运行。",
+    "ja": "フルディスクアクセスの設定は {0} の前に対話型ターミナルで確認する必要があります。所有対象ワーカー: {1}。ターミナルから再実行してください。"
+  },
+  "install_diagnostics.mac_fda_no_response": {
+    "en": "No response received; service startup was cancelled before Full Disk Access guidance was acknowledged.",
+    "ko": "응답이 없어 전체 디스크 접근 안내를 확인하기 전에 서비스 시작을 취소했습니다.",
+    "zh": "未收到响应；在确认“完全磁盘访问”指南前已取消服务启动。",
+    "ja": "応答がなかったため、フルディスクアクセスの案内を確認する前にサービスの起動をキャンセルしました。"
+  },
+  "install_diagnostics.mac_fda_invalid_answer": {
+    "en": "Enter an empty line to continue or q to cancel; service was not started.",
+    "ko": "계속하려면 빈 줄을 입력하고 취소하려면 q를 입력하세요. 서비스는 시작되지 않았습니다.",
+    "zh": "按回车继续，或输入 q 取消；服务尚未启动。",
+    "ja": "続行するには空行を入力し、キャンセルするには q を入力してください。サービスは起動していません。"
+  },
+  "install_diagnostics.read_mac_signing_identity": {
+    "en": "Read the configured macOS signing identity.",
+    "ko": "설정된 macOS 서명 ID를 읽습니다.",
+    "zh": "读取配置的 macOS 签名身份。",
+    "ja": "設定済み macOS 署名 ID を読み込みます。"
+  },
+  "install_diagnostics.owned_signing_identity_mismatch": {
+    "en": "Owned worker signing identity does not match the configured identity.",
+    "ko": "소유 워커의 서명 ID가 설정된 ID와 일치하지 않습니다.",
+    "zh": "所有工作程序的签名身份与配置的身份不匹配。",
+    "ja": "所有対象ワーカーの署名 ID が設定済み ID と一致しません。"
+  },
+  "install_diagnostics.verify_owned_worker_before_fda": {
+    "en": "Verify the actual owned worker before opening Full Disk Access settings.",
+    "ko": "전체 디스크 접근 설정을 열기 전에 실제 소유 워커를 검증합니다.",
+    "zh": "打开“完全磁盘访问”设置前验证实际所有工作程序。",
+    "ja": "フルディスクアクセス設定を開く前に実際の所有対象ワーカーを検証します。"
+  },
+  "install_diagnostics.fda_setup_operation_reason": {
+    "en": "Installation can configure the native profile or start the service.",
+    "ko": "설치 과정에서 네이티브 프로필을 설정하거나 서비스를 시작할 수 있습니다.",
+    "zh": "安装过程可能会配置原生配置文件或启动服务。",
+    "ja": "インストールによってネイティブプロファイルを設定したり、サービスを起動したりする場合があります。"
+  },
+  "install_diagnostics.open_fda_guidance": {
+    "en": "Open Full Disk Access guidance for signed worker {0}.",
+    "ko": "서명된 워커 {0}의 전체 디스크 접근 안내를 엽니다.",
+    "zh": "打开已签名工作程序 {0} 的“完全磁盘访问”指南。",
+    "ja": "署名済みワーカー {0} のフルディスクアクセス案内を開きます。"
+  },
+  "install_diagnostics.mac_fda_cancelled": {
+    "en": "Installation cancelled before service startup; signed worker: {0}.",
+    "ko": "서비스 시작 전에 설치가 취소되었습니다. 서명된 워커: {0}",
+    "zh": "服务启动前已取消安装；已签名工作程序：{0}。",
+    "ja": "サービス起動前にインストールがキャンセルされました。署名済みワーカー: {0}"
+  },
+  "install_diagnostics.windows_task_executable_path_not_utf8": {
+    "en": "Windows task executable path is not valid UTF-8.",
+    "ko": "Windows 작업 실행 파일 경로가 유효한 UTF-8이 아닙니다.",
+    "zh": "Windows 任务可执行文件路径不是有效的 UTF-8。",
+    "ja": "Windows タスク実行ファイルのパスが有効な UTF-8 ではありません。"
+  },
+  "install_diagnostics.windows_task_executable_path_invalid": {
+    "en": "Windows task executable must be a local drive path; UNC and device paths are not supported.",
+    "ko": "Windows 작업 실행 파일은 로컬 드라이브 경로여야 합니다. UNC 및 장치 경로는 지원되지 않습니다.",
+    "zh": "Windows 任务可执行文件必须是本地驱动器路径；不支持 UNC 和设备路径。",
+    "ja": "Windows タスク実行ファイルはローカルドライブのパスである必要があります。UNC パスとデバイスパスはサポートされていません。"
+  },
+  "install_diagnostics.create_project_directory": {
+    "en": "Create Codex project/work directory {0}.",
+    "ko": "Codex 프로젝트/작업 디렉터리 {0}을 만듭니다.",
+    "zh": "创建 Codex 项目/工作目录 {0}。",
+    "ja": "Codex プロジェクト/作業ディレクトリ {0} を作成します。"
+  },
+  "install_diagnostics.resolve_project_directory": {
+    "en": "Resolve Codex project/work directory {0}.",
+    "ko": "Codex 프로젝트/작업 디렉터리 {0}의 경로를 확인합니다.",
+    "zh": "解析 Codex 项目/工作目录 {0}。",
+    "ja": "Codex プロジェクト/作業ディレクトリ {0} を解決します。"
+  },
+  "install_diagnostics.project_path_not_directory": {
+    "en": "Codex project/work path is not a directory.",
+    "ko": "Codex 프로젝트/작업 경로가 디렉터리가 아닙니다.",
+    "zh": "Codex 项目/工作路径不是目录。",
+    "ja": "Codex プロジェクト/作業パスがディレクトリではありません。"
+  },
+  "install_diagnostics.read_current_directory": {
+    "en": "Read current directory.",
+    "ko": "현재 디렉터리를 읽습니다.",
+    "zh": "读取当前目录。",
+    "ja": "現在のディレクトリを読み込みます。"
+  },
+  "install_diagnostics.resolve_recorded_config": {
+    "en": "Resolve recorded config.",
+    "ko": "기록된 설정 파일 경로를 확인합니다.",
+    "zh": "解析记录的配置。",
+    "ja": "記録された設定を解決します。"
+  },
+  "install_diagnostics.selected_config_not_owned": {
+    "en": "Selected config is not the file recorded by ownership.",
+    "ko": "선택한 설정이 소유권 기록에 지정된 파일이 아닙니다.",
+    "zh": "所选配置不是所有权记录中登记的文件。",
+    "ja": "選択した設定が所有権レコードに記録されたファイルではありません。"
+  },
+  "install_diagnostics.recorded_legacy_config_parent_missing": {
+    "en": "Recorded legacy config path has no parent directory.",
+    "ko": "기록된 이전 설정 경로에 상위 디렉터리가 없습니다.",
+    "zh": "记录的旧配置路径没有父目录。",
+    "ja": "記録された旧設定パスに親ディレクトリがありません。"
+  },
+  "install_diagnostics.resolve_owned_state_directory": {
+    "en": "Resolve owned state directory {0}.",
+    "ko": "소유권이 확인된 상태 디렉터리 {0}의 경로를 확인합니다.",
+    "zh": "解析所有状态目录 {0}。",
+    "ja": "所有対象の状態ディレクトリ {0} を解決します。"
+  },
+  "install_diagnostics.owned_state_layout_expected": {
+    "en": "Owned state directory does not use the expected profile data layout: {0}",
+    "ko": "소유 상태 디렉터리가 예상한 프로필 데이터 구조를 따르지 않습니다: {0}",
+    "zh": "所有状态目录未采用预期的配置文件数据布局：{0}",
+    "ja": "所有対象の状態ディレクトリが想定されたプロファイルデータ構成ではありません: {0}"
+  },
+  "install_diagnostics.owned_state_profile_data_root_missing": {
+    "en": "Owned state directory has no profile data root.",
+    "ko": "소유 상태 디렉터리에 프로필 데이터 루트가 없습니다.",
+    "zh": "所有状态目录没有配置文件数据根目录。",
+    "ja": "所有対象の状態ディレクトリにプロファイルデータルートがありません。"
+  },
+  "install_diagnostics.owned_runtime_outside_data_root": {
+    "en": "Owned runtime directory is outside the profile data root: {0}",
+    "ko": "소유 런타임 디렉터리가 프로필 데이터 루트 밖에 있습니다: {0}",
+    "zh": "所有运行时目录位于配置文件数据根目录之外：{0}",
+    "ja": "所有対象のランタイムディレクトリがプロファイルデータルート外にあります: {0}"
+  },
+  "install_diagnostics.mac_permissions_path_required": {
+    "en": "mac-permissions option requires a path.",
+    "ko": "mac-permissions 옵션에 경로가 필요합니다.",
+    "zh": "mac-permissions 选项需要路径。",
+    "ja": "mac-permissions オプションにはパスが必要です。"
+  },
+  "install_diagnostics.mac_permissions_config_repeated": {
+    "en": "mac-permissions accepts --config only once.",
+    "ko": "mac-permissions에서는 --config을 한 번만 지정할 수 있습니다.",
+    "zh": "mac-permissions 中 --config 只能指定一次。",
+    "ja": "mac-permissions では --config を一度だけ指定できます。"
+  },
+  "install_diagnostics.mac_permissions_ownership_repeated": {
+    "en": "mac-permissions accepts --ownership only once.",
+    "ko": "mac-permissions에서는 --ownership을 한 번만 지정할 수 있습니다.",
+    "zh": "mac-permissions 中 --ownership 只能指定一次。",
+    "ja": "mac-permissions では --ownership を一度だけ指定できます。"
+  },
+  "install_diagnostics.mac_permissions_unknown_option": {
+    "en": "Unknown mac-permissions option `{0}`.",
+    "ko": "알 수 없는 mac-permissions 옵션입니다: `{0}`.",
+    "zh": "未知的 mac-permissions 选项 `{0}`。",
+    "ja": "不明な mac-permissions オプション `{0}`。"
+  },
+  "install_diagnostics.mac_permissions_config_ownership_exclusive": {
+    "en": "mac-permissions accepts either --config or --ownership, not both.",
+    "ko": "mac-permissions에는 --config과 --ownership 중 하나만 지정할 수 있습니다.",
+    "zh": "mac-permissions 只能指定 --config 或 --ownership 其中之一。",
+    "ja": "mac-permissions では --config と --ownership のどちらか一方のみ指定できます。"
+  },
+  "install_diagnostics.update_unknown_option": {
+    "en": "Unknown update option {0}.",
+    "ko": "알 수 없는 update 옵션입니다: {0}.",
+    "zh": "未知的 update 选项 {0}。",
+    "ja": "不明な update オプション {0}。"
+  },
+  "install_diagnostics.update_source_required": {
+    "en": "Update requires --source <new-binary>.",
+    "ko": "update에는 --source <new-binary>가 필요합니다.",
+    "zh": "update 需要 --source <new-binary>。",
+    "ja": "update には --source <new-binary> が必要です。"
+  },
+  "install_diagnostics.update_config_required": {
+    "en": "Update requires --config <existing-config>.",
+    "ko": "update에는 --config <existing-config>가 필요합니다.",
+    "zh": "update 需要 --config <existing-config>。",
+    "ja": "update には --config <existing-config> が必要です。"
+  },
+  "install_diagnostics.run_incoming_update_installer": {
+    "en": "Run the incoming worker's update installer.",
+    "ko": "새 워커의 업데이트 설치 프로그램을 실행합니다.",
+    "zh": "运行新工作程序的更新安装程序。",
+    "ja": "新しいワーカーの更新インストーラーを実行します。"
+  },
+  "install_diagnostics.incoming_worker_update_failed": {
+    "en": "Incoming worker update failed: {0}",
+    "ko": "새 워커 업데이트 실패: {0}",
+    "zh": "新工作程序更新失败：{0}",
+    "ja": "新しいワーカーの更新に失敗しました: {0}"
+  },
+  "install_diagnostics.profile_directory_missing": {
+    "en": "Profile directory is missing.",
+    "ko": "프로필 디렉터리가 없습니다.",
+    "zh": "配置文件目录缺失。",
+    "ja": "プロファイルディレクトリがありません。"
+  },
+  "install_diagnostics.replace_profile_state": {
+    "en": "replace profile state",
+    "ko": "프로필 상태 교체",
+    "zh": "替换配置文件状态",
+    "ja": "プロファイル状態を置き換える"
+  },
+  "install_diagnostics.binary_updates_unsupported_platform": {
+    "en": "Binary updates are supported on Linux, macOS, and Windows.",
+    "ko": "바이너리 업데이트는 Linux, macOS, Windows에서 지원됩니다.",
+    "zh": "二进制更新支持 Linux、macOS 和 Windows。",
+    "ja": "バイナリ更新は Linux、macOS、Windows でサポートされています。"
+  },
+  "install_diagnostics.owned_runtime_outside_profile": {
+    "en": "Managed runtime is outside this profile’s runtime directory.",
+    "ko": "관리형 런타임이 이 프로필의 런타임 디렉터리 밖에 있습니다.",
+    "zh": "托管运行时位于此配置文件的运行时目录之外。",
+    "ja": "管理対象ランタイムがこのプロファイルのランタイムディレクトリ外にあります。"
+  },
+  "install_diagnostics.owned_runtime_different_package": {
+    "en": "Managed runtime ownership points to a different package.",
+    "ko": "관리형 런타임 소유권이 다른 패키지를 가리킵니다.",
+    "zh": "托管运行时所有权指向了其他程序包。",
+    "ja": "管理対象ランタイムの所有権が別のパッケージを指しています。"
+  },
+  "install_diagnostics.user_data_overlaps_runtime": {
+    "en": "User data overlaps the managed runtime; preserving files.",
+    "ko": "사용자 데이터가 관리형 런타임과 겹쳐 파일을 보존합니다.",
+    "zh": "用户数据与托管运行时重叠；保留文件。",
+    "ja": "ユーザーデータが管理対象ランタイムと重なるため、ファイルを保持します。"
+  },
+  "install_diagnostics.owned_runtime_expected_profile": {
+    "en": "Owned Codex runtime is not in the expected profile directory; configuration and ownership were preserved.",
+    "ko": "소유한 Codex 런타임이 예상 프로필 디렉터리에 없어 구성과 소유권을 보존했습니다.",
+    "zh": "自有 Codex 运行时不在预期的配置文件目录中；已保留配置和所有权。",
+    "ja": "所有する Codex ランタイムが想定されたプロファイルディレクトリにないため、設定と所有権を保持しました。"
+  },
+  "install_diagnostics.owned_runtime_regular_directory": {
+    "en": "Owned Codex runtime is not a regular directory; configuration and ownership were preserved.",
+    "ko": "소유한 Codex 런타임이 일반 디렉터리가 아니어서 구성과 소유권을 보존했습니다.",
+    "zh": "自有 Codex 运行时不是普通目录；已保留配置和所有权。",
+    "ja": "所有する Codex ランタイムが通常のディレクトリではないため、設定と所有権を保持しました。"
+  },
+  "install_diagnostics.owned_runtime_incomplete_record": {
+    "en": "Owned Codex runtime has an incomplete ownership record; configuration and ownership were preserved.",
+    "ko": "소유한 Codex 런타임의 소유권 기록이 불완전하여 구성과 소유권을 보존했습니다.",
+    "zh": "自有 Codex 运行时的所有权记录不完整；已保留配置和所有权。",
+    "ja": "所有する Codex ランタイムの所有権記録が不完全なため、設定と所有権を保持しました。"
+  },
+  "install_diagnostics.owned_runtime_overlap_path": {
+    "en": "Codex user data, project, state, or a selected executable overlaps the owned runtime at {0}; its files, configuration, and ownership were preserved.",
+    "ko": "Codex 사용자 데이터, 프로젝트, 상태 또는 선택한 실행 파일이 {0}의 소유 런타임과 겹쳐 파일, 구성 및 소유권을 보존했습니다.",
+    "zh": "Codex 用户数据、项目、状态或所选可执行文件与 {0} 处的自有运行时重叠；已保留其文件、配置和所有权。",
+    "ja": "Codex のユーザーデータ、プロジェクト、状態、または選択した実行ファイルが {0} の所有ランタイムと重なるため、ファイル、設定、所有権を保持しました。"
+  },
+  "install_diagnostics.owned_runtime_unrecorded_contents": {
+    "en": "Owned runtime contains unrecorded files or user data at {0}; its files, configuration, and ownership were preserved.",
+    "ko": "소유 런타임 {0}에 기록되지 않은 파일이나 사용자 데이터가 있어 파일, 구성 및 소유권을 보존했습니다.",
+    "zh": "自有运行时 {0} 中包含未记录的文件或用户数据；已保留其文件、配置和所有权。",
+    "ja": "所有ランタイム {0} に未記録のファイルまたはユーザーデータがあるため、ファイル、設定、所有権を保持しました。"
+  },
+  "install_diagnostics.owned_runtime_cleanup_failed": {
+    "en": "Could not remove the empty owned runtime; configuration and ownership remain so cleanup can be retried.",
+    "ko": "비어 있는 소유 런타임을 제거하지 못했습니다. 정리를 다시 시도할 수 있도록 구성과 소유권은 유지됩니다.",
+    "zh": "无法移除空的自有运行时；配置和所有权仍保留，以便重试清理。",
+    "ja": "空の所有ランタイムを削除できませんでした。再試行できるよう設定と所有権は保持されています。"
+  },
+  "install_diagnostics.launchctl_inspect_failed": {
+    "en": "launchctl could not inspect {0}: {1}",
+    "ko": "launchctl에서 {0}을(를) 확인하지 못했습니다: {1}",
+    "zh": "launchctl 无法检查 {0}：{1}",
+    "ja": "launchctl で {0} を確認できませんでした: {1}"
+  },
+  "install_diagnostics.windows_task_inspection_failed": {
+    "en": "Could not inspect the Windows task; it was left unchanged.",
+    "ko": "Windows 작업을 확인하지 못해 변경하지 않았습니다.",
+    "zh": "无法检查 Windows 任务；未对其进行更改。",
+    "ja": "Windows タスクを確認できなかったため、変更していません。"
+  },
+  "install_diagnostics.windows_task_inspection_unexpected": {
+    "en": "Unexpected Windows task inspection result; it was left unchanged.",
+    "ko": "예상하지 못한 Windows 작업 확인 결과여서 변경하지 않았습니다.",
+    "zh": "Windows 任务检查结果异常；未对其进行更改。",
+    "ja": "Windows タスクの確認結果が想定外だったため、変更していません。"
+  },
+  "install_diagnostics.install_service_existing": {
+    "en": "The user service {0} already exists outside this install record; it was left unchanged.",
+    "ko": "사용자 서비스 {0}이(가) 이 설치 기록에 속하지 않아 변경하지 않았습니다.",
+    "zh": "用户服务 {0} 不属于此安装记录；未对其进行更改。",
+    "ja": "ユーザーサービス {0} はこのインストール記録に属さないため、変更していません。"
+  },
+  "install_diagnostics.install_task_existing": {
+    "en": "The user scheduled task already exists outside this install record; it was left unchanged.",
+    "ko": "사용자 예약 작업이 이 설치 기록에 속하지 않아 변경하지 않았습니다.",
+    "zh": "用户计划任务不属于此安装记录；未对其进行更改。",
+    "ja": "ユーザーのスケジュール済みタスクはこのインストール記録に属さないため、変更していません。"
+  },
+  "install_diagnostics.launchagent_existing": {
+    "en": "LaunchAgent {0} is already loaded without matching ownership; it was left unchanged.",
+    "ko": "LaunchAgent {0}이(가) 일치하는 소유권 없이 이미 로드되어 있어 변경하지 않았습니다.",
+    "zh": "LaunchAgent {0} 已加载但所有权不匹配；未对其进行更改。",
+    "ja": "LaunchAgent {0} は所有権が一致しない状態で既に読み込まれているため、変更していません。"
+  },
+  "install_diagnostics.launchagent_not_loaded": {
+    "en": "launchctl accepted {0}, but the owned LaunchAgent is not loaded.",
+    "ko": "launchctl은 {0}을(를) 수락했지만 소유한 LaunchAgent가 로드되지 않았습니다.",
+    "zh": "launchctl 已接受 {0}，但自有 LaunchAgent 未加载。",
+    "ja": "launchctl は {0} を受け付けましたが、所有する LaunchAgent は読み込まれていません。"
+  },
+  "install_diagnostics.check_existing_systemd_user_unit": {
+    "en": "Check for an existing systemd user unit",
+    "ko": "기존 systemd 사용자 유닛 확인",
+    "zh": "检查是否已有 systemd 用户单元",
+    "ja": "既存の systemd ユーザーユニットを確認"
+  },
+  "install_diagnostics.inspect_owned_codex_runtime_before_cleanup": {
+    "en": "Inspect the owned Codex runtime before cleanup",
+    "ko": "정리 전에 소유한 Codex 런타임 확인",
+    "zh": "清理前检查自有 Codex 运行时",
+    "ja": "クリーンアップ前に所有する Codex ランタイムを確認"
+  },
+  "install_diagnostics.inspect_owned_runtime_entry": {
+    "en": "Inspect an owned runtime entry",
+    "ko": "소유 런타임 항목 확인",
+    "zh": "检查自有运行时条目",
+    "ja": "所有ランタイム項目を確認"
+  },
+  "install_diagnostics.inspect_user_launchagent_registration": {
+    "en": "Inspect user LaunchAgent registration",
+    "ko": "사용자 LaunchAgent 등록 확인",
+    "zh": "检查用户 LaunchAgent 注册状态",
+    "ja": "ユーザー LaunchAgent の登録を確認"
+  },
+  "install_diagnostics.loaded_launchagent_no_program_readback": {
+    "en": "Loaded LaunchAgent has no program readback",
+    "ko": "로드된 LaunchAgent에서 프로그램 정보를 읽을 수 없습니다.",
+    "zh": "已加载的 LaunchAgent 未返回程序信息。",
+    "ja": "読み込まれた LaunchAgent からプログラム情報を取得できません。"
+  },
+  "install_diagnostics.loaded_launchagent_unexpected_arguments": {
+    "en": "Loaded LaunchAgent {0} has unexpected arguments; refusing to stop or replace it",
+    "ko": "로드된 LaunchAgent {0}의 인수가 예상과 달라 중지하거나 교체하지 않습니다.",
+    "zh": "已加载的 LaunchAgent {0} 参数异常；拒绝停止或替换。",
+    "ja": "読み込まれた LaunchAgent {0} の引数が想定外のため、停止または置換しません。"
+  },
+  "install_diagnostics.owned_launchagent_executable_missing": {
+    "en": "Owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership",
+    "ko": "소유한 LaunchAgent에 기록된 브리지 실행 파일이 없어 구성과 소유권을 보존합니다.",
+    "zh": "自有 LaunchAgent 未记录桥接程序；保留配置和所有权。",
+    "ja": "所有する LaunchAgent にブリッジ実行ファイルの記録がないため、設定と所有権を保持します。"
+  },
+  "install_diagnostics.owned_launchagent_identity_mismatch": {
+    "en": "Owned LaunchAgent path does not match this profile identity; preserving configuration and ownership",
+    "ko": "소유한 LaunchAgent 경로가 이 프로필 ID와 일치하지 않아 구성과 소유권을 보존합니다.",
+    "zh": "自有 LaunchAgent 路径与此配置文件身份不匹配；保留配置和所有权。",
+    "ja": "所有する LaunchAgent のパスがこのプロファイル ID と一致しないため、設定と所有権を保持します。"
+  },
+  "install_diagnostics.owned_launchagent_plist_missing": {
+    "en": "Owned LaunchAgent has no recorded plist path",
+    "ko": "소유한 LaunchAgent의 plist 경로가 기록되어 있지 않습니다.",
+    "zh": "自有 LaunchAgent 未记录 plist 路径。",
+    "ja": "所有する LaunchAgent の plist パスが記録されていません。"
+  },
+  "install_diagnostics.owned_systemd_service_name_missing": {
+    "en": "Owned systemd unit path has no valid service name",
+    "ko": "소유한 systemd 유닛 경로에 유효한 서비스 이름이 없습니다.",
+    "zh": "自有 systemd 单元路径没有有效的服务名称。",
+    "ja": "所有する systemd ユニットパスに有効なサービス名がありません。"
+  },
+  "install_diagnostics.owned_systemd_unit_path_missing": {
+    "en": "Owned systemd service has no recorded unit path",
+    "ko": "소유한 systemd 서비스의 유닛 경로가 기록되어 있지 않습니다.",
+    "zh": "自有 systemd 服务未记录单元路径。",
+    "ja": "所有する systemd サービスのユニットパスが記録されていません。"
+  },
+  "install_diagnostics.owned_systemd_unit_unexpected": {
+    "en": "Owned systemd unit path does not name the expected {0}.service; preserving configuration and ownership",
+    "ko": "소유한 systemd 유닛 경로가 예상한 {0}.service를 가리키지 않아 구성과 소유권을 보존합니다.",
+    "zh": "自有 systemd 单元路径与预期的 {0}.service 不符；保留配置和所有权。",
+    "ja": "所有する systemd ユニットパスが想定される {0}.service ではないため、設定と所有権を保持します。"
+  },
+  "install_diagnostics.owned_windows_task_executable_missing": {
+    "en": "Owned Windows task has no recorded worker executable; preserving config and ownership",
+    "ko": "소유한 Windows 작업의 워커 실행 파일이 기록되어 있지 않아 구성과 소유권을 보존합니다.",
+    "zh": "自有 Windows 任务未记录工作程序可执行文件；保留配置和所有权。",
+    "ja": "所有する Windows タスクにワーカー実行ファイルの記録がないため、設定と所有権を保持します。"
+  },
+  "install_diagnostics.read_existing_systemd_user_unit": {
+    "en": "Read existing systemd user unit",
+    "ko": "기존 systemd 사용자 유닛 읽기",
+    "zh": "读取现有 systemd 用户单元",
+    "ja": "既存の systemd ユーザーユニットを読み取る"
+  },
+  "install_diagnostics.read_owned_codex_runtime_before_cleanup": {
+    "en": "Read the owned Codex runtime before cleanup",
+    "ko": "정리 전에 소유한 Codex 런타임 읽기",
+    "zh": "清理前读取自有 Codex 运行时",
+    "ja": "クリーンアップ前に所有する Codex ランタイムを読み取る"
+  },
+  "install_diagnostics.read_owned_codex_runtime_entry": {
+    "en": "Read an owned Codex runtime entry",
+    "ko": "소유한 Codex 런타임 항목 읽기",
+    "zh": "读取自有 Codex 运行时条目",
+    "ja": "所有する Codex ランタイム項目を読み取る"
+  },
+  "install_diagnostics.resolve_owned_profile_config_for_launchagent_removal": {
+    "en": "Resolve the owned profile config before removing its LaunchAgent",
+    "ko": "소유한 LaunchAgent를 제거하기 전에 프로필 구성을 확인합니다.",
+    "zh": "移除自有 LaunchAgent 前解析配置文件配置。",
+    "ja": "所有する LaunchAgent を削除する前にプロファイル設定を解決します。"
+  },
+  "install_diagnostics.stop_owned_user_service_failed": {
+    "en": "Could not stop and disable the owned user service; config and credentials were preserved",
+    "ko": "소유한 사용자 서비스를 중지하고 비활성화하지 못했습니다. 구성과 인증 정보는 보존했습니다.",
+    "zh": "无法停止并禁用自有用户服务；已保留配置和凭据。",
+    "ja": "所有するユーザーサービスを停止・無効化できませんでした。設定と認証情報は保持されました。"
+  },
+  "install_diagnostics.unregister_owned_windows_task_failed": {
+    "en": "Could not verify, stop, and unregister the owned Windows task; config and credentials were preserved",
+    "ko": "소유한 Windows 작업을 확인·중지·등록 해제하지 못했습니다. 구성과 인증 정보는 보존했습니다.",
+    "zh": "无法验证、停止并注销自有 Windows 任务；已保留配置和凭据。",
+    "ja": "所有する Windows タスクを確認・停止・登録解除できませんでした。設定と認証情報は保持されました。"
+  },
+  "install_diagnostics.windows_task_ownership_mismatch": {
+    "en": "Windows task differs from this ownership record; config and credentials were preserved",
+    "ko": "Windows 작업이 소유권 기록과 달라 구성과 인증 정보를 보존했습니다.",
+    "zh": "Windows 任务与所有权记录不符；已保留配置和凭据。",
+    "ja": "Windows タスクが所有権記録と異なるため、設定と認証情報を保持しました。"
+  },
+  "install_diagnostics.profile_data_root_resolve": {
+    "en": "Resolve profile data root {0}",
+    "ko": "프로필 데이터 루트 {0} 확인",
+    "zh": "解析配置文件数据根目录 {0}",
+    "ja": "プロファイルのデータルート {0} を解決"
+  },
+  "install_diagnostics.config_path_parent_missing": {
+    "en": "Config path has no parent directory",
+    "ko": "구성 파일 경로에 상위 디렉터리가 없습니다.",
+    "zh": "配置文件路径没有父目录。",
+    "ja": "設定ファイルのパスに親ディレクトリがありません。"
+  },
+  "install_diagnostics.check_systemd_service_exists": {
+    "en": "Could not check whether the systemd user service {0}.service already exists; it was left unchanged.",
+    "ko": "systemd 사용자 서비스 {0}.service의 기존 여부를 확인하지 못해 변경하지 않았습니다.",
+    "zh": "无法检查 systemd 用户服务 {0}.service 是否已存在；未对其进行更改。",
+    "ja": "systemd ユーザーサービス {0}.service の既存状態を確認できなかったため、変更していません。"
+  },
+  "install_diagnostics.launchd_domain_id_failed": {
+    "en": "id -u failed while resolving the user LaunchAgent domain.",
+    "ko": "사용자 LaunchAgent 도메인을 확인하는 중 id -u가 실패했습니다.",
+    "zh": "解析用户 LaunchAgent 域时 id -u 执行失败。",
+    "ja": "ユーザー LaunchAgent ドメインの解決中に id -u が失敗しました。"
+  },
+  "install_diagnostics.windows_identity_unavailable": {
+    "en": "Could not determine the installing Windows user; no elevated operation was started.",
+    "ko": "설치 중인 Windows 사용자를 확인할 수 없어 관리자 권한 작업을 시작하지 않았습니다.",
+    "zh": "无法确定安装程序对应的 Windows 用户；未启动提升权限的操作。",
+    "ja": "インストール中の Windows ユーザーを特定できなかったため、昇格操作は開始されませんでした。"
+  },
+  "install_diagnostics.windows_sid_invalid": {
+    "en": "Invalid installer Windows SID; no elevated operation was started.",
+    "ko": "설치 프로그램의 Windows SID가 유효하지 않아 관리자 권한 작업을 시작하지 않았습니다.",
+    "zh": "安装程序的 Windows SID 无效；未启动提升权限的操作。",
+    "ja": "インストーラーの Windows SID が無効なため、昇格操作は開始されませんでした。"
+  },
+  "install_diagnostics.launchd_domain_uid_invalid": {
+    "en": "id -u returned an invalid user ID for the LaunchAgent domain.",
+    "ko": "id -u가 LaunchAgent 도메인에 유효하지 않은 사용자 ID를 반환했습니다.",
+    "zh": "id -u 为 LaunchAgent 域返回了无效的用户 ID。",
+    "ja": "id -u が LaunchAgent ドメインに無効なユーザー ID を返しました。"
+  },
+  "install_diagnostics.launchd_program_mismatch": {
+    "en": "Loaded LaunchAgent {0} runs unexpected program {1}.",
+    "ko": "로드된 LaunchAgent {0}이(가) 예상하지 않은 프로그램 {1}을(를) 실행합니다.",
+    "zh": "已加载的 LaunchAgent {0} 正在运行意外程序 {1}。",
+    "ja": "読み込まれた LaunchAgent {0} は想定外のプログラム {1} を実行しています。"
+  },
+  "install_diagnostics.launchd_bootout_timeout": {
+    "en": "LaunchAgent {0} remained loaded after the bootout timeout.",
+    "ko": "bootout 제한 시간 후에도 LaunchAgent {0}이(가) 로드된 상태입니다.",
+    "zh": "bootout 超时后 LaunchAgent {0} 仍处于加载状态。",
+    "ja": "bootout のタイムアウト後も LaunchAgent {0} は読み込まれたままです。"
+  },
+  "install_diagnostics.launchd_plist_not_regular": {
+    "en": "LaunchAgent path {0} is not a regular owned file.",
+    "ko": "LaunchAgent 경로 {0}이(가) 소유한 일반 파일이 아닙니다.",
+    "zh": "LaunchAgent 路径 {0} 不是自有的普通文件。",
+    "ja": "LaunchAgent のパス {0} は所有する通常ファイルではありません。"
+  },
+  "install_diagnostics.launchd_plist_mismatch": {
+    "en": "LaunchAgent plist {0} does not match the owned service; it was left unchanged.",
+    "ko": "LaunchAgent plist {0}이(가) 소유한 서비스와 일치하지 않아 변경하지 않았습니다.",
+    "zh": "LaunchAgent plist {0} 与自有服务不匹配；未对其进行更改。",
+    "ja": "LaunchAgent plist {0} が所有サービスと一致しないため、変更していません。"
+  },
+  "install_diagnostics.launchd_plist_inspect": {
+    "en": "Inspect LaunchAgent plist {0}",
+    "ko": "LaunchAgent plist {0} 확인",
+    "zh": "检查 LaunchAgent plist {0}",
+    "ja": "LaunchAgent plist {0} を確認"
+  },
+  "install_diagnostics.owned_launchagent_plist_changed": {
+    "en": "Owned LaunchAgent plist changed outside this install; preserving configuration and ownership.",
+    "ko": "소유한 LaunchAgent plist가 이 설치 외부에서 변경되어 구성과 소유권을 보존합니다.",
+    "zh": "自有 LaunchAgent plist 已在此安装之外被修改；保留配置和所有权。",
+    "ja": "所有する LaunchAgent plist がこのインストール以外で変更されたため、設定と所有権を保持します。"
+  },
+  "install_diagnostics.stop_owned_launchagent_failed": {
+    "en": "Could not stop the matching owned LaunchAgent; config and credentials were preserved.",
+    "ko": "일치하는 소유 LaunchAgent를 중지하지 못했습니다. 구성과 인증 정보를 보존했습니다.",
+    "zh": "无法停止匹配的自有 LaunchAgent；已保留配置和凭据。",
+    "ja": "一致する所有 LaunchAgent を停止できませんでした。設定と認証情報は保持されました。"
+  },
+  "install_diagnostics.owned_bridge_path_resolve": {
+    "en": "Resolve the owned bridge executable before removing its LaunchAgent",
+    "ko": "LaunchAgent 제거 전에 소유한 브리지 실행 파일 확인",
+    "zh": "移除 LaunchAgent 前解析自有桥接程序",
+    "ja": "LaunchAgent を削除する前に所有するブリッジ実行ファイルを解決"
+  },
+  "install_diagnostics.owned_discord_command_marker_incomplete": {
+    "en": "The owned Discord command marker exists, but its config or token is missing.",
+    "ko": "소유한 Discord 명령 표식은 있지만 구성 또는 토큰이 없습니다.",
+    "zh": "自有 Discord 命令标记存在，但缺少配置或令牌。",
+    "ja": "所有する Discord コマンドマーカーはありますが、設定またはトークンがありません。"
+  },
+  "install_diagnostics.native_model_catalog_read": {
+    "en": "Read the native provider model catalog",
+    "ko": "네이티브 제공자 모델 카탈로그 읽기",
+    "zh": "读取原生提供方模型目录",
+    "ja": "ネイティブプロバイダーのモデルカタログを読み取る"
+  },
+  "install_diagnostics.native_permission_profiles_read": {
+    "en": "Read permissionProfile/list",
+    "ko": "permissionProfile/list 읽기",
+    "zh": "读取 permissionProfile/list",
+    "ja": "permissionProfile/list を読み取る"
+  },
+  "install_diagnostics.native_selected_model_missing": {
+    "en": "The selected model is absent from the native provider catalog and configuration.",
+    "ko": "선택한 모델이 네이티브 제공자 카탈로그와 구성에 없습니다.",
+    "zh": "所选模型不在原生提供方目录和配置中。",
+    "ja": "選択したモデルがネイティブプロバイダーのカタログと設定にありません。"
+  },
+  "install_diagnostics.native_permission_profiles_missing": {
+    "en": "The current native catalog has no allowed permission profiles.",
+    "ko": "현재 네이티브 카탈로그에 허용된 권한 프로필이 없습니다.",
+    "zh": "当前原生目录中没有允许的权限配置文件。",
+    "ja": "現在のネイティブカタログに没有允许的权限配置文件。"
+  },
+  "install_diagnostics.permission_profile_data_missing": {
+    "en": "permissionProfile/list returned no data array",
+    "ko": "permissionProfile/list가 data 배열을 반환하지 않았습니다.",
+    "zh": "permissionProfile/list 未返回 data 数组",
+    "ja": "permissionProfile/list が data 配列を返しませんでした"
+  },
+  "install_diagnostics.json_read_path": {
+    "en": "Read {0}",
+    "ko": "{0} 읽기",
+    "zh": "读取 {0}",
+    "ja": "{0} を読み取る"
+  },
+  "install_diagnostics.json_parse_path": {
+    "en": "Parse {0}",
+    "ko": "{0} 분석",
+    "zh": "解析 {0}",
+    "ja": "{0} を解析"
+  },
+  "install_diagnostics.json_create_parent": {
+    "en": "Create {0}",
+    "ko": "{0} 생성",
+    "zh": "创建 {0}",
+    "ja": "{0} を作成"
+  },
+  "install_diagnostics.json_write_path": {
+    "en": "Write {0}",
+    "ko": "{0} 쓰기",
+    "zh": "写入 {0}",
+    "ja": "{0} に書き込む"
+  },
+  "install_diagnostics.owned_secret_replace": {
+    "en": "Replace owned secret file {0}",
+    "ko": "소유한 비밀 파일 {0} 교체",
+    "zh": "替换自有机密文件 {0}",
+    "ja": "所有するシークレットファイル {0} を置換"
+  },
+  "install_diagnostics.owned_secret_write": {
+    "en": "Write secret file {0}",
+    "ko": "비밀 파일 {0} 쓰기",
+    "zh": "写入机密文件 {0}",
+    "ja": "シークレットファイル {0} に書き込む"
+  },
+  "install_diagnostics.owned_file_remove": {
+    "en": "Remove owned file {0}",
+    "ko": "소유 파일 {0} 제거",
+    "zh": "移除自有文件 {0}",
+    "ja": "所有ファイル {0} を削除"
+  },
+  "install_diagnostics.existing_profile_identity_unreadable": {
+    "en": "An existing installation has no readable profile identity; refusing to reuse its state.",
+    "ko": "기존 설치에서 읽을 수 있는 프로필 ID가 없어 해당 상태를 재사용하지 않습니다.",
+    "zh": "现有安装没有可读取的配置文件身份；拒绝复用其状态。",
+    "ja": "既存のインストールから読み取れるプロファイル ID がないため、その状態の再利用を拒否します。"
+  },
+  "install_diagnostics.existing_installation_other_profile": {
+    "en": "An existing installation belongs to another profile; refusing to replace its config, credentials, or ownership.",
+    "ko": "기존 설치가 다른 프로필에 속해 있어 구성, 인증 정보 또는 소유권을 교체하지 않습니다.",
+    "zh": "现有安装属于其他配置文件；拒绝替换其配置、凭据或所有权。",
+    "ja": "既存のインストールは別のプロファイルに属するため、設定、認証情報、所有権の置換を拒否します。"
+  },
+  "install_diagnostics.windows_task_executable_not_owned": {
+    "en": "The Windows task can only use the bridge executable recorded inside this installation’s owned bin directory; no task was changed.",
+    "ko": "Windows 작업에는 이 설치의 소유 bin 디렉터리에 기록된 브리지 실행 파일만 사용할 수 있습니다. 작업은 변경되지 않았습니다.",
+    "zh": "Windows 任务只能使用此安装自有 bin 目录中记录的桥接程序；未更改任何任务。",
+    "ja": "Windows タスクには、このインストールが所有する bin ディレクトリに記録されたブリッジ実行ファイルのみ使用できます。タスクは変更されていません。"
+  },
+  "install_diagnostics.launchagent_signing_identity_mismatch": {
+    "en": "The signing identity differs from this installation’s recorded identity; LaunchAgent was left unchanged.",
+    "ko": "서명 ID가 이 설치 기록과 달라 LaunchAgent를 변경하지 않았습니다.",
+    "zh": "签名身份与此安装记录的身份不同；未更改 LaunchAgent。",
+    "ja": "署名 ID がこのインストールの記録と異なるため、LaunchAgent は変更していません。"
+  },
+  "install_diagnostics.windows_task_uninstall_platform": {
+    "en": "This installation owns a Windows task; uninstall it on Windows so its running process can be stopped safely.",
+    "ko": "이 설치는 Windows 작업을 소유합니다. 실행 중인 프로세스를 안전하게 중지하려면 Windows에서 제거하세요.",
+    "zh": "此安装拥有 Windows 任务；请在 Windows 上卸载，以便安全停止运行中的进程。",
+    "ja": "このインストールは Windows タスクを所有しています。実行中のプロセスを安全に停止するため、Windows 上でアンインストールしてください。"
+  },
+  "install_diagnostics.chatgpt_login_account_missing": {
+    "en": "The official login finished, but account/read still does not report a ChatGPT account: {0}",
+    "ko": "공식 로그인이 완료됐지만 account/read에서 ChatGPT 계정이 확인되지 않습니다: {0}",
+    "zh": "官方登录已完成，但 account/read 仍未报告 ChatGPT 账户：{0}",
+    "ja": "公式ログインは完了しましたが、account/read で ChatGPT アカウントが確認できません: {0}"
+  },
+  "install_diagnostics.register_elevated_windows_task_retry": {
+    "en": "Register the elevated Windows user task; pending ownership remains for retry",
+    "ko": "관리자 권한 Windows 사용자 작업을 등록합니다. 대기 중인 소유권 정보는 재시도를 위해 유지됩니다.",
+    "zh": "注册提升权限的 Windows 用户任务；待处理的所有权记录将保留以供重试。",
+    "ja": "昇格した Windows ユーザータスクを登録します。再試行できるよう保留中の所有権情報を維持します。"
+  },
+  "install_diagnostics.load_configured_macos_worker_signing_identity": {
+    "en": "Load the configured macOS worker signing identity; run the signed installer",
+    "ko": "구성된 macOS 워커 서명 ID를 불러옵니다. 서명된 설치 프로그램을 실행하세요.",
+    "zh": "加载已配置的 macOS 工作程序签名身份；请运行已签名的安装程序。",
+    "ja": "設定済みの macOS ワーカー署名 ID を読み込みます。署名済みインストーラーを実行してください。"
+  },
+  "install_diagnostics.launchagent_unload_confirm_failed": {
+    "en": "Could not confirm that LaunchAgent {0} unloaded after bootout.",
+    "ko": "bootout 후 LaunchAgent {0}이(가) 언로드되었는지 확인하지 못했습니다.",
+    "zh": "无法确认 LaunchAgent {0} 是否在 bootout 后卸载。",
+    "ja": "bootout 後に LaunchAgent {0} がアンロードされたことを確認できませんでした。"
+  }
+}

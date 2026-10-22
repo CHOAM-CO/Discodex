@@ -235,31 +235,44 @@ fn windows_task_may_be_replaced(state: &str, previous_record_owns_task: bool) ->
 }
 
 #[cfg(windows)]
-fn windows_task_executable_path(path: &Path) -> Result<PathBuf> {
-    let mut value = path
-        .to_str()
-        .context("Windows task executable path is not valid UTF-8")?;
+fn windows_task_executable_path(path: &Path, language: Language) -> Result<PathBuf> {
+    let mut value = path.to_str().context(
+        language.message(MessageKey::InstallDiagnosticsWindowsTaskExecutablePathNotUtf8),
+    )?;
     if let Some(unprefixed) = value.strip_prefix(r"\\?\") {
         value = unprefixed;
     }
     let bytes = value.as_bytes();
     if bytes.len() < 3 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' || bytes[2] != b'\\' {
         bail!(
-            "Windows task executable must be a local drive path; UNC and device paths are not supported"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsWindowsTaskExecutablePathInvalid)
         )
     }
     Ok(PathBuf::from(value))
 }
 
-fn prepare_project_directory(path: &Path) -> Result<PathBuf> {
-    fs::create_dir_all(path)
-        .with_context(|| format!("create Codex project/work directory {}", path.display()))?;
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("resolve Codex project/work directory {}", path.display()))?;
+fn prepare_project_directory(path: &Path, language: Language) -> Result<PathBuf> {
+    fs::create_dir_all(path).with_context(|| {
+        format!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsCreateProjectDirectory)
+                .replace("{0}", &path.display().to_string())
+        )
+    })?;
+    let canonical = path.canonicalize().with_context(|| {
+        format!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsResolveProjectDirectory)
+                .replace("{0}", &path.display().to_string())
+        )
+    })?;
     ensure!(
         canonical.is_dir(),
-        "Codex project/work path is not a directory"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsProjectPathNotDirectory)
     );
     Ok(canonical)
 }
@@ -271,8 +284,14 @@ pub fn print_plan() -> Result<()> {
 
 fn print_plan_for_language(language: Language) -> Result<()> {
     let roots = roots()?;
-    fs::create_dir_all(&roots.config)
-        .with_context(|| format!("create {}", roots.config.display()))?;
+    fs::create_dir_all(&roots.config).with_context(|| {
+        format!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsCreateConfigDirectory)
+                .replace("{0}", &roots.config.display().to_string())
+        )
+    })?;
     set_private_dir(&roots.config)?;
 
     let profile = ask_text(language, MessageKey::InstallDiscordProfileName, "default")?;
@@ -298,12 +317,16 @@ fn print_plan_for_language(language: Language) -> Result<()> {
         &operator_ids,
         &[home_channel_id, transcript_channel_id],
     )?;
-    let project_default = env::current_dir().context("read current directory")?;
-    let project_dir = prepare_project_directory(&PathBuf::from(ask_text(
+    let project_default = env::current_dir()
+        .context(language.message(MessageKey::InstallDiagnosticsReadCurrentDirectory))?;
+    let project_dir = prepare_project_directory(
+        &PathBuf::from(ask_text(
+            language,
+            MessageKey::InstallCodexProjectWorkDirectory,
+            &project_default.display().to_string(),
+        )?),
         language,
-        MessageKey::InstallCodexProjectWorkDirectory,
-        &project_default.display().to_string(),
-    )?))?;
+    )?;
     let model = optional_value(
         language,
         MessageKey::InstallCodexModelLeaveEmptyForNativeDefault,
@@ -347,31 +370,55 @@ fn print_plan_for_language(language: Language) -> Result<()> {
 #[cfg(windows)]
 fn checked_recorded_config_path(recorded: &Path, selected: &Path) -> Result<PathBuf> {
     ensure!(
-        recorded.canonicalize().context("resolve recorded config")?
-            == selected.canonicalize().context("resolve selected config")?,
-        "selected config is not the file recorded by ownership"
+        recorded.canonicalize().context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveRecordedConfig,)
+        )? == selected.canonicalize().context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveSelectedConfig,)
+        )?,
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsSelectedConfigNotOwned)
     );
     Ok(recorded.to_owned())
 }
 
 pub fn migrate_installation(config_path: &Path) -> Result<()> {
-    let source_config = config_path
-        .canonicalize()
-        .with_context(|| format!("resolve selected legacy config {}", config_path.display()))?;
+    let source_config = config_path.canonicalize().with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveLegacyConfig)
+                .replace("{0}", &config_path.display().to_string())
+        )
+    })?;
     let legacy_config_root = source_config
         .parent()
-        .context("legacy config path has no parent")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLegacyConfigParentMissing),
+        )?
         .to_owned();
     ensure!(
         legacy_config_root
             .file_name()
             .and_then(|name| name.to_str())
             == Some(LEGACY_APP_NAME),
-        "migration requires an explicit config inside a {LEGACY_APP_NAME} profile directory"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationConfigMustBeLegacy)
+            .replace("{0}", LEGACY_APP_NAME)
     );
     let legacy_owner_path = legacy_config_root.join("ownership.json");
-    let legacy: Ownership = read_json(&legacy_owner_path)
-        .with_context(|| format!("read legacy ownership {}", legacy_owner_path.display()))?;
+    let legacy: Ownership = read_json(&legacy_owner_path).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsReadLegacyOwnership)
+                .replace("{0}", &legacy_owner_path.display().to_string())
+        )
+    })?;
     // Windows canonical paths add a verbatim prefix. Prove file identity, then
     // retain the ownership record's spelling for sibling paths and task arguments.
     #[cfg(windows)]
@@ -379,17 +426,25 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
     #[cfg(windows)]
     let legacy_config_root = source_config
         .parent()
-        .context("recorded legacy config path has no parent")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsRecordedLegacyConfigParentMissing),
+        )?
         .to_owned();
     let old_data_root = legacy
         .state_dir
         .parent()
-        .context("legacy state directory has no data root")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLegacyStateDataRootMissing),
+        )?
         .to_owned();
     ensure!(
         legacy.state_dir == old_data_root.join("state")
             && old_data_root.file_name().and_then(|name| name.to_str()) == Some(LEGACY_APP_NAME),
-        "legacy ownership does not identify the expected codex-worker state layout"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsLegacyOwnershipLayoutInvalid)
     );
 
     let new_config = rename_legacy_path(&source_config);
@@ -397,37 +452,55 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
     let roots = Roots {
         config: new_config
             .parent()
-            .context("Discodex config path has no parent")?
+            .context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsDiscodexConfigParentMissing),
+            )?
             .to_owned(),
         data: new_data,
     };
-    validate_legacy_migration_source(&legacy, &legacy_config_root, &old_data_root, &source_config)?;
+    let migration_config_language = validate_legacy_migration_source(
+        &legacy,
+        &legacy_config_root,
+        &old_data_root,
+        &source_config,
+    )?;
     ensure!(
         !roots.config.exists() && !roots.data.exists(),
-        "Discodex profile paths already exist; migration will not overwrite them"
+        "{}",
+        migration_config_language.message(MessageKey::InstallDiagnosticsMigrationDestinationExists)
     );
 
-    let service_backup = validate_legacy_service(&legacy)?;
+    let service_backup = validate_legacy_service(&legacy, migration_config_language)?;
     let migration_language = choose_language(Some(Config::load(&source_config)?.language))?;
     #[cfg(target_os = "macos")]
     if let Some(requirement) = legacy.mac_signing_requirement.as_deref() {
         let executable = legacy
             .worker_executable
             .as_deref()
-            .context("legacy ownership has no signed worker executable")?
+            .context(
+                migration_language.message(MessageKey::InstallDiagnosticsLegacySignedWorkerMissing),
+            )?
             .canonicalize()
-            .context("resolve legacy signed worker executable")?;
-        crate::mac_signing::adopt_owned_binary_identifier(&executable, requirement)
-            .context("preserve the verified legacy macOS signing identity")?;
+            .context(
+                migration_language.message(MessageKey::InstallDiagnosticsResolveLegacySignedWorker),
+            )?;
+        crate::mac_signing::adopt_owned_binary_identifier(&executable, requirement).context(
+            migration_language.message(MessageKey::InstallDiagnosticsPreserveLegacySigningIdentity),
+        )?;
     }
     stage_legacy_profile(&legacy_config_root, &roots)?;
     let staged_worker = match stage_worker_file(&env::current_exe()?, &roots.data) {
         Ok(path) => path,
         Err(error) => {
-            remove_migration_staging(&roots, &legacy_config_root)
-                .context("worker staging failed and staged migration files could not be removed")?;
-            return Err(error)
-                .context("could not stage the Discodex worker before stopping the legacy service");
+            remove_migration_staging(&roots, &legacy_config_root).context(
+                migration_language
+                    .message(MessageKey::InstallDiagnosticsWorkerStageAndCleanupFailed),
+            )?;
+            return Err(error).context(
+                migration_language
+                    .message(MessageKey::InstallDiagnosticsStageWorkerBeforeStopFailed),
+            );
         }
     };
     #[cfg(target_os = "macos")]
@@ -436,17 +509,24 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
         migration_language,
         legacy.mac_signing_requirement.as_deref(),
     ) {
-        remove_migration_staging(&roots, &legacy_config_root)
-            .context("worker signing failed and staged migration files could not be removed")?;
+        remove_migration_staging(&roots, &legacy_config_root).context(
+            migration_language.message(MessageKey::InstallDiagnosticsWorkerSignAndCleanupFailed),
+        )?;
         return Err(error).context(
-            "could not prepare the signed Discodex worker before stopping the legacy service",
+            migration_language
+                .message(MessageKey::InstallDiagnosticsPrepareSignedWorkerBeforeStopFailed),
         );
     }
     let _ = staged_worker;
     let mut stopped_ownership = legacy.clone();
-    if let Err(error) = uninstall_user_service(&mut stopped_ownership, &legacy_owner_path) {
+    if let Err(error) = uninstall_user_service(
+        &mut stopped_ownership,
+        &legacy_owner_path,
+        migration_language,
+    ) {
         let staged_cleanup = remove_migration_staging(&roots, &legacy_config_root);
-        let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
+        let service_restore =
+            restore_legacy_service(&service_backup, &legacy_owner_path, migration_language);
         if let Err(restore_error) = service_restore {
             return Err(anyhow!(
                 "{}",
@@ -465,14 +545,17 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
                     .replace("{1}", &format!("{cleanup_error:#}"))
             ));
         }
-        return Err(error)
-            .context("could not stop the verified legacy service before Discodex startup");
+        return Err(error).context(
+            migration_language
+                .message(MessageKey::InstallDiagnosticsMigrationStopLegacyServiceFailed),
+        );
     }
     if let Err(error) =
         copy_private_directory(&old_data_root.join("state"), &roots.data.join("state"))
     {
         let staged_cleanup = remove_migration_staging(&roots, &legacy_config_root);
-        let service_restore = restore_legacy_service(&service_backup, &legacy_owner_path);
+        let service_restore =
+            restore_legacy_service(&service_backup, &legacy_owner_path, migration_language);
         if let Err(restore_error) = service_restore {
             return Err(anyhow!(
                 "{}",
@@ -491,7 +574,10 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
                     .replace("{1}", &format!("{cleanup_error:#}"))
             ));
         }
-        return Err(error).context("could not copy the legacy state after stopping its service");
+        return Err(error).context(
+            migration_language
+                .message(MessageKey::InstallDiagnosticsMigrationCopyLegacyStateFailed),
+        );
     }
     match install_at(
         roots.clone(),
@@ -501,18 +587,23 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
         Ok(()) => {
             if let Err(error) = remove_migration_marker(&roots) {
                 eprintln!(
-                    "Discodex is installed, but its migration marker could not be removed: {error:#}"
+                    "{}",
+                    migration_language
+                        .message(MessageKey::InstallDiagnosticsMigrationMarkerRemoveFailed)
+                        .replace("{0}", &format!("{error:#}"))
                 );
             }
             println!(
-                "Migrated profile {} to Discodex. Legacy config and native data remain at {}.",
-                legacy.profile.as_deref().unwrap_or("unknown"),
-                legacy_config_root.display()
+                "{}",
+                migration_language
+                    .message(MessageKey::InstallDiagnosticsMigrationCompleted)
+                    .replace("{0}", legacy.profile.as_deref().unwrap_or("unknown"))
+                    .replace("{1}", &legacy_config_root.display().to_string())
             );
             Ok(())
         }
         Err(error) => {
-            let cleanup = rollback_new_migration_service(&roots);
+            let cleanup = rollback_new_migration_service(&roots, migration_language);
             if let Err(cleanup_error) = cleanup {
                 return Err(anyhow!(
                     "{}",
@@ -523,9 +614,10 @@ pub fn migrate_installation(config_path: &Path) -> Result<()> {
                 ));
             }
             let files_cleanup = remove_migration_staging(&roots, &legacy_config_root);
-            restore_legacy_service(&service_backup, &legacy_owner_path).context(
-                migration_language.message(MessageKey::InstallMigrationRestorePreviousService),
-            )?;
+            restore_legacy_service(&service_backup, &legacy_owner_path, migration_language)
+                .context(
+                    migration_language.message(MessageKey::InstallMigrationRestorePreviousService),
+                )?;
             if let Err(cleanup_error) = files_cleanup {
                 Err(anyhow!(
                     "{}",
@@ -566,12 +658,12 @@ struct LegacyServiceBackup {
 }
 
 #[cfg(target_os = "linux")]
-fn systemctl_user_state(operation: &str, unit: &str) -> Result<String> {
+fn systemctl_user_state(operation: &str, unit: &str, language: Language) -> Result<String> {
     let output = command_without_console("systemctl")
         .args(["--user", operation, unit])
         .stdin(Stdio::null())
         .output()
-        .context("inspect the legacy user service state")?;
+        .context(language.message(MessageKey::InstallDiagnosticsInspectLegacyServiceState))?;
     let state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let known = match operation {
         "is-active" => [
@@ -602,13 +694,18 @@ fn systemctl_user_state(operation: &str, unit: &str) -> Result<String> {
     };
     ensure!(
         known,
-        "unexpected systemctl {operation} state for {unit}: {state}"
+        "{}",
+        language
+            .message(MessageKey::InstallDiagnosticsUnexpectedSystemctlState)
+            .replace("{0}", operation)
+            .replace("{1}", unit)
+            .replace("{2}", &state)
     );
     Ok(state)
 }
 
 #[cfg(windows)]
-fn inspect_windows_task_state(task_name: &str) -> Result<(bool, bool)> {
+fn inspect_windows_task_state(task_name: &str, language: Language) -> Result<(bool, bool)> {
     let task_name = ps_single_quote(task_name);
     let script = format!(
         r#"$ErrorActionPreference='Stop'; $task=Get-ScheduledTask -TaskPath '\' -TaskName '{task_name}'; Write-Output ($task.Settings.Enabled.ToString() + '|' + $task.State.ToString())"#
@@ -617,41 +714,50 @@ fn inspect_windows_task_state(task_name: &str) -> Result<(bool, bool)> {
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .stdin(Stdio::null())
         .output()
-        .context("inspect Windows task state")?;
-    ensure!(output.status.success(), "could not read Windows task state");
+        .context(language.message(MessageKey::InstallDiagnosticsInspectWindowsTaskState))?;
+    ensure!(
+        output.status.success(),
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsReadWindowsTaskStateFailed)
+    );
     let value = String::from_utf8(output.stdout)?.trim().to_owned();
     let (enabled, state) = value
         .split_once('|')
-        .context("Windows task returned an invalid state")?;
+        .context(language.message(MessageKey::InstallDiagnosticsWindowsTaskStateInvalid))?;
     let enabled = enabled.eq_ignore_ascii_case("true");
     ensure!(
         state == "Running" || state == "Ready" || state == "Disabled",
-        "Windows task is in a transitional state; operation refused"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsWindowsTaskTransitional)
     );
     ensure!(
         (enabled && state != "Disabled") || (!enabled && state == "Disabled"),
-        "Windows task enabled flag and state disagree"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsWindowsTaskStateDisagrees)
     );
     Ok((enabled, state == "Running"))
 }
 
-fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup> {
+fn validate_legacy_service(
+    ownership: &Ownership,
+    language: Language,
+) -> Result<LegacyServiceBackup> {
     let executable = ownership
         .worker_executable
         .as_deref()
-        .context("legacy ownership has no worker executable")?
+        .context(language.message(MessageKey::InstallDiagnosticsLegacyWorkerMissing))?
         .canonicalize()
-        .context("resolve legacy owned worker executable")?;
+        .context(language.message(MessageKey::InstallDiagnosticsResolveLegacyOwnedWorker))?;
     let config = ownership
         .config_file
         .canonicalize()
-        .context("resolve legacy owned config")?;
+        .context(language.message(MessageKey::InstallDiagnosticsResolveLegacyOwnedConfig))?;
     #[cfg(target_os = "linux")]
     {
         let path = ownership
             .service_file
             .as_deref()
-            .context("legacy systemd ownership has no unit path")?;
+            .context(language.message(MessageKey::InstallDiagnosticsLegacySystemdUnitMissing))?;
         let expected_name = format!("{LEGACY_SERVICE_NAME}.service");
         ensure!(
             ownership.service_kind.as_deref() == Some("systemd-user")
@@ -667,20 +773,24 @@ fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup>
                     .and_then(Path::file_name)
                     .and_then(|name| name.to_str())
                     == Some("systemd"),
-            "legacy ownership does not identify the expected systemd user service"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacySystemdOwnershipInvalid)
         );
         let expected_unit = format!(
             "[Unit]\nDescription=Codex Worker Discord bridge\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
             systemd_quote(&executable),
             systemd_quote(&config)
         );
-        let actual = fs::read_to_string(path).context("read legacy systemd unit")?;
+        let actual = fs::read_to_string(path)
+            .context(language.message(MessageKey::InstallDiagnosticsReadLegacySystemdUnit))?;
         ensure!(
             actual == expected_unit,
-            "legacy systemd unit differs from its recorded executable and config"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacySystemdUnitMismatch)
         );
-        let was_enabled = systemctl_user_state("is-enabled", &expected_name)? == "enabled";
-        let was_active = systemctl_user_state("is-active", &expected_name)? == "active";
+        let was_enabled =
+            systemctl_user_state("is-enabled", &expected_name, language)? == "enabled";
+        let was_active = systemctl_user_state("is-active", &expected_name, language)? == "active";
         Ok(LegacyServiceBackup {
             ownership: ownership.clone(),
             service_contents: Some(actual),
@@ -691,18 +801,19 @@ fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup>
     #[cfg(target_os = "macos")]
     {
         let (label, expected_path) = launchd_identity_for_service(&config, LEGACY_SERVICE_NAME)?;
-        let path = ownership
-            .service_file
-            .as_deref()
-            .context("legacy LaunchAgent ownership has no plist path")?;
+        let path = ownership.service_file.as_deref().context(
+            language.message(MessageKey::InstallDiagnosticsLegacyLaunchAgentPlistMissing),
+        )?;
         ensure!(
             ownership.service_kind.as_deref() == Some("launchd-user") && path == expected_path,
-            "legacy ownership does not identify the expected LaunchAgent"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacyLaunchAgentOwnershipInvalid)
         );
         let expected = launchd_plist(&label, &executable, &config);
         ensure!(
             existing_launchd_plist_matches(path, &expected, true)?,
-            "legacy LaunchAgent plist is missing"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacyLaunchAgentMissing)
         );
         let contents = fs::read_to_string(path)?;
         let was_active = launchd_is_loaded(&label, &executable, &config)?;
@@ -718,22 +829,30 @@ fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup>
         ensure!(
             ownership.service_kind.as_deref() == Some("scheduled-task-user")
                 && ownership.service_file.is_none(),
-            "legacy ownership does not identify the expected Windows task"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacyWindowsTaskOwnershipInvalid)
         );
-        let task_executable = windows_task_executable_path(&executable)?;
+        let task_executable = windows_task_executable_path(&executable, language)?;
         let expected_executable = ps_single_quote(&task_executable.display().to_string());
         let expected_arguments = ps_single_quote(&format!(
             "run --config \"{}\"",
             ownership.config_file.display()
         ));
-        let (state, _) =
-            inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+        let (state, _) = inspect_owned_windows_task(
+            &expected_executable,
+            &expected_arguments,
+            ownership,
+            language,
+        )?;
         ensure!(
             state == "matching",
-            "legacy Windows task differs from its ownership record"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacyWindowsTaskMismatch)
         );
-        let (was_enabled, was_active) =
-            inspect_windows_task_state(windows_task_name_for_config(&ownership.config_file))?;
+        let (was_enabled, was_active) = inspect_windows_task_state(
+            windows_task_name_for_config(&ownership.config_file),
+            language,
+        )?;
         Ok(LegacyServiceBackup {
             ownership: ownership.clone(),
             service_contents: None,
@@ -744,31 +863,36 @@ fn validate_legacy_service(ownership: &Ownership) -> Result<LegacyServiceBackup>
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = (executable, config);
-        bail!("legacy service migration is supported on Linux, macOS, and Windows")
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsLegacyMigrationUnsupportedPlatform)
+        )
     }
 }
 
-fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Result<()> {
+fn restore_legacy_service(
+    backup: &LegacyServiceBackup,
+    owner_file: &Path,
+    language: Language,
+) -> Result<()> {
     let mut ownership = backup.ownership.clone();
     #[cfg(target_os = "linux")]
     {
         let path = ownership
             .service_file
             .as_deref()
-            .context("legacy systemd unit path missing")?;
+            .context(language.message(MessageKey::InstallDiagnosticsLegacySystemdUnitMissing))?;
         fs::write(
             path,
-            backup
-                .service_contents
-                .as_deref()
-                .context("legacy systemd unit snapshot missing")?,
+            backup.service_contents.as_deref().context(
+                language.message(MessageKey::InstallDiagnosticsLegacySystemdSnapshotMissing),
+            )?,
         )?;
         set_private_file(path)?;
         write_json_private(owner_file, &ownership)?;
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .context("legacy systemd unit filename invalid")?;
+        let name = path.file_name().and_then(|value| value.to_str()).context(
+            language.message(MessageKey::InstallDiagnosticsLegacySystemdUnitFilenameInvalid),
+        )?;
         run_checked("systemctl", &["--user", "daemon-reload"])?;
         if backup.was_enabled {
             run_checked("systemctl", &["--user", "enable", name])?;
@@ -779,14 +903,12 @@ fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Re
     }
     #[cfg(target_os = "macos")]
     {
-        let path = ownership
-            .service_file
-            .as_deref()
-            .context("legacy LaunchAgent plist path missing")?;
-        let contents = backup
-            .service_contents
-            .as_deref()
-            .context("legacy LaunchAgent snapshot missing")?;
+        let path = ownership.service_file.as_deref().context(
+            language.message(MessageKey::InstallDiagnosticsLegacyLaunchAgentPlistMissing),
+        )?;
+        let contents = backup.service_contents.as_deref().context(
+            language.message(MessageKey::InstallDiagnosticsLegacyLaunchAgentSnapshotMissing),
+        )?;
         let config = ownership.config_file.canonicalize()?;
         let (label, _) = launchd_identity_for_service(&config, LEGACY_SERVICE_NAME)?;
         if path.exists() {
@@ -795,22 +917,29 @@ fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Re
                     path,
                     &launchd_plist(
                         &label,
-                        ownership
-                            .worker_executable
-                            .as_deref()
-                            .context("legacy LaunchAgent executable missing")?,
+                        ownership.worker_executable.as_deref().context(
+                            language.message(MessageKey::InstallDiagnosticsLegacyWorkerMissing,)
+                        )?,
                         &config
                     ),
                     true
                 )?,
-                "existing legacy LaunchAgent differs from its ownership record"
+                "{}",
+                language.message(MessageKey::InstallDiagnosticsExistingLegacyLaunchAgentMismatch)
             );
         } else {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(path)
-                .with_context(|| format!("restore legacy LaunchAgent {}", path.display()))?;
+                .with_context(|| {
+                    format!(
+                        "{}",
+                        language
+                            .message(MessageKey::InstallDiagnosticsRestoreLegacyLaunchAgent)
+                            .replace("{0}", &path.display().to_string())
+                    )
+                })?;
             file.write_all(contents.as_bytes())?;
             file.sync_all()?;
             set_private_file(path)?;
@@ -823,7 +952,7 @@ fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Re
                 ownership
                     .worker_executable
                     .as_deref()
-                    .context("legacy LaunchAgent executable missing")?,
+                    .context(language.message(MessageKey::InstallDiagnosticsLegacyWorkerMissing))?,
                 &config,
             )?
         {
@@ -832,8 +961,10 @@ fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Re
                 &[
                     "bootstrap",
                     &domain,
-                    path.to_str()
-                        .context("legacy LaunchAgent path is not UTF-8")?,
+                    path.to_str().context(
+                        language
+                            .message(MessageKey::InstallDiagnosticsLegacyLaunchAgentPathNotUtf8),
+                    )?,
                 ],
             )?;
             run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
@@ -844,8 +975,8 @@ fn restore_legacy_service(backup: &LegacyServiceBackup, owner_file: &Path) -> Re
         let executable = ownership
             .worker_executable
             .as_deref()
-            .context("legacy task executable missing")?;
-        let task_executable = windows_task_executable_path(executable)?;
+            .context(language.message(MessageKey::InstallDiagnosticsLegacyWorkerMissing))?;
+        let task_executable = windows_task_executable_path(executable, language)?;
         let expected_executable = ps_single_quote(&task_executable.display().to_string());
         let expected_arguments = ps_single_quote(&format!(
             "run --config \"{}\"",
@@ -885,16 +1016,22 @@ fn validate_legacy_migration_source(
     config_root: &Path,
     data_root: &Path,
     config_path: &Path,
-) -> Result<()> {
+) -> Result<Language> {
     ensure!(
         ownership.config_file == config_path
             && ownership.credentials_file == config_root.join("discord-token")
             && ownership.install_list_file == config_root.join("installation-list.json")
             && ownership.state_dir == data_root.join("state")
             && ownership.project_dir.is_absolute(),
-        "legacy ownership paths do not match the selected profile; refusing migration"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsLegacyOwnershipPathsMismatch)
     );
-    let config = Config::load(config_path).context("read legacy profile settings")?;
+    let config = Config::load(config_path).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsReadLegacyProfileSettings),
+    )?;
+    let language = config.language;
     ensure!(
         !config.profile.is_empty()
             && ownership
@@ -905,29 +1042,33 @@ fn validate_legacy_migration_source(
             && config.state_dir == ownership.state_dir
             && config.project_dir == ownership.project_dir
             && config.codex_path == ownership.codex_path,
-        "legacy config does not match its ownership record; refusing migration"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsLegacyConfigOwnershipMismatch)
     );
-    let list: InstallationList =
-        read_json(&ownership.install_list_file).context("read legacy installation list")?;
+    let list: InstallationList = read_json(&ownership.install_list_file)
+        .context(language.message(MessageKey::InstallDiagnosticsReadLegacyInstallationList))?;
     ensure!(
         list.profile == config.profile && list.project_dir == ownership.project_dir,
-        "legacy installation list does not match its ownership record; refusing migration"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsLegacyInstallationListMismatch)
     );
     let credentials_metadata = fs::symlink_metadata(&ownership.credentials_file)
-        .context("inspect legacy Discord credential file")?;
+        .context(language.message(MessageKey::InstallDiagnosticsInspectLegacyCredentials))?;
     ensure!(
         credentials_metadata.file_type().is_file(),
-        "legacy Discord credentials are not a regular file; refusing migration"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsLegacyCredentialsNotRegular)
     );
     let executable = ownership
         .worker_executable
         .as_deref()
-        .context("legacy ownership has no worker executable")?
+        .context(language.message(MessageKey::InstallDiagnosticsLegacyWorkerMissing))?
         .canonicalize()
-        .context("resolve legacy worker executable")?;
+        .context(language.message(MessageKey::InstallDiagnosticsResolveLegacyOwnedWorker))?;
     ensure!(
         executable.is_file() && is_owned_worker_executable(&executable, data_root),
-        "legacy worker executable is outside its recorded owned bin directory"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsLegacyWorkerOutsideOwnedBin)
     );
     ensure!(
         ownership.runtime_dir
@@ -936,9 +1077,10 @@ fn validate_legacy_migration_source(
             } else {
                 "codex-runtime"
             }),
-        "legacy runtime directory does not match its owned data root"
+        "{}",
+        language.message(MessageKey::InstallDiagnosticsLegacyRuntimeDataRootMismatch)
     );
-    Ok(())
+    Ok(language)
 }
 
 fn worker_executable_name() -> OsString {
@@ -953,21 +1095,25 @@ fn worker_executable_name() -> OsString {
 }
 
 fn stage_worker_file(source: &Path, data_root: &Path) -> Result<PathBuf> {
-    let source = source
-        .canonicalize()
-        .context("resolve running Discodex executable")?;
+    let source = source.canonicalize().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsResolveRunningDiscodex),
+    )?;
     ensure!(
         fs::symlink_metadata(&source)?.file_type().is_file(),
-        "running Discodex executable is not a regular file"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsRunningDiscodexNotRegular)
     );
     let bin = data_root.join("bin");
     create_private_dir(&bin)?;
     let destination = bin.join(worker_executable_name());
     copy_private_regular_file(&source, &destination)?;
     set_executable(&destination)?;
-    destination
-        .canonicalize()
-        .context("resolve staged Discodex executable")
+    destination.canonicalize().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsResolveStagedDiscodexWorker),
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -978,36 +1124,47 @@ fn sign_staged_migration_worker(
 ) -> Result<()> {
     use crate::mac_signing::{sign_binary_with_language, verify_binary};
     let requirement = sign_binary_with_language(path, language)
-        .context("sign staged Discodex worker with the preserved macOS identity")?;
+        .context(language.message(MessageKey::InstallDiagnosticsSignStagedDiscodexWorker))?;
     if let Some(expected) = expected {
         ensure!(
             requirement == expected,
-            "staged Discodex signing identity differs from the legacy pin"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsStagedDiscodexSigningIdentityMismatch)
         );
     }
-    verify_binary(path, &requirement).context("verify staged Discodex worker signature")
+    verify_binary(path, &requirement)
+        .context(language.message(MessageKey::InstallDiagnosticsVerifyStagedDiscodexSignature))
 }
 
 fn recorded_service_executable(ownership: &Ownership) -> Result<Option<PathBuf>> {
     let Some(recorded) = ownership.worker_executable.as_deref() else {
         return Ok(None);
     };
-    let data_root = ownership
-        .state_dir
-        .parent()
-        .context("owned state directory has no data root")?;
+    let data_root = ownership.state_dir.parent().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedStateDataRootMissing),
+    )?;
     ensure!(
         ownership.state_dir == data_root.join("state"),
-        "owned state directory does not match the worker data layout"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedWorkerDataLayoutMismatch)
     );
-    let executable = recorded
-        .canonicalize()
-        .with_context(|| format!("resolve recorded worker executable {}", recorded.display()))?;
+    let executable = recorded.canonicalize().with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveRecordedWorker)
+                .replace("{0}", &recorded.display().to_string())
+        )
+    })?;
     ensure!(
         recorded == executable
             && executable.is_file()
             && is_owned_worker_executable(&executable, data_root),
-        "recorded worker executable is not a regular file in its canonical owned bin directory"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsRecordedWorkerOutsideOwnedBin)
     );
     Ok(Some(executable))
 }
@@ -1017,48 +1174,63 @@ fn staged_migration_worker(roots: &Roots) -> Result<Option<PathBuf>> {
     let metadata = match fs::symlink_metadata(&marker) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("inspect migration marker"),
+        Err(error) => {
+            return Err(error).context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsInspectMigrationMarker),
+            );
+        }
     };
     ensure!(
         metadata.file_type().is_file(),
-        "migration marker is not a regular file"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationMarkerNotRegular)
     );
-    let old_config_root: PathBuf =
-        serde_json::from_slice(&fs::read(&marker).context("read migration marker")?)
-            .context("parse migration marker")?;
+    let old_config_root: PathBuf = serde_json::from_slice(&fs::read(&marker).context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsReadMigrationMarker),
+    )?)
+    .context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsParseMigrationMarker),
+    )?;
     ensure!(
         old_config_root.file_name().and_then(|name| name.to_str()) == Some(LEGACY_APP_NAME)
             && rename_legacy_path(&old_config_root) == roots.config,
-        "migration marker does not map to the selected Discodex profile"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationMarkerProfileMismatch)
     );
     let candidate = roots.data.join("bin").join(worker_executable_name());
     if !candidate.is_file() {
         return Ok(None);
     }
-    let candidate = candidate
-        .canonicalize()
-        .context("resolve staged migration worker")?;
-    let data_root = roots
-        .data
-        .canonicalize()
-        .context("resolve migration data root")?;
+    let candidate = candidate.canonicalize().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsResolveStagedMigrationWorker),
+    )?;
+    let data_root = roots.data.canonicalize().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsResolveMigrationDataRoot),
+    )?;
     ensure!(
         candidate.starts_with(data_root.join("bin"))
             && is_owned_worker_executable(&candidate, &data_root),
-        "staged migration worker is outside the new profile's owned bin directory"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsStagedMigrationWorkerOutsideOwnedBin)
     );
     Ok(Some(candidate))
 }
 
 fn stage_legacy_profile(old_config_root: &Path, roots: &Roots) -> Result<()> {
-    let config_parent = roots
-        .config
-        .parent()
-        .context("Discodex config path has no parent")?;
-    let data_parent = roots
-        .data
-        .parent()
-        .context("Discodex data path has no parent")?;
+    let config_parent = roots.config.parent().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsDiscodexConfigParentMissing),
+    )?;
+    let data_parent = roots.data.parent().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsDiscodexDataParentMissing),
+    )?;
     fs::create_dir_all(config_parent)?;
     fs::create_dir_all(data_parent)?;
     let config_stage = tempfile::tempdir_in(config_parent)?;
@@ -1070,17 +1242,33 @@ fn stage_legacy_profile(old_config_root: &Path, roots: &Roots) -> Result<()> {
     for name in ["config.json", "discord-token", "installation-list.json"] {
         copy_private_regular_file(&old_config_root.join(name), &staged_config.join(name))?;
     }
-    fs::rename(&staged_config, &roots.config)
-        .with_context(|| format!("publish staged config at {}", roots.config.display()))?;
+    fs::rename(&staged_config, &roots.config).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsPublishStagedConfig)
+                .replace("{0}", &roots.config.display().to_string())
+        )
+    })?;
     if let Err(error) = fs::rename(&staged_data, &roots.data) {
         let cleanup = fs::remove_dir_all(&roots.config);
         return match cleanup {
-            Ok(()) => Err(error)
-                .with_context(|| format!("publish staged data at {}", roots.data.display())),
+            Ok(()) => Err(error).with_context(|| {
+                format!(
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsPublishStagedData)
+                        .replace("{0}", &roots.data.display().to_string())
+                )
+            }),
             Err(cleanup_error) => Err(anyhow!(
-                "could not publish staged data at {} ({error}); cleanup of newly-created config path {} also failed ({cleanup_error})",
-                roots.data.display(),
-                roots.config.display()
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsPublishStagedDataAndCleanupFailed)
+                    .replace("{0}", &roots.data.display().to_string())
+                    .replace("{1}", &format!("{error}"))
+                    .replace("{2}", &roots.config.display().to_string())
+                    .replace("{3}", &format!("{cleanup_error}"))
             )),
         };
     }
@@ -1091,7 +1279,12 @@ fn stage_legacy_profile(old_config_root: &Path, roots: &Roots) -> Result<()> {
         let config_cleanup = fs::remove_dir_all(&roots.config);
         let data_cleanup = fs::remove_dir_all(&roots.data);
         return Err(anyhow!(
-            "write migration marker failed ({error}); staged root cleanup results: config={config_cleanup:?}, data={data_cleanup:?}"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsWriteMigrationMarkerAndCleanup)
+                .replace("{0}", &format!("{error}"))
+                .replace("{1}", &format!("{config_cleanup:?}"))
+                .replace("{2}", &format!("{data_cleanup:?}"))
         ));
     }
     Ok(())
@@ -1103,57 +1296,106 @@ fn remove_migration_marker(roots: &Roots) -> Result<()> {
         Ok(metadata) => {
             ensure!(
                 metadata.file_type().is_file(),
-                "migration marker is not a regular file"
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMigrationMarkerNotRegular)
             );
-            fs::remove_file(&marker).context("remove completed migration marker")
+            fs::remove_file(&marker).context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsRemoveCompletedMigrationMarker),
+            )
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).context("inspect migration marker"),
+        Err(error) => Err(error).context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsInspectMigrationMarker),
+        ),
     }
 }
 
 fn remove_migration_staging(roots: &Roots, old_config_root: &Path) -> Result<()> {
     let marker = roots.config.join("migration-in-progress");
-    let metadata =
-        fs::symlink_metadata(&marker).context("verify ownership of staged migration roots")?;
+    let metadata = fs::symlink_metadata(&marker).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsVerifyStagedMigrationOwnership),
+    )?;
     ensure!(
         metadata.file_type().is_file(),
-        "migration marker is not a regular file"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationMarkerNotRegular)
     );
     ensure!(
         fs::read(&marker)? == serde_json::to_vec(old_config_root)?,
-        "migration marker does not match the selected legacy profile"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationMarkerProfileMismatch)
     );
     for path in [&roots.config, &roots.data] {
-        let metadata = fs::symlink_metadata(path)
-            .with_context(|| format!("inspect staged migration root {}", path.display()))?;
+        let metadata = fs::symlink_metadata(path).with_context(|| {
+            format!(
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsInspectStagedMigrationRoot)
+                    .replace("{0}", &path.display().to_string())
+            )
+        })?;
         ensure!(
             metadata.file_type().is_dir(),
-            "staged migration root {} is not a regular directory",
-            path.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsStagedMigrationRootNotDirectory)
+                .replace("{0}", &path.display().to_string())
         );
     }
-    fs::remove_dir_all(&roots.data)
-        .with_context(|| format!("remove staged data {}", roots.data.display()))?;
-    fs::remove_dir_all(&roots.config)
-        .with_context(|| format!("remove staged config {}", roots.config.display()))?;
+    fs::remove_dir_all(&roots.data).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsRemoveStagedData)
+                .replace("{0}", &roots.data.display().to_string())
+        )
+    })?;
+    fs::remove_dir_all(&roots.config).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsRemoveStagedConfig)
+                .replace("{0}", &roots.config.display().to_string())
+        )
+    })?;
     Ok(())
 }
 
 fn copy_private_regular_file(source: &Path, destination: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .with_context(|| format!("inspect migration source {}", source.display()))?;
+    let metadata = fs::symlink_metadata(source).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsInspectMigrationSource)
+                .replace("{0}", &source.display().to_string())
+        )
+    })?;
     ensure!(
         metadata.file_type().is_file(),
-        "migration source {} is not a regular file",
-        source.display()
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationSourceNotRegular)
+            .replace("{0}", &source.display().to_string())
     );
     let mut input = File::open(source)?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(destination)
-        .with_context(|| format!("create staged migration file {}", destination.display()))?;
+        .with_context(|| {
+            format!(
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsCreateStagedMigrationFile)
+                    .replace("{0}", &destination.display().to_string())
+            )
+        })?;
     io::copy(&mut input, &mut output)?;
     output.sync_all()?;
     set_private_file(destination)?;
@@ -1161,12 +1403,20 @@ fn copy_private_regular_file(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn copy_private_directory(source: &Path, destination: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(source)
-        .with_context(|| format!("inspect migration state directory {}", source.display()))?;
+    let metadata = fs::symlink_metadata(source).with_context(|| {
+        format!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsInspectMigrationStateDirectory)
+                .replace("{0}", &source.display().to_string())
+        )
+    })?;
     ensure!(
         metadata.file_type().is_dir(),
-        "migration state path {} is not a regular directory",
-        source.display()
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMigrationStateNotDirectory)
+            .replace("{0}", &source.display().to_string())
     );
     create_private_dir(destination)?;
     for entry in fs::read_dir(source)? {
@@ -1183,13 +1433,13 @@ fn copy_private_directory(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn rollback_new_migration_service(roots: &Roots) -> Result<()> {
+fn rollback_new_migration_service(roots: &Roots, language: Language) -> Result<()> {
     let owner_path = roots.config.join("ownership.json");
     if !owner_path.is_file() {
         return Ok(());
     }
     let mut ownership: Ownership = read_json(&owner_path)?;
-    uninstall_user_service(&mut ownership, &owner_path)
+    uninstall_user_service(&mut ownership, &owner_path, language)
 }
 
 pub fn install() -> Result<()> {
@@ -1203,9 +1453,22 @@ fn install_at(
     language: Language,
     previous_worker_path_hint: Option<&Path>,
 ) -> Result<()> {
-    fs::create_dir_all(&roots.config)
-        .with_context(|| format!("create {}", roots.config.display()))?;
-    fs::create_dir_all(&roots.data).with_context(|| format!("create {}", roots.data.display()))?;
+    fs::create_dir_all(&roots.config).with_context(|| {
+        format!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsCreateConfigDirectory)
+                .replace("{0}", &roots.config.display().to_string())
+        )
+    })?;
+    fs::create_dir_all(&roots.data).with_context(|| {
+        format!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsCreateDataDirectory)
+                .replace("{0}", &roots.data.display().to_string())
+        )
+    })?;
     set_private_dir(&roots.config)?;
     set_private_dir(&roots.data)?;
 
@@ -1234,7 +1497,8 @@ fn install_at(
                 &state_dir,
                 &list.project_dir,
             ),
-            "ownership record belongs to another profile; existing files were preserved"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsOwnershipOtherProfile)
         );
         Some(previous)
     } else {
@@ -1243,8 +1507,10 @@ fn install_at(
     let previous_config = if config_path.is_file() {
         Some(Config::load(&config_path).with_context(|| {
             format!(
-                "read existing profile settings from {}; refusing to replace an unreadable config",
-                config_path.display()
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsReadExistingProfileConfig)
+                    .replace("{0}", &config_path.display().to_string())
             )
         })?)
     } else {
@@ -1324,7 +1590,10 @@ fn install_at(
         .as_ref()
         .is_some_and(|path| previous_home.is_none() && path.as_os_str().is_empty())
     {
-        bail!("CODEX_HOME must not be empty");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsCodexHomeEmpty)
+        );
     }
     let default_home = if previous_home.is_none() && selected_env_home.is_none() {
         Some(default_codex_home()?)
@@ -1339,12 +1608,16 @@ fn install_at(
     )?;
     let saved_token = if credentials_path.exists() {
         let metadata = fs::symlink_metadata(&credentials_path)
-            .context("inspect saved Discord credential file")?;
+            .context(language.message(MessageKey::InstallDiagnosticsInspectSavedCredentials))?;
         ensure!(
             metadata.file_type().is_file(),
-            "saved Discord credentials are not a regular file; refusing to replace them"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsSavedCredentialsNotRegular)
         );
-        Some(fs::read_to_string(&credentials_path).context("read saved Discord credential file")?)
+        Some(
+            fs::read_to_string(&credentials_path)
+                .context(language.message(MessageKey::InstallDiagnosticsReadSavedCredentials))?,
+        )
     } else {
         None
     };
@@ -1363,12 +1636,15 @@ fn install_at(
     )?;
     let token = if token.trim().is_empty() {
         rpassword::prompt_password(language.message(MessageKey::InstallDiscordBotTokenInputHidden))
-            .context("read Discord token privately")?
+            .context(language.message(MessageKey::InstallDiagnosticsReadDiscordTokenPrivately))?
     } else {
         token
     };
     if token.trim().is_empty() {
-        bail!("Discord token was empty; no credential file was written");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsDiscordTokenEmpty)
+        );
     }
     write_secret(&credentials_path, token.trim())?;
 
@@ -1387,7 +1663,7 @@ fn install_at(
             .message_access
             .as_ref()
             .or(config.message_access.as_ref())
-            .context("new installation plan did not include a message receive policy")?;
+            .context(language.message(MessageKey::InstallDiagnosticsMessagePolicyMissing))?;
         access.save(&state_dir.join("message-access.json"))?;
         let path = state_dir.join("message-access.json");
         set_private_file(&path)?;
@@ -1406,17 +1682,27 @@ fn install_at(
         request_mac_fda_guidance(&ownership_path, language)?;
     }
     let discord = run_async(crate::commands::validate_discord(&config))
-        .context("Discord profile check failed; saved installation list and private config remain for correction")?;
+        .context(language.message(MessageKey::InstallDiagnosticsDiscordProfileCheckFailed))?;
     for id in [list.home_channel_id, list.transcript_channel_id] {
         let channel = discord
             .channels
             .iter()
             .find(|channel| channel.id == id)
-            .ok_or_else(|| anyhow!("Discord validation omitted configured text channel {id}"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "{}",
+                    language
+                        .message(MessageKey::InstallDiagnosticsDiscordTextChannelOmitted)
+                        .replace("{0}", &id.to_string())
+                )
+            })?;
         if channel.kind != "text" {
             bail!(
-                "configured home/transcript channel {id} is {}, expected a text channel",
-                channel.kind
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsDiscordTextChannelKind)
+                    .replace("{0}", &id.to_string())
+                    .replace("{1}", &channel.kind)
             );
         }
     }
@@ -1425,11 +1711,21 @@ fn install_at(
             .channels
             .iter()
             .find(|channel| channel.id == *id)
-            .ok_or_else(|| anyhow!("Discord validation omitted configured voice channel {id}"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "{}",
+                    language
+                        .message(MessageKey::InstallDiagnosticsDiscordVoiceChannelOmitted)
+                        .replace("{0}", &id.to_string())
+                )
+            })?;
         if channel.kind != "voice" && channel.kind != "stage" {
             bail!(
-                "configured voice channel {id} is {}, expected voice or stage",
-                channel.kind
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsDiscordVoiceChannelKind)
+                    .replace("{0}", &id.to_string())
+                    .replace("{1}", &channel.kind)
             );
         }
     }
@@ -1453,17 +1749,22 @@ fn install_at(
         discord.bot_id, discord.guild_id, discord.guild_name
     );
     run_async(crate::commands::register_commands(&config)).context(
-        "Discord /discodex command registration failed; saved setup files remain for retry",
+        language.message(MessageKey::InstallDiagnosticsDiscordCommandRegistrationFailed),
     )?;
     configure_antigravity_install(&config, list.antigravity)?;
     run_async(configure_native_profile(&mut config, &config_path)).context(
-        "Codex account or Full Access profile check failed; saved setup files remain for retry",
+        language.message(MessageKey::InstallDiagnosticsCodexAccountOrPermissionCheckFailed),
     )?;
     let previous_run = crate::installation_check::read(&config)
         .ok()
         .flatten()
         .map(|report| report.run_id);
-    install_user_service(&config_path, &mut ownership, previous_ownership.as_ref())?;
+    install_user_service(
+        &config_path,
+        &mut ownership,
+        previous_ownership.as_ref(),
+        language,
+    )?;
     write_json_private(&ownership_path, &ownership)?;
     let mut installed_list = list.clone();
     installed_list.message_access_plan_pending = false;
@@ -1601,9 +1902,11 @@ pub fn uninstall() -> Result<()> {
     if let Some(executable) = &ownership.worker_executable {
         if !is_owned_worker_executable(executable, &roots.data) {
             bail!(
-                "ownership records bridge executable {} but it is not inside the canonical owned bin directory {}; preserving config and ownership for investigation",
-                executable.display(),
-                roots.data.join("bin").display()
+                "{}",
+                Language::English
+                    .message(MessageKey::InstallDiagnosticsUninstallWorkerOutsideOwnedBin)
+                    .replace("{0}", &executable.display().to_string())
+                    .replace("{1}", &roots.data.join("bin").display().to_string())
             )
         }
     }
@@ -1614,16 +1917,29 @@ pub fn uninstall() -> Result<()> {
     ) && ownership.config_file.exists()
     {
         Some(Config::load(&ownership.config_file).context(
-            "read profile settings before uninstall; configuration and ownership were preserved",
+            Language::English.message(MessageKey::InstallDiagnosticsReadProfileBeforeUninstall),
         )?)
     } else {
         None
     };
     let mut ownership = ownership;
     let runtime_dir = prepare_owned_core_uninstall(&mut ownership, &roots.data, config.as_ref())?;
-    uninstall_user_service(&mut ownership, &ownership_path)?;
-    remove_registered_commands(&ownership.config_file, &ownership.credentials_file, &ownership.state_dir)
-        .context("could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry")?;
+    uninstall_user_service(
+        &mut ownership,
+        &ownership_path,
+        config
+            .as_ref()
+            .map_or(Language::English, |config| config.language),
+    )?;
+    remove_registered_commands(
+        &ownership.config_file,
+        &ownership.credentials_file,
+        &ownership.state_dir,
+        config
+            .as_ref()
+            .map_or(Language::English, |config| config.language),
+    )
+    .context(Language::English.message(MessageKey::InstallDiagnosticsRemoveDiscordCommandFailed))?;
 
     if let Some(runtime_dir) = &runtime_dir {
         remove_owned_core_runtime(runtime_dir)?;
@@ -1691,30 +2007,38 @@ pub fn open_mac_permissions(args: &[String]) -> Result<()> {
 fn owned_mac_worker(ownership_path: &Path) -> Result<(Ownership, PathBuf)> {
     let ownership: Ownership = read_json(ownership_path).with_context(|| {
         format!(
-            "read owned installation record {}",
-            ownership_path.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsReadOwnedInstallationRecord)
+                .replace("{0}", &ownership_path.display().to_string())
         )
     })?;
     let data_root = ownership_data_root(&ownership)?;
-    let recorded_executable = ownership
-        .worker_executable
-        .as_ref()
-        .context("the owned installation has no recorded worker executable")?;
+    let recorded_executable = ownership.worker_executable.as_ref().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedWorkerNotRecorded),
+    )?;
     let executable = recorded_executable.canonicalize().with_context(|| {
         format!(
-            "resolve the owned worker executable {}",
-            recorded_executable.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveOwnedWorker)
+                .replace("{0}", &recorded_executable.display().to_string())
         )
     })?;
     ensure!(
         recorded_executable == &executable,
-        "recorded worker path is not canonical: {}",
-        recorded_executable.display()
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsRecordedWorkerPathNotCanonical)
+            .replace("{0}", &recorded_executable.display().to_string())
     );
     if !executable.is_file() || !is_owned_worker_executable(&executable, &data_root) {
         bail!(
-            "the recorded worker executable is not a regular file in its canonical owned bin directory: {}",
-            executable.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedWorkerNotRegular)
+                .replace("{0}", &executable.display().to_string())
         );
     }
     Ok((ownership, executable))
@@ -1722,9 +2046,10 @@ fn owned_mac_worker(ownership_path: &Path) -> Result<(Ownership, PathBuf)> {
 
 #[cfg(target_os = "macos")]
 fn open_mac_permissions_for_executable(executable: &Path) -> Result<()> {
-    let executable_text = executable
-        .to_str()
-        .context("the owned worker executable path is not valid UTF-8")?;
+    let executable_text = executable.to_str().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedWorkerPathNotUtf8),
+    )?;
     run_checked("/usr/bin/open", &["-R", executable_text])?;
     run_checked(
         "/usr/bin/open",
@@ -1742,8 +2067,11 @@ fn require_mac_fda_interactive_terminal_state(
 ) -> Result<()> {
     ensure!(
         stdin_is_terminal && stdout_is_terminal,
-        "Full Disk Access setup must be reviewed in an interactive terminal before {operation}; owned worker: {}. Rerun the operation from a terminal.",
-        executable.display()
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMacFdaNeedsTerminal)
+            .replace("{0}", operation)
+            .replace("{1}", &executable.display().to_string())
     );
     Ok(())
 }
@@ -1773,12 +2101,17 @@ fn mac_worker_path_unchanged(previous: Option<&Path>, selected: Option<&Path>) -
 fn mac_fda_guidance_answer(read_count: usize, answer: &str) -> Result<bool> {
     ensure!(
         read_count != 0,
-        "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged"
+        "{}",
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsMacFdaNoResponse)
     );
     match answer.trim() {
         "" => Ok(true),
         "q" | "Q" => Ok(false),
-        _ => bail!("enter an empty line to continue or q to cancel; service was not started"),
+        _ => bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacFdaInvalidAnswer)
+        ),
     }
 }
 
@@ -1787,24 +2120,27 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
     use crate::mac_signing::{expected_requirement, verify_binary};
 
     let (ownership, executable) = owned_mac_worker(ownership_path)?;
-    let requirement =
-        expected_requirement().context("read the configured macOS signing identity")?;
+    let requirement = expected_requirement()
+        .context(language.message(MessageKey::InstallDiagnosticsReadMacSigningIdentity))?;
     if let Some(pin) = ownership.mac_signing_requirement.as_deref() {
         ensure!(
             pin == requirement,
-            "owned worker signing identity does not match the configured identity"
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsOwnedSigningIdentityMismatch)
         );
     }
     verify_binary(&executable, &requirement)
-        .context("verify the actual owned worker before opening Full Disk Access settings")?;
+        .context(language.message(MessageKey::InstallDiagnosticsVerifyOwnedWorkerBeforeFda))?;
     require_mac_fda_interactive_terminal(
         &executable,
-        "installation can configure the native profile or start the service",
+        language.message(MessageKey::InstallDiagnosticsFdaSetupOperationReason),
     )?;
     open_mac_permissions_for_executable(&executable).with_context(|| {
         format!(
-            "open Full Disk Access guidance for signed worker {}",
-            executable.display()
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsOpenFdaGuidance)
+                .replace("{0}", &executable.display().to_string())
         )
     })?;
     println!(
@@ -1832,8 +2168,10 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
         Ok(())
     } else {
         bail!(
-            "installation cancelled before service startup; signed worker: {}",
-            executable.display()
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsMacFdaCancelled)
+                .replace("{0}", &executable.display().to_string())
         )
     }
 }
@@ -1842,24 +2180,33 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
 fn ownership_data_root(ownership: &Ownership) -> Result<PathBuf> {
     let state_dir = ownership.state_dir.canonicalize().with_context(|| {
         format!(
-            "resolve owned state directory {}",
-            ownership.state_dir.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsResolveOwnedStateDirectory)
+                .replace("{0}", &ownership.state_dir.display().to_string())
         )
     })?;
     if state_dir.file_name().and_then(|name| name.to_str()) != Some("state") {
         bail!(
-            "owned state directory does not use the expected profile data layout: {}",
-            state_dir.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedStateLayoutExpected)
+                .replace("{0}", &state_dir.display().to_string())
         );
     }
     let data_root = state_dir
         .parent()
-        .context("owned state directory has no profile data root")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedStateProfileDataRootMissing),
+        )?
         .to_owned();
     if !ownership.runtime_dir.is_absolute() || !ownership.runtime_dir.starts_with(&data_root) {
         bail!(
-            "owned runtime directory is outside the profile data root: {}",
-            ownership.runtime_dir.display()
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeOutsideDataRoot)
+                .replace("{0}", &ownership.runtime_dir.display().to_string())
         );
     }
     Ok(data_root)
@@ -1873,26 +2220,48 @@ fn mac_permissions_ownership_path(args: &[String], default: &Path) -> Result<Pat
     while index < args.len() {
         let option = args[index].as_str();
         if matches!(option, "--config" | "--ownership") {
-            let value = args
-                .get(index + 1)
-                .context("mac-permissions option requires a path")?;
+            let value = args.get(index + 1).context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMacPermissionsPathRequired),
+            )?;
             if value.starts_with('-') {
-                bail!("mac-permissions option requires a path");
+                bail!(
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsMacPermissionsPathRequired)
+                );
             }
             if option == "--config" {
                 if config.replace(PathBuf::from(value)).is_some() {
-                    bail!("mac-permissions accepts --config only once");
+                    bail!(
+                        "{}",
+                        crate::i18n::Language::English
+                            .message(MessageKey::InstallDiagnosticsMacPermissionsConfigRepeated)
+                    );
                 }
             } else if ownership.replace(PathBuf::from(value)).is_some() {
-                bail!("mac-permissions accepts --ownership only once");
+                bail!(
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsMacPermissionsOwnershipRepeated)
+                );
             }
             index += 2;
         } else {
-            bail!("unknown mac-permissions option `{option}`");
+            bail!(
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMacPermissionsUnknownOption)
+                    .replace("{0}", option)
+            );
         }
     }
     if config.is_some() && ownership.is_some() {
-        bail!("mac-permissions accepts either --config or --ownership, not both");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacPermissionsConfigOwnershipExclusive)
+        );
     }
     Ok(ownership.unwrap_or_else(|| {
         config.map_or_else(
@@ -1918,10 +2287,21 @@ fn parse_update_args(args: &[String]) -> Result<UpdateArgs> {
         let option = args[i].as_str();
         ensure!(
             option == "--source" || option == "--config",
-            "unknown update option {option}"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateUnknownOption)
+                .replace("{0}", option)
         );
-        let value = args.get(i + 1).context("update option requires a path")?;
-        ensure!(!value.starts_with('-'), "update option requires a path");
+        let value = args.get(i + 1).context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateOptionRequiresPath),
+        )?;
+        ensure!(
+            !value.starts_with('-'),
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateOptionRequiresPath)
+        );
         let slot = if option == "--source" {
             &mut source
         } else {
@@ -1929,13 +2309,22 @@ fn parse_update_args(args: &[String]) -> Result<UpdateArgs> {
         };
         ensure!(
             slot.replace(PathBuf::from(value)).is_none(),
-            "{option} may be used only once"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateOptionRepeated)
+                .replace("{0}", option)
         );
         i += 2;
     }
     Ok(UpdateArgs {
-        source: source.context("update requires --source <new-binary>")?,
-        config: config.context("update requires --config <existing-config>")?,
+        source: source.context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateSourceRequired),
+        )?,
+        config: config.context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsUpdateConfigRequired),
+        )?,
     })
 }
 
@@ -1951,8 +2340,17 @@ pub fn update(args: &[String]) -> Result<()> {
             .arg("update")
             .args(args)
             .status()
-            .context("run the incoming worker's update installer")?;
-        ensure!(status.success(), "incoming worker update failed: {status}");
+            .context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsRunIncomingUpdateInstaller),
+            )?;
+        ensure!(
+            status.success(),
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsIncomingWorkerUpdateFailed)
+                .replace("{0}", &status.to_string())
+        );
         return Ok(());
     }
     #[cfg(target_os = "macos")]
@@ -1966,7 +2364,11 @@ pub fn update(args: &[String]) -> Result<()> {
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = args;
-        bail!("binary updates are supported on Linux, macOS, and Windows")
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsBinaryUpdatesUnsupportedPlatform)
+        )
     }
 }
 
@@ -1982,7 +2384,10 @@ fn resolve_profile_ownership(config_path: &Path) -> Result<Ownership> {
     );
     let owner_path = config_path
         .parent()
-        .context("config path has no parent")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsConfigPathParentMissing),
+        )?
         .join("ownership.json");
     let owner: Ownership = read_json(&owner_path)
         .with_context(|| format!("read profile ownership record {}", owner_path.display()))?;
@@ -1995,61 +2400,78 @@ fn resolve_profile_ownership(config_path: &Path) -> Result<Ownership> {
 
 #[cfg(any(target_os = "linux", windows))]
 fn update_owned_binary(args: UpdateArgs) -> Result<()> {
-    let source = args
-        .source
-        .canonicalize()
-        .context("resolve update source")?;
+    let source = args.source.canonicalize().context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsResolveUpdateSource),
+    )?;
     ensure!(
         fs::symlink_metadata(&source)?.file_type().is_file(),
-        "update source is not a regular file"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsUpdateSourceNotRegularFile)
     );
-    let config_path = args
-        .config
-        .canonicalize()
-        .context("resolve selected config")?;
+    let config_path = args.config.canonicalize().context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsResolveSelectedConfig),
+    )?;
     let mut owner = resolve_profile_ownership(&config_path)?;
     let previous_owner = owner.clone();
     ensure!(
         owner.config_file.canonicalize()? == config_path,
-        "selected config differs from ownership record"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsSelectedConfigOwnershipMismatch)
     );
     let data_root = owner
         .state_dir
         .parent()
-        .context("owned state directory has no data root")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedStateDataRootMissing),
+        )?
         .to_owned();
     ensure!(
         owner.state_dir == data_root.join("state"),
-        "owned state directory layout is invalid"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedStateLayoutInvalid)
     );
-    let installed = recorded_service_executable(&owner)?
-        .context("ownership record has no validated worker executable")?;
+    let installed = recorded_service_executable(&owner)?.context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnershipWorkerMissing),
+    )?;
     ensure!(
         source != installed,
-        "update source must be separate from the installed executable"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsUpdateSourceIsInstalledWorker)
     );
     ensure!(
         installed.file_name() == Some(worker_executable_name().as_os_str()),
-        "owned executable does not use the Discodex worker filename"
+        "{}",
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedWorkerNameInvalid)
     );
     let mut config = Config::load(&config_path)?;
     let update_language = config.language;
     ensure!(
         config.state_dir == owner.state_dir
             && config.credentials_file.as_deref() == Some(owner.credentials_file.as_path()),
-        "profile config differs from ownership record"
+        "{}",
+        update_language.message(MessageKey::InstallDiagnosticsProfileOwnershipMismatch)
     );
     #[cfg(target_os = "linux")]
-    let service = validate_owned_linux_update_service(&owner, &installed, &config_path)?;
+    let service =
+        validate_owned_linux_update_service(&owner, &installed, &config_path, update_language)?;
     #[cfg(windows)]
-    let service = validate_owned_windows_update_service(&owner, &installed, &config_path)?;
+    let service =
+        validate_owned_windows_update_service(&owner, &installed, &config_path, update_language)?;
     let profile_snapshot = ProfileRuntimeSnapshot::read(&owner)?;
     let runtime = runtime::prepare(&data_root)?;
-    let previous = fs::read(&installed).context("snapshot owned worker")?;
+    let previous = fs::read(&installed)
+        .context(update_language.message(MessageKey::InstallDiagnosticsSnapshotOwnedWorker))?;
     let permissions = fs::metadata(&installed)?.permissions();
     let parent = installed
         .parent()
-        .context("worker executable has no parent")?;
+        .context(update_language.message(MessageKey::InstallDiagnosticsWorkerParentMissing))?;
     let staged = stage_update_binary(&source, parent)?;
     let mut stopped = false;
     let mut replaced = false;
@@ -2064,14 +2486,19 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
             stopped = true;
             set_windows_update_task(&service.task_name, false, false)?;
         }
-        staged
-            .persist(&installed)
-            .map_err(|error| anyhow!("replace owned worker: {}", error.error))?;
+        staged.persist(&installed).map_err(|error| {
+            anyhow!(
+                "{}: {}",
+                update_language.message(MessageKey::InstallDiagnosticsReplaceOwnedWorker),
+                error.error
+            )
+        })?;
         replaced = true;
         set_executable(&installed)?;
         ensure!(
             fs::metadata(&installed)?.len() > 0,
-            "updated worker is empty"
+            "{}",
+            update_language.message(MessageKey::InstallDiagnosticsUpdatedWorkerEmpty)
         );
         activate_runtime(&mut owner, &mut config, &runtime)?;
         #[cfg(target_os = "linux")]
@@ -2079,25 +2506,29 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
             if service.was_active {
                 run_checked("systemctl", &["--user", "start", &service.unit])?;
                 ensure!(
-                    systemctl_user_state("is-active", &service.unit)? == "active",
-                    "updated Discodex worker did not become active"
+                    systemctl_user_state("is-active", &service.unit, update_language)? == "active",
+                    "{}",
+                    update_language.message(MessageKey::InstallDiagnosticsUpdatedWorkerInactive)
                 );
             }
-            let enabled_state = systemctl_user_state("is-enabled", &service.unit)?;
+            let enabled_state = systemctl_user_state("is-enabled", &service.unit, update_language)?;
             let remains_enabled = matches!(enabled_state.as_str(), "enabled" | "enabled-runtime");
             ensure!(
                 remains_enabled == service.was_enabled,
-                "updated systemd unit did not retain its previous enabled state"
+                "{}",
+                update_language.message(MessageKey::InstallDiagnosticsUpdatedServiceEnableState)
             );
             stopped = false;
         }
         #[cfg(windows)]
         {
             set_windows_update_task(&service.task_name, service.was_enabled, service.was_active)?;
-            let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+            let (enabled, active) =
+                inspect_windows_task_state(&service.task_name, update_language)?;
             ensure!(
                 enabled == service.was_enabled && active == service.was_active,
-                "updated scheduled task did not return to its previous enabled/running state"
+                "{}",
+                update_language.message(MessageKey::InstallDiagnosticsUpdatedTaskState)
             );
             stopped = false;
         }
@@ -2112,45 +2543,64 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
             match step {
                 UpdateRecoveryStep::EnsureServiceStopped => {
                     #[cfg(target_os = "linux")]
-                    run_checked("systemctl", &["--user", "stop", &service.unit])
-                        .context("could not stop updated service before restoring worker")?;
+                    run_checked("systemctl", &["--user", "stop", &service.unit]).context(
+                        update_language
+                            .message(MessageKey::InstallDiagnosticsStopUpdatedServiceForRestore),
+                    )?;
                     #[cfg(windows)]
                     {
                         set_windows_update_task(&service.task_name, false, false)
-                            .context("could not stop updated task before restoring worker")?;
-                        let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+                            .context(update_language.message(
+                                MessageKey::InstallDiagnosticsStopUpdatedTaskForRestore,
+                            ))?;
+                        let (enabled, active) =
+                            inspect_windows_task_state(&service.task_name, update_language)?;
                         ensure!(
                             !enabled && !active,
-                            "Windows task is still enabled or running"
+                            "{}",
+                            update_language
+                                .message(MessageKey::InstallDiagnosticsUpdatedTaskStillRunning,)
                         );
                     }
                 }
                 UpdateRecoveryStep::RestoreWorker => {
-                    restore_worker_bytes(&installed, &previous, permissions.clone())
-                        .context("binary restore failed")?;
+                    restore_worker_bytes(&installed, &previous, permissions.clone()).context(
+                        update_language.message(MessageKey::InstallDiagnosticsWorkerRestoreFailed),
+                    )?;
                 }
                 UpdateRecoveryStep::RestoreProfile => {
-                    profile_snapshot
-                        .restore(replaced)
-                        .context("profile runtime restore failed")?;
+                    profile_snapshot.restore(replaced).context(
+                        update_language
+                            .message(MessageKey::InstallDiagnosticsProfileRuntimeRestoreFailed),
+                    )?;
                 }
                 UpdateRecoveryStep::RestoreService => {
                     #[cfg(target_os = "linux")]
                     {
                         if service.was_active {
-                            run_checked("systemctl", &["--user", "start", &service.unit])
-                                .context("previous service restart failed")?;
+                            run_checked("systemctl", &["--user", "start", &service.unit]).context(
+                                update_language.message(
+                                    MessageKey::InstallDiagnosticsPreviousServiceRestartFailed,
+                                ),
+                            )?;
                         }
                         ensure!(
-                            (systemctl_user_state("is-active", &service.unit)? == "active")
+                            (systemctl_user_state("is-active", &service.unit, update_language)?
+                                == "active")
                                 == service.was_active,
-                            "previous systemd unit did not return to its prior active state"
+                            "{}",
+                            update_language
+                                .message(MessageKey::InstallDiagnosticsPreviousServiceActiveState,)
                         );
-                        let enabled = systemctl_user_state("is-enabled", &service.unit)?;
+                        let enabled =
+                            systemctl_user_state("is-enabled", &service.unit, update_language)?;
                         ensure!(
                             matches!(enabled.as_str(), "enabled" | "enabled-runtime")
                                 == service.was_enabled,
-                            "previous systemd unit did not retain its prior enabled state"
+                            "{}",
+                            update_language.message(
+                                MessageKey::InstallDiagnosticsPreviousServiceEnabledState,
+                            )
                         );
                     }
                     #[cfg(windows)]
@@ -2160,17 +2610,24 @@ fn update_owned_binary(args: UpdateArgs) -> Result<()> {
                             service.was_enabled,
                             service.was_active,
                         )
-                        .context("previous task state restore failed")?;
-                        let (enabled, active) = inspect_windows_task_state(&service.task_name)?;
+                        .context(
+                            update_language
+                                .message(MessageKey::InstallDiagnosticsPreviousTaskRestoreFailed),
+                        )?;
+                        let (enabled, active) =
+                            inspect_windows_task_state(&service.task_name, update_language)?;
                         ensure!(
                             enabled == service.was_enabled && active == service.was_active,
-                            "previous scheduled task did not return to its prior enabled/running state"
+                            "{}",
+                            update_language
+                                .message(MessageKey::InstallDiagnosticsPreviousTaskState,)
                         );
                     }
                 }
-                UpdateRecoveryStep::DiscardPreparedRuntime => {
-                    runtime.discard().context("staged runtime cleanup failed")?
-                }
+                UpdateRecoveryStep::DiscardPreparedRuntime => runtime.discard().context(
+                    update_language
+                        .message(MessageKey::InstallDiagnosticsStagedRuntimeCleanupFailed),
+                )?,
             }
             Ok(())
         });
@@ -2212,7 +2669,10 @@ impl ProfileRuntimeSnapshot {
         let ownership_path = owner
             .config_file
             .parent()
-            .context("profile has no directory")?
+            .context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsProfileDirectoryMissing),
+            )?
             .join("ownership.json");
         Ok(Self {
             config_path: owner.config_file.clone(),
@@ -2238,14 +2698,23 @@ impl ProfileRuntimeSnapshot {
 }
 
 fn write_bytes_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut staged =
-        tempfile::NamedTempFile::new_in(path.parent().context("profile has no directory")?)?;
+    let mut staged = tempfile::NamedTempFile::new_in(
+        path.parent().context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsProfileDirectoryMissing),
+        )?,
+    )?;
     staged.write_all(bytes)?;
     staged.as_file().sync_all()?;
     set_private_file(staged.path())?;
-    staged
-        .persist(path)
-        .map_err(|error| anyhow!("replace profile state: {}", error.error))?;
+    staged.persist(path).map_err(|error| {
+        anyhow!(
+            "{}: {}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsReplaceProfileState),
+            error.error
+        )
+    })?;
     Ok(())
 }
 
@@ -2261,7 +2730,10 @@ fn activate_runtime(
         &owner
             .config_file
             .parent()
-            .context("profile has no directory")?
+            .context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsProfileDirectoryMissing),
+            )?
             .join("ownership.json"),
         owner,
     )
@@ -2305,7 +2777,10 @@ fn stage_update_binary(source: &Path, parent: &Path) -> Result<tempfile::NamedTe
 }
 
 fn restore_worker_bytes(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> Result<()> {
-    let parent = path.parent().context("worker path has no parent")?;
+    let parent = path.parent().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic652dcc39d538),
+    )?;
     let mut staged = tempfile::NamedTempFile::new_in(parent)?;
     staged.write_all(bytes)?;
     staged.as_file().sync_all()?;
@@ -2328,27 +2803,30 @@ fn validate_owned_linux_update_service(
     owner: &Ownership,
     executable: &Path,
     config: &Path,
+    language: Language,
 ) -> Result<OwnedLinuxUpdateService> {
     let unit = format!("{SERVICE_NAME}.service");
     let path = owner
         .service_file
         .as_deref()
-        .context("ownership has no service unit path")?;
+        .context(language.message(MessageKey::InstallDiagnostic3a80d25b789d))?;
     ensure!(
         owner.service_kind.as_deref() == Some("systemd-user")
             && path.file_name().and_then(|n| n.to_str()) == Some(unit.as_str()),
-        "ownership does not identify the Discodex systemd user unit"
+        "{}",
+        language.message(MessageKey::InstallDiagnostic4377bddeb298)
     );
     let home = env::var_os("HOME")
         .map(PathBuf::from)
-        .context("HOME is not set")?;
+        .context(language.message(crate::i18n::MessageKey::InstallDiagnostic5469a622b9bd))?;
     let dir = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".config"))
         .join("systemd/user");
     ensure!(
         path == &dir.join(&unit),
-        "service unit path differs from this user's Discodex service path"
+        "{}",
+        language.message(MessageKey::InstallDiagnostic9ef0af33e93c)
     );
     let expected = format!(
         "[Unit]\nDescription=Discodex Discord bridge\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n",
@@ -2358,14 +2836,15 @@ fn validate_owned_linux_update_service(
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.file_type().is_file() && fs::read_to_string(path)? == expected,
-        "owned systemd unit differs from the verified worker/config"
+        language.message(MessageKey::InstallDiagnosticAcb4f60f2f54)
     );
-    let active_state = systemctl_user_state("is-active", &unit)?;
+    let active_state = systemctl_user_state("is-active", &unit, language)?;
     ensure!(
         active_state == "active" || active_state == "inactive",
-        "systemd unit is in a transitional or failed state; update refused"
+        "{}",
+        language.message(MessageKey::InstallDiagnostic84f0109c4116)
     );
-    let enabled_state = systemctl_user_state("is-enabled", &unit)?;
+    let enabled_state = systemctl_user_state("is-enabled", &unit, language)?;
     Ok(OwnedLinuxUpdateService {
         unit: unit.clone(),
         was_enabled: matches!(enabled_state.as_str(), "enabled" | "enabled-runtime"),
@@ -2385,25 +2864,28 @@ fn validate_owned_windows_update_service(
     owner: &Ownership,
     executable: &Path,
     config: &Path,
+    language: Language,
 ) -> Result<OwnedWindowsUpdateService> {
     ensure!(
         owner.service_kind.as_deref() == Some("scheduled-task-user")
             && owner.service_file.is_none(),
-        "ownership does not identify the Discodex scheduled task"
+        "{}",
+        language.message(MessageKey::InstallDiagnostic6de983621253)
     );
     let task_name = windows_task_name_for_config(config).to_owned();
-    let task_exe = windows_task_executable_path(executable)?;
+    let task_exe = windows_task_executable_path(executable, language)?;
     let expected_exe = ps_single_quote(&task_exe.display().to_string());
     let expected_args = ps_single_quote(&format!(
         r#"run --config "{}""#,
         owner.config_file.display()
     ));
-    let (state, _) = inspect_owned_windows_task(&expected_exe, &expected_args, owner)?;
+    let (state, _) = inspect_owned_windows_task(&expected_exe, &expected_args, owner, language)?;
     ensure!(
         state == "matching",
-        "scheduled task differs from ownership record"
+        "{}",
+        language.message(MessageKey::InstallDiagnostic3721e34e3d6c)
     );
-    let (was_enabled, was_active) = inspect_windows_task_state(&task_name)?;
+    let (was_enabled, was_active) = inspect_windows_task_state(&task_name, language)?;
     Ok(OwnedWindowsUpdateService {
         task_name,
         was_enabled,
@@ -2451,11 +2933,16 @@ fn parse_mac_update_args(args: &[String]) -> Result<MacUpdateArgs> {
         match args[index].as_str() {
             "--source" | "--config" | "--ownership" => {
                 let option = args[index].as_str();
-                let value = args
-                    .get(index + 1)
-                    .context("update option requires a path")?;
+                let value = args.get(index + 1).context(
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsUpdateOptionRequiresPath),
+                )?;
                 if value.starts_with('-') {
-                    bail!("update option requires a path");
+                    bail!(
+                        "{}",
+                        crate::i18n::Language::English
+                            .message(MessageKey::InstallDiagnosticsUpdateOptionRequiresPath)
+                    );
                 }
                 let slot = match option {
                     "--source" => &mut source,
@@ -2463,23 +2950,44 @@ fn parse_mac_update_args(args: &[String]) -> Result<MacUpdateArgs> {
                     _ => &mut ownership,
                 };
                 if slot.replace(PathBuf::from(value)).is_some() {
-                    bail!("{option} may be used only once");
+                    bail!(
+                        "{}",
+                        crate::i18n::Language::English
+                            .message(MessageKey::InstallDiagnosticsUpdateOptionRepeated)
+                            .replace("{0}", option)
+                    );
                 }
                 index += 2;
             }
             "--migrate-adhoc" => {
                 if migrate_adhoc {
-                    bail!("--migrate-adhoc may be used only once");
+                    bail!(
+                        "{}",
+                        crate::i18n::Language::English
+                            .message(MessageKey::InstallDiagnosticsMacMigrateOptionRepeated)
+                    );
                 }
                 migrate_adhoc = true;
                 index += 1;
             }
-            option => bail!("unknown mac-update option `{option}`"),
+            option => bail!(
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMacUnknownOption)
+                    .replace("{0}", option)
+            ),
         }
     }
-    let source = source.context("mac-update requires --source <new-build-binary>")?;
+    let source = source.context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMacUpdateSourceRequired),
+    )?;
     if config.is_some() && ownership.is_some() {
-        bail!("mac-update accepts either --config or --ownership, not both");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacConfigOrOwnershipExclusive)
+        );
     }
     Ok(MacUpdateArgs {
         source,
@@ -2498,18 +3006,26 @@ fn validate_mac_update_migration(
     if pinned_requirement.is_some() {
         if migrate_adhoc {
             bail!(
-                "--migrate-adhoc is only valid for an installation without a pinned signing identity"
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMacMigrateRequiresUnpinned)
             );
         }
         return Ok(());
     }
     if !migrate_adhoc {
         bail!(
-            "no signing identity is pinned; pass --migrate-adhoc once to migrate the ad-hoc build"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacMigrationFlagRequired)
         );
     }
     if existing_signature_is_adhoc != Some(true) {
-        bail!("the unpinned installation is not verified as ad-hoc signed; migration refused");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacAdhocSignatureNotVerified)
+        );
     }
     Ok(())
 }
@@ -2535,77 +3051,125 @@ pub fn update_mac(args: &[String]) -> Result<()> {
     let owner_path =
         mac_permissions_ownership_path(&owner_args, &roots()?.config.join("ownership.json"))?
             .canonicalize()
-            .context("resolve ownership record")?;
-    let mut owner: Ownership = read_json(&owner_path).context("read owned installation record")?;
-    let config_path = owner
-        .config_file
-        .canonicalize()
-        .context("resolve owned profile config")?;
+            .context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsMacResolveOwnershipRecord),
+            )?;
+    let mut owner: Ownership = read_json(&owner_path).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMacReadOwnershipRecord),
+    )?;
+    let config_path = owner.config_file.canonicalize().context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsMacResolveProfileConfig),
+    )?;
     if config
         .as_ref()
         .is_some_and(|p| p.canonicalize().ok().as_deref() != Some(config_path.as_path()))
     {
-        bail!("--config does not identify the config recorded by this ownership record");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacConfigDoesNotMatchOwnership)
+        );
     }
     let adjacent_owner = config_path
         .parent()
-        .context("owned config has no parent")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacOwnedConfigParentMissing),
+        )?
         .join("ownership.json")
         .canonicalize()
-        .context("resolve ownership record beside config")?;
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacResolveAdjacentOwnership),
+        )?;
     if adjacent_owner != owner_path {
-        bail!("ownership record is not beside its owned profile config");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacOwnershipNotAdjacent)
+        );
     }
     let data_root = ownership_data_root(&owner)?;
-    let recorded_worker = owner
-        .worker_executable
-        .as_ref()
-        .context("owned install has no recorded worker executable")?;
-    let installed = recorded_worker
-        .canonicalize()
-        .context("resolve recorded worker executable")?;
+    let recorded_worker = owner.worker_executable.as_ref().context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsMacWorkerNotRecorded),
+    )?;
+    let installed = recorded_worker.canonicalize().context(
+        crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsMacResolveWorker),
+    )?;
     if recorded_worker != &installed {
-        bail!("recorded worker path is not its canonical owned executable path");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacWorkerPathNotCanonical)
+        );
     }
     if !installed.is_file() || !is_owned_worker_executable(&installed, &data_root) {
         bail!(
-            "recorded worker executable is not a regular file in the canonical owned bin directory"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacWorkerOutsideOwnedBin)
         );
     }
     if owner.service_kind.as_deref() != Some("launchd-user") {
-        bail!("ownership record does not identify an owned macOS LaunchAgent");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsMacNotOwnedLaunchAgent)
+        );
     }
     let mut profile_config = Config::load(&config_path)?;
     let language = profile_config.language;
     let (label, plist) = launchd_identity(&config_path)?;
     if owner.service_file.as_deref() != Some(plist.as_path()) {
-        bail!("recorded LaunchAgent path does not match this owned profile");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsMacLaunchAgentPathMismatch)
+        );
     }
     let expected_plist = launchd_plist(&label, &installed, &config_path);
     if !existing_launchd_plist_matches(&plist, &expected_plist, true)? {
-        bail!("owned LaunchAgent plist is missing");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsMacLaunchAgentPlistMissing)
+        );
     }
     let was_loaded = launchd_is_loaded(&label, &installed, &config_path)?;
 
-    let source = source.canonicalize().context("resolve update source")?;
+    let source = source
+        .canonicalize()
+        .context(language.message(MessageKey::InstallDiagnosticsMacResolveUpdateSource))?;
     if !source.is_file() {
-        bail!("update source is not a regular file: {}", source.display());
+        bail!(
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsMacUpdateSourceNotRegular)
+                .replace("{0}", &source.display().to_string())
+        );
     }
     if source == installed {
-        bail!("update source must be separate from the installed worker executable");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsMacUpdateSourceIsInstalledWorker)
+        );
     }
     if let Some(pin) = owner.mac_signing_requirement.as_deref() {
         validate_mac_update_migration(Some(pin), migrate, None)?;
         adopt_owned_binary_identifier(&installed, pin)
-            .context("preserve the verified owned signing identity")?;
-        verify_binary(&installed, pin)
-            .context("verify installed binary against pinned signing identity")?;
+            .context(language.message(MessageKey::InstallDiagnosticsMacPreserveSigningIdentity))?;
+        verify_binary(&installed, pin).context(
+            language.message(MessageKey::InstallDiagnosticsMacVerifyPinnedInstalledBinary),
+        )?;
     } else {
         let output = Command::new("/usr/bin/codesign")
             .args(["-dv", "--verbose=4"])
             .arg(&installed)
             .output()
-            .context("inspect installed signature")?;
+            .context(
+                language.message(MessageKey::InstallDiagnosticsMacInspectInstalledSignature),
+            )?;
         let details = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
@@ -2618,32 +3182,39 @@ pub fn update_mac(args: &[String]) -> Result<()> {
     if migrate {
         require_mac_fda_interactive_terminal(
             &installed,
-            "ad-hoc migration can stop or replace the service",
+            language.message(MessageKey::InstallDiagnosticsMacMigrationFdaReason),
         )?;
     }
 
     let parent = installed
         .parent()
-        .context("installed executable has no parent")?;
-    let old_bytes = fs::read(&installed).context("snapshot installed executable")?;
+        .context(language.message(MessageKey::InstallDiagnosticsMacInstalledWorkerParentMissing))?;
+    let old_bytes = fs::read(&installed)
+        .context(language.message(MessageKey::InstallDiagnosticsMacSnapshotInstalledWorker))?;
     let old_permissions = fs::metadata(&installed)?.permissions();
-    let old_owner_bytes = fs::read(&owner_path).context("snapshot ownership record")?;
+    let old_owner_bytes = fs::read(&owner_path)
+        .context(language.message(MessageKey::InstallDiagnosticsMacSnapshotOwnershipRecord))?;
     let old_owner_permissions = fs::metadata(&owner_path)?.permissions();
     let old_pin = owner.mac_signing_requirement.clone();
-    let staged =
-        tempfile::NamedTempFile::new_in(parent).context("stage beside installed executable")?;
-    fs::copy(&source, staged.path()).context("copy update source into staging file")?;
+    let staged = tempfile::NamedTempFile::new_in(parent)
+        .context(language.message(MessageKey::InstallDiagnosticsMacStageBesideWorker))?;
+    fs::copy(&source, staged.path())
+        .context(language.message(MessageKey::InstallDiagnosticsMacCopyUpdateToStage))?;
     set_executable(staged.path())?;
-    let requirement =
-        sign_binary_with_language(staged.path(), language).context("sign staged executable")?;
+    let requirement = sign_binary_with_language(staged.path(), language)
+        .context(language.message(MessageKey::InstallDiagnosticsMacSignStagedWorker))?;
     staged
         .as_file()
         .sync_all()
-        .context("flush signed staged executable")?;
+        .context(language.message(MessageKey::InstallDiagnosticsMacFlushSignedStage))?;
     if old_pin.as_deref().is_some_and(|pin| pin != requirement) {
-        bail!("update signer does not match pinned installation identity");
+        bail!(
+            "{}",
+            language.message(MessageKey::InstallDiagnosticsMacUpdateSignerMismatch)
+        );
     }
-    verify_binary(staged.path(), &requirement).context("verify staged executable")?;
+    verify_binary(staged.path(), &requirement)
+        .context(language.message(MessageKey::InstallDiagnosticsMacVerifyStagedWorker))?;
 
     let previous_owner = owner.clone();
     let profile_snapshot = ProfileRuntimeSnapshot::read(&owner)?;
@@ -2660,12 +3231,17 @@ pub fn update_mac(args: &[String]) -> Result<()> {
             booted_out = true;
             wait_for_launchd_unloaded(&label, &installed, &config_path)?;
         }
-        staged
-            .persist(&installed)
-            .map_err(|e| anyhow!("atomically replace executable: {}", e.error))?;
+        staged.persist(&installed).map_err(|e| {
+            anyhow!(
+                "{}: {}",
+                language.message(MessageKey::InstallDiagnosticsMacReplaceWorker),
+                e.error
+            )
+        })?;
         replaced = true;
         set_executable(&installed)?;
-        verify_binary(&installed, &requirement).context("verify replaced executable")?;
+        verify_binary(&installed, &requirement)
+            .context(language.message(MessageKey::InstallDiagnosticsMacVerifyReplacedWorker))?;
         owner.mac_signing_requirement = Some(requirement.clone());
         activate_runtime(&mut owner, &mut profile_config, &runtime)?;
         if migrate {
@@ -2678,12 +3254,17 @@ pub fn update_mac(args: &[String]) -> Result<()> {
                 &[
                     "bootstrap",
                     &domain,
-                    plist.to_str().context("LaunchAgent path is not UTF-8")?,
+                    plist.to_str().context(
+                        language.message(MessageKey::InstallDiagnosticsMacLaunchAgentPathNotUtf8),
+                    )?,
                 ],
             )?;
             run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
             if !launchd_is_loaded(&label, &installed, &config_path)? {
-                bail!("updated LaunchAgent did not load");
+                bail!(
+                    "{}",
+                    language.message(MessageKey::InstallDiagnosticsMacUpdatedLaunchAgentNotLoaded)
+                );
             }
         }
         Ok(())
@@ -2695,59 +3276,87 @@ pub fn update_mac(args: &[String]) -> Result<()> {
             Ok(false)
         };
         let service_needs_restore = booted_out && loaded.as_ref().is_ok_and(|loaded| !loaded);
-        let rollback = loaded.and_then(|loaded| {
-            recover_mac_update(booted_out, replaced, loaded, |step| {
-                match step {
-                    UpdateRecoveryStep::EnsureServiceStopped => {
-                        run_checked(
-                            "launchctl",
-                            &["bootout", &format!("{}/{}", launchd_domain()?, label)],
-                        )?;
-                        wait_for_launchd_unloaded(&label, &installed, &config_path)?;
-                    }
-                    UpdateRecoveryStep::RestoreWorker => {
-                        atomic_restore(&installed, &old_bytes, &old_permissions)?;
-                    }
-                    UpdateRecoveryStep::RestoreProfile => {
-                        atomic_restore(&owner_path, &old_owner_bytes, &old_owner_permissions)
-                            .context("restore ownership record")?;
-                        profile_snapshot
-                            .restore(replaced)
-                            .context("restore previous profile runtime")?;
-                    }
-                    UpdateRecoveryStep::DiscardPreparedRuntime => {
-                        runtime.discard().context("staged runtime cleanup failed")?
-                    }
-                    UpdateRecoveryStep::RestoreService => {
-                        let domain = launchd_domain()?;
-                        run_checked(
-                            "launchctl",
-                            &[
-                                "bootstrap",
-                                &domain,
-                                plist.to_str().context("LaunchAgent path is not UTF-8")?,
-                            ],
-                        )?;
-                        run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
-                        if !launchd_is_loaded(&label, &installed, &config_path)? {
-                            bail!("previous LaunchAgent did not return to loaded state");
+        let rollback =
+            loaded.and_then(|loaded| {
+                recover_mac_update(booted_out, replaced, loaded, |step| {
+                    match step {
+                        UpdateRecoveryStep::EnsureServiceStopped => {
+                            run_checked(
+                                "launchctl",
+                                &["bootout", &format!("{}/{}", launchd_domain()?, label)],
+                            )?;
+                            wait_for_launchd_unloaded(&label, &installed, &config_path)?;
+                        }
+                        UpdateRecoveryStep::RestoreWorker => {
+                            atomic_restore(&installed, &old_bytes, &old_permissions)?;
+                        }
+                        UpdateRecoveryStep::RestoreProfile => {
+                            atomic_restore(&owner_path, &old_owner_bytes, &old_owner_permissions)
+                                .context(language.message(
+                                MessageKey::InstallDiagnosticsMacRestoreOwnershipRecord,
+                            ))?;
+                            profile_snapshot
+                                .restore(replaced)
+                                .context(language.message(
+                                    MessageKey::InstallDiagnosticsMacRestorePreviousProfileRuntime,
+                                ))?;
+                        }
+                        UpdateRecoveryStep::DiscardPreparedRuntime => {
+                            runtime.discard().context(language.message(
+                                MessageKey::InstallDiagnosticsStagedRuntimeCleanupFailed,
+                            ))?
+                        }
+                        UpdateRecoveryStep::RestoreService => {
+                            let domain = launchd_domain()?;
+                            run_checked(
+                                "launchctl",
+                                &[
+                                    "bootstrap",
+                                    &domain,
+                                    plist.to_str().context(language.message(
+                                        MessageKey::InstallDiagnosticsMacLaunchAgentPathNotUtf8,
+                                    ))?,
+                                ],
+                            )?;
+                            run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
+                            if !launchd_is_loaded(&label, &installed, &config_path)? {
+                                bail!(
+                                "{}",
+                                language.message(
+                                    MessageKey::InstallDiagnosticsMacPreviousLaunchAgentNotLoaded
+                                )
+                            );
+                            }
                         }
                     }
-                }
-                Ok(())
-            })
-        });
+                    Ok(())
+                })
+            });
         return match rollback {
-            Ok(()) if replaced => Err(error).context("update failed; previous executable, ownership record, and loaded state were restored"),
-            Ok(()) if service_needs_restore => Err(error).context("update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored"),
-            Ok(()) => Err(error).context("update failed before replacement; existing executable, profile, and service were unchanged"),
-            Err(restore) => Err(anyhow!("update failed ({error:#}); rollback failed ({restore:#})")),
+            Ok(()) if replaced => Err(error).context(
+                language.message(MessageKey::InstallDiagnosticsMacUpdateFailedRollbackRestored),
+            ),
+            Ok(()) if service_needs_restore => Err(error).context(
+                language.message(MessageKey::InstallDiagnosticsMacUpdateFailedServiceRestored),
+            ),
+            Ok(()) => Err(error).context(
+                language.message(MessageKey::InstallDiagnosticsMacUpdateFailedBeforeReplacement),
+            ),
+            Err(restore) => Err(anyhow!(
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsMacUpdateAndRollbackFailed)
+                    .replace("{0}", &format!("{error:#}"))
+                    .replace("{1}", &format!("{restore:#}"))
+            )),
         };
     }
     retire_previous_runtime(&previous_owner, &runtime);
     println!(
-        "Updated owned macOS worker and runtime at {}.",
-        installed.display()
+        "{}",
+        language
+            .message(MessageKey::InstallDiagnosticsMacUpdateCompleted)
+            .replace("{0}", &installed.display().to_string())
     );
     Ok(())
 }
@@ -2899,8 +3508,12 @@ mod mac_update_policy_tests {
 
 #[cfg(target_os = "macos")]
 fn atomic_restore(path: &Path, bytes: &[u8], permissions: &fs::Permissions) -> Result<()> {
-    let mut temp =
-        tempfile::NamedTempFile::new_in(path.parent().context("worker path has no parent")?)?;
+    let mut temp = tempfile::NamedTempFile::new_in(
+        path.parent().context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic652dcc39d538),
+        )?,
+    )?;
     temp.write_all(bytes)?;
     temp.as_file().sync_all()?;
     fs::set_permissions(temp.path(), permissions.clone())?;
@@ -2926,10 +3539,10 @@ fn defer_windows_self_cleanup(
     runtime_dir: Option<&Path>,
     config: Option<&Config>,
 ) -> Result<()> {
-    let worker = ownership
-        .worker_executable
-        .as_ref()
-        .context("self-cleanup requires the owned worker executable path")?;
+    let worker = ownership.worker_executable.as_ref().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticFdfd12afa0eb),
+    )?;
     let mut preserved_paths = vec![ownership.project_dir.clone(), ownership.state_dir.clone()];
     if let Some(config) = config {
         preserved_paths.extend([config.project_dir.clone(), config.state_dir.clone()]);
@@ -2939,8 +3552,10 @@ fn defer_windows_self_cleanup(
         .into_iter()
         .map(|path| path.canonicalize().unwrap_or(path))
         .collect::<Vec<_>>();
-    let preserved_paths = serde_json::to_string(&preserved_paths)
-        .context("record Codex user data and project paths for deferred cleanup")?;
+    let preserved_paths = serde_json::to_string(&preserved_paths).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic2f25a2fd6fd9),
+    )?;
     let parent_pid = std::process::id().to_string();
     let script = r#"
 $ErrorActionPreference = 'Stop'
@@ -3031,7 +3646,10 @@ try {
         .env("DISCODEX_UNINSTALL_OWNERSHIP", ownership_path)
         .stdin(Stdio::null())
         .spawn()
-        .context("start the user-scoped Windows cleanup helper")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticE47bfa4f43ea),
+        )?;
     Ok(())
 }
 
@@ -3047,24 +3665,32 @@ fn roots() -> Result<Roots> {
 
 fn roots_for_app(app_name: &str) -> Result<Roots> {
     #[cfg(windows)]
-    let config_base = env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .context("APPDATA is not set")?;
+    let config_base = env::var_os("APPDATA").map(PathBuf::from).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic04c7eeb9bd5a),
+    )?;
     #[cfg(not(windows))]
     let config_base = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .context("XDG_CONFIG_HOME or HOME is not set")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic0f3fb1ef0ac0),
+        )?;
 
     #[cfg(windows)]
-    let data_base = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .context("LOCALAPPDATA is not set")?;
+    let data_base = env::var_os("LOCALAPPDATA").map(PathBuf::from).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic0c7054af933b),
+    )?;
     #[cfg(not(windows))]
     let data_base = env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .context("XDG_DATA_HOME or HOME is not set")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic9b961d0be2ae),
+        )?;
 
     Ok(Roots {
         config: config_base.join(app_name),
@@ -3074,9 +3700,15 @@ fn roots_for_app(app_name: &str) -> Result<Roots> {
 
 fn default_codex_home() -> Result<PathBuf> {
     #[cfg(windows)]
-    let home = env::var_os("USERPROFILE").context("USERPROFILE is not set")?;
+    let home = env::var_os("USERPROFILE").context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticFb9ae00e73dc),
+    )?;
     #[cfg(not(windows))]
-    let home = env::var_os("HOME").context("HOME is not set")?;
+    let home = env::var_os("HOME").context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic5469a622b9bd),
+    )?;
     Ok(PathBuf::from(home).join(".codex"))
 }
 
@@ -3200,8 +3832,10 @@ struct SetupTerminal;
 
 impl SetupTerminal {
     fn open() -> Result<Self> {
-        crossterm::terminal::enable_raw_mode()
-            .context("enable terminal input for Antigravity setup")?;
+        crossterm::terminal::enable_raw_mode().context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic301d57bdbcfd),
+        )?;
         Ok(Self)
     }
 }
@@ -3415,7 +4049,10 @@ async fn prepare_antigravity_at_console(
     }
     drop(terminal);
     if let Some(error) = signal_error {
-        return Err(error).context("listen for setup cancellation");
+        return Err(error).context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic5160f0921dfc),
+        );
     }
     if *cancel_tx.borrow() && result.is_ok() {
         return Err(SetupCancelled.into());
@@ -3440,18 +4077,23 @@ async fn prepare_antigravity_at_console(
 
 fn remove_owned_antigravity(state_dir: &Path) -> Result<()> {
     let executable = crate::agy::managed_executable(state_dir)?;
-    let directory = executable
-        .parent()
-        .context("managed Antigravity path has no parent")?;
+    let directory = executable.parent().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticDd4390dd63f5),
+    )?;
     let marker = directory.join(crate::agy_setup::OWNERSHIP_FILE);
     if !marker.exists() {
         return Ok(());
     }
     ensure!(
         crate::agy_setup::is_owned_install(&executable),
-        "Antigravity ownership record is invalid; its files were preserved"
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticE00affd05477)
     );
-    fs::remove_dir_all(directory).context("remove Discodex-managed Antigravity installation")?;
+    fs::remove_dir_all(directory).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic12a998ef8bc8),
+    )?;
     Ok(())
 }
 
@@ -3461,10 +4103,10 @@ fn resolve_codex_home(
     project_dir: &Path,
     default_home: Option<&Path>,
 ) -> Result<PathBuf> {
-    let selected = previous
-        .or(selected_env)
-        .or(default_home)
-        .context("no CODEX_HOME or default home was available")?;
+    let selected = previous.or(selected_env).or(default_home).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic1f0de93d2670),
+    )?;
     if selected.is_absolute() {
         return Ok(selected.to_owned());
     }
@@ -3472,7 +4114,10 @@ fn resolve_codex_home(
         project_dir.to_owned()
     } else {
         env::current_dir()
-            .context("resolve relative project directory for CODEX_HOME")?
+            .context(
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::InstallDiagnostic41d8fc5223b3),
+            )?
             .join(project_dir)
     };
     Ok(base.join(selected))
@@ -3486,14 +4131,16 @@ fn validate_existing_profile_identity(
 ) -> Result<()> {
     if existing_installation && ownership_profile.is_none() && config_profile.is_none() {
         bail!(
-            "an existing installation has no readable profile identity; refusing to reuse its state"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsExistingProfileIdentityUnreadable)
         );
     }
     if ownership_profile.is_some_and(|profile| profile != requested_profile)
         || config_profile.is_some_and(|profile| profile != requested_profile)
     {
         bail!(
-            "an existing installation belongs to another profile; refusing to replace its config, credentials, or ownership"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsExistingInstallationOtherProfile)
         );
     }
     Ok(())
@@ -3547,7 +4194,8 @@ fn owned_core_runtime_for_cleanup(
         let expected_root = data_root.canonicalize()?.join("runtime");
         ensure!(
             ownership.runtime_dir.parent() == Some(expected_root.as_path()),
-            "managed runtime is outside this profile's runtime directory"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeOutsideProfile)
         );
         if !ownership.runtime_dir.exists() {
             return Ok(None);
@@ -3559,7 +4207,8 @@ fn owned_core_runtime_for_cleanup(
         ensure!(
             ownership.runtime_executable.as_ref() == Some(&expected_executable)
                 && ownership.codex_path == expected_executable,
-            "managed runtime ownership points to a different package"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeDifferentPackage)
         );
         let mut preserved = vec![&ownership.project_dir, &ownership.state_dir];
         if let Some(config) = config {
@@ -3576,7 +4225,8 @@ fn owned_core_runtime_for_cleanup(
                     .canonicalize()
                     .unwrap_or_else(|_| path.to_owned())
                     .starts_with(&ownership.runtime_dir),
-                "user data overlaps the managed runtime; preserving files"
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsUserDataOverlapsRuntime)
             );
         }
         runtime::verify_owned(&ownership.runtime_dir)?;
@@ -3585,22 +4235,31 @@ fn owned_core_runtime_for_cleanup(
     if ownership.codex_source != "official-core-owned" {
         return Ok(None);
     }
-    let data_root = data_root
-        .canonicalize()
-        .with_context(|| format!("resolve profile data root {}", data_root.display()))?;
+    let data_root = data_root.canonicalize().with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsProfileDataRootResolve)
+            .replace("{0}", &data_root.display().to_string())
+    })?;
     let runtime_dir = data_root.join("official-codex");
     if ownership.runtime_dir != runtime_dir {
         bail!(
-            "owned Codex runtime is not the expected profile directory; configuration and ownership were preserved"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeExpectedProfile)
         );
     }
     match fs::symlink_metadata(&runtime_dir) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Ok(_) => bail!(
-            "owned Codex runtime is not a regular directory; configuration and ownership were preserved"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeRegularDirectory)
         ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("inspect owned Codex runtime before cleanup"),
+        Err(error) => {
+            return Err(error).context(
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsInspectOwnedCodexRuntimeBeforeCleanup),
+            );
+        }
     }
     let executable = runtime_dir.join(codex_executable_name());
     if ownership.runtime_executable.as_deref() != Some(executable.as_path())
@@ -3608,7 +4267,8 @@ fn owned_core_runtime_for_cleanup(
         || !previous_owns_completed_core(ownership, &executable)
     {
         bail!(
-            "remaining Codex runtime has an incomplete ownership record; configuration and ownership were preserved"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeIncompleteRecord)
         );
     }
     let mut preserved_paths = vec![
@@ -3626,8 +4286,10 @@ fn owned_core_runtime_for_cleanup(
         let resolved = path.canonicalize().unwrap_or_else(|_| path.to_owned());
         if resolved.starts_with(&runtime_dir) {
             bail!(
-                "Codex user data, project, state, or a selected executable overlaps the owned runtime at {}; its files, configuration, and ownership were preserved",
-                path.display()
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsOwnedRuntimeOverlapPath)
+                    .replace("{0}", &path.display().to_string())
             );
         }
     }
@@ -3637,27 +4299,43 @@ fn owned_core_runtime_for_cleanup(
 
 fn inspect_owned_core_runtime_contents(runtime_dir: &Path) -> Result<()> {
     if !fs::symlink_metadata(runtime_dir)
-        .context("inspect owned Codex runtime before cleanup")?
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsInspectOwnedCodexRuntimeBeforeCleanup),
+        )?
         .file_type()
         .is_dir()
     {
         bail!(
-            "owned Codex runtime changed to a non-directory or link; its files, configuration, and ownership were preserved"
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedRuntimeRegularDirectory)
         );
     }
-    for entry in fs::read_dir(runtime_dir).context("read owned Codex runtime before cleanup")? {
-        let entry = entry.context("read owned Codex runtime entry")?;
+    for entry in fs::read_dir(runtime_dir).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsReadOwnedCodexRuntimeBeforeCleanup),
+    )? {
+        let entry = entry.context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsReadOwnedCodexRuntimeEntry),
+        )?;
         let name = entry.file_name();
         if (name != codex_executable_name()
             && name != OsString::from(code_mode_host_executable_name()))
             || !entry
                 .file_type()
-                .context("inspect owned runtime entry")?
+                .context(
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsInspectOwnedRuntimeEntry),
+                )?
                 .is_file()
         {
             bail!(
-                "owned runtime contains unrecorded files or user data at {}; its files, configuration, and ownership were preserved",
-                entry.path().display()
+                "{}",
+                crate::i18n::Language::English
+                    .message(MessageKey::InstallDiagnosticsOwnedRuntimeUnrecordedContents)
+                    .replace("{0}", &entry.path().display().to_string())
             );
         }
     }
@@ -3671,8 +4349,10 @@ fn remove_owned_core_runtime(runtime_dir: &Path) -> Result<()> {
     inspect_owned_core_runtime_contents(runtime_dir)?;
     remove_if_file(&runtime_dir.join(codex_executable_name()))?;
     remove_if_file(&runtime_dir.join(code_mode_host_executable_name()))?;
-    fs::remove_dir(runtime_dir)
-        .context("remove empty owned runtime; configuration and ownership remain if cleanup failed")
+    fs::remove_dir(runtime_dir).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedRuntimeCleanupFailed),
+    )
 }
 
 fn validate_existing_installation_plan(
@@ -3682,20 +4362,18 @@ fn validate_existing_installation_plan(
 ) -> Result<()> {
     let ownership = if ownership_path.exists() {
         Some(read_json::<Ownership>(ownership_path).with_context(|| {
-            format!(
-                "read existing installation ownership {}; refusing to replace its plan",
-                ownership_path.display()
-            )
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticCfc12728a10d)
+                .replace("{0}", &ownership_path.display().to_string())
         })?)
     } else {
         None
     };
     let config = if config_path.exists() {
         Some(Config::load(config_path).with_context(|| {
-            format!(
-                "read existing profile settings from {}; refusing to replace its plan",
-                config_path.display()
-            )
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticCb03cb68368b)
+                .replace("{0}", &config_path.display().to_string())
         })?)
     } else {
         None
@@ -3751,20 +4429,28 @@ fn install_user_service(
     config_path: &Path,
     ownership: &mut Ownership,
     previous_ownership: Option<&Ownership>,
+    language: Language,
 ) -> Result<()> {
     let executable = recorded_service_executable(ownership)?
         .map(Ok)
-        .unwrap_or_else(|| env::current_exe().context("find Discodex executable"))?;
+        .unwrap_or_else(|| {
+            env::current_exe()
+                .context(language.message(crate::i18n::MessageKey::InstallDiagnostic6e312e3913b8))
+        })?;
     #[cfg(target_os = "linux")]
     {
         let home = env::var_os("HOME")
             .map(PathBuf::from)
-            .context("HOME is not set")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic5469a622b9bd))?;
         let unit_dir = env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
         let unit_dir = unit_dir.join("systemd/user");
-        fs::create_dir_all(&unit_dir).with_context(|| format!("create {}", unit_dir.display()))?;
+        fs::create_dir_all(&unit_dir).with_context(|| {
+            language
+                .message(crate::i18n::MessageKey::InstallDiagnosticC6adae3fdf08)
+                .replace("{0}", &unit_dir.display().to_string())
+        })?;
         let unit_path = unit_dir.join(format!("{SERVICE_NAME}.service"));
         let loaded = Command::new("systemctl")
             .args([
@@ -3776,10 +4462,15 @@ fn install_user_service(
             ])
             .stdin(Stdio::null())
             .output()
-            .context("check for an existing systemd user unit")?;
+            .context(
+                language.message(MessageKey::InstallDiagnosticsCheckExistingSystemdUserUnit),
+            )?;
         if !loaded.status.success() {
             bail!(
-                "could not check whether `{SERVICE_NAME}.service` already exists; it was left unchanged"
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsCheckSystemdServiceExists)
+                    .replace("{0}", SERVICE_NAME)
             )
         }
         let unit = format!(
@@ -3793,28 +4484,35 @@ fn install_user_service(
                 && previous.config_file == config_path
         });
         let existing_unit_matches = systemd_unit_matches(fs::read_to_string(&unit_path), &unit)
-            .context("read existing systemd user unit")?;
+            .context(language.message(MessageKey::InstallDiagnosticsReadExistingSystemdUserUnit))?;
         let unit_loaded = String::from_utf8_lossy(&loaded.stdout).trim() != "not-found";
         if (unit_path.exists() || unit_loaded)
             && !(previous_record_owns_unit && existing_unit_matches)
         {
             bail!(
-                "the user service `{SERVICE_NAME}.service` already exists outside this install record; it was left unchanged"
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsInstallServiceExisting)
+                    .replace("{0}", &format!("{SERVICE_NAME}.service"))
             )
         }
-        fs::write(&unit_path, unit).with_context(|| format!("write {}", unit_path.display()))?;
+        fs::write(&unit_path, unit).with_context(|| {
+            language
+                .message(crate::i18n::MessageKey::InstallDiagnostic1f34c6ac9ed5)
+                .replace("{0}", &unit_path.display().to_string())
+        })?;
         set_private_file(&unit_path)?;
         ownership.service_file = Some(unit_path.clone());
         ownership.service_kind = Some("systemd-user".into());
         let owner_file = config_path
             .parent()
-            .context("config path has no parent")?
+            .context(language.message(MessageKey::InstallDiagnosticsConfigPathParentMissing))?
             .join("ownership.json");
         write_json_private(&owner_file, ownership)?;
         run_checked("systemctl", &["--user", "daemon-reload"])?;
         let unit_path_arg = unit_path
             .to_str()
-            .context("systemd unit path is not valid UTF-8")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic22fb40ae0ac0))?;
         run_checked("systemctl", &["--user", "enable", "--now", unit_path_arg])?;
         Ok(())
     }
@@ -3822,13 +4520,11 @@ fn install_user_service(
     {
         let executable = executable
             .canonicalize()
-            .context("resolve the Windows bridge executable before task registration")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic87d64e4bbbf3))?;
         if ownership.worker_executable.as_deref() != Some(executable.as_path()) {
-            bail!(
-                "the Windows task can only use the bridge executable recorded inside this installation's owned bin directory; no task was changed"
-            )
+            bail!(language.message(MessageKey::InstallDiagnosticsWindowsTaskExecutableNotOwned))
         }
-        let task_executable = windows_task_executable_path(&executable)?;
+        let task_executable = windows_task_executable_path(&executable, language)?;
         let expected_executable = ps_single_quote(&task_executable.display().to_string());
         let expected_arguments =
             ps_single_quote(&format!("run --config \"{}\"", config_path.display()));
@@ -3838,16 +4534,21 @@ fn install_user_service(
                 && previous.service_file.is_none()
                 && previous.config_file == config_path
         });
-        let (task_state, previous_level) =
-            inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+        let (task_state, previous_level) = inspect_owned_windows_task(
+            &expected_executable,
+            &expected_arguments,
+            ownership,
+            language,
+        )?;
         if !windows_task_may_be_replaced(&task_state, previous_record_owns_task) {
             bail!(
-                "the user scheduled task already exists outside this install record; it was left unchanged"
+                "{}",
+                language.message(MessageKey::InstallDiagnosticsInstallTaskExisting)
             )
         }
         let owner_file = config_path
             .parent()
-            .context("config path has no parent")?
+            .context(language.message(MessageKey::InstallDiagnosticsConfigPathParentMissing))?
             .join("ownership.json");
         let registration_script = windows_task_registration_script(
             &expected_executable,
@@ -3862,9 +4563,9 @@ fn install_user_service(
         // write or rollback fails, retry/uninstall can inspect either exact level.
         ownership.windows_task_pending_run_level = Some(WindowsTaskRunLevel::Highest);
         write_json_private(&owner_file, ownership)
-            .context("record the pending Windows task transition before requesting UAC")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnosticD17e52d2831b))?;
         run_elevated_powershell(&registration_script).context(
-            "register the elevated Windows user task; pending ownership remains for retry",
+            language.message(MessageKey::InstallDiagnosticsRegisterElevatedWindowsTaskRetry),
         )?;
         ownership.service_kind = Some("scheduled-task-user".into());
         ownership.service_file = None;
@@ -3882,7 +4583,8 @@ fn install_user_service(
                     "could not save elevated task ownership ({error:#}); task cleanup also failed ({cleanup_error:#}); the task may remain registered"
                 ));
             }
-            return Err(error).context("could not save elevated task ownership; the new task was removed and startup was not requested");
+            return Err(error)
+                .context(language.message(crate::i18n::MessageKey::InstallDiagnosticDb958cdaa84f));
         }
         // Same-user task owners can start their task without elevating again.
         run_powershell(&windows_task_start_script(
@@ -3890,28 +4592,29 @@ fn install_user_service(
             &expected_arguments,
             WindowsTaskRunLevel::Highest,
         ))
-        .context("start the registered elevated Windows user task")?;
+        .context(language.message(crate::i18n::MessageKey::InstallDiagnosticC67d01d408f2))?;
         Ok(())
     }
     #[cfg(target_os = "macos")]
     {
         let executable = executable
             .canonicalize()
-            .context("resolve the bridge executable for the user LaunchAgent")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic41ee4a8baebd))?;
         let config_path = config_path
             .canonicalize()
-            .context("resolve the profile config for the user LaunchAgent")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic01ebbf45085c))?;
         let requirement = crate::mac_signing::expected_requirement().context(
-            "load the configured macOS worker signing identity; run the signed installer",
+            language
+                .message(MessageKey::InstallDiagnosticsLoadConfiguredMacosWorkerSigningIdentity),
         )?;
         crate::mac_signing::verify_binary(&executable, &requirement)
-            .context("verify the worker executable before changing the LaunchAgent")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic595d75e9a0f2))?;
         if previous_ownership
             .and_then(|previous| previous.mac_signing_requirement.as_deref())
             .is_some_and(|previous| previous != requirement)
         {
             bail!(
-                "the signing identity differs from this installation's recorded identity; LaunchAgent was left unchanged"
+                language.message(MessageKey::InstallDiagnosticsLaunchagentSigningIdentityMismatch)
             );
         }
         ownership.mac_signing_requirement = Some(requirement);
@@ -3931,7 +4634,10 @@ fn install_user_service(
         let loaded = launchd_is_loaded(&label, &executable, &config_path)?;
         if loaded && !previous_record_owns_agent {
             bail!(
-                "LaunchAgent {label} is already loaded without matching ownership; it was left unchanged"
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsLaunchagentExisting)
+                    .replace("{0}", &label)
             );
         }
         if loaded {
@@ -3943,9 +4649,12 @@ fn install_user_service(
         }
         let agent_dir = plist_path
             .parent()
-            .context("LaunchAgent path has no parent")?;
-        fs::create_dir_all(agent_dir)
-            .with_context(|| format!("create LaunchAgents directory {}", agent_dir.display()))?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnosticC73901316980))?;
+        fs::create_dir_all(agent_dir).with_context(|| {
+            language
+                .message(crate::i18n::MessageKey::InstallDiagnostic2170bcd5dab7)
+                .replace("{0}", &agent_dir.display().to_string())
+        })?;
         if plist_exists {
             remove_if_file(&plist_path)?;
         }
@@ -3954,24 +4663,29 @@ fn install_user_service(
             .create_new(true)
             .open(&plist_path)
             .with_context(|| {
-                format!(
-                    "create {} without replacing another service",
-                    plist_path.display()
-                )
+                language
+                    .message(crate::i18n::MessageKey::InstallDiagnosticC82cd426a735)
+                    .replace("{0}", &plist_path.display().to_string())
             })?;
         plist_file
             .write_all(expected_plist.as_bytes())
-            .with_context(|| format!("write {}", plist_path.display()))?;
-        plist_file
-            .sync_all()
-            .with_context(|| format!("flush {}", plist_path.display()))?;
+            .with_context(|| {
+                language
+                    .message(crate::i18n::MessageKey::InstallDiagnostic1f34c6ac9ed5)
+                    .replace("{0}", &plist_path.display().to_string())
+            })?;
+        plist_file.sync_all().with_context(|| {
+            language
+                .message(crate::i18n::MessageKey::InstallDiagnostic07af7d91b87a)
+                .replace("{0}", &plist_path.display().to_string())
+        })?;
         set_private_file(&plist_path)?;
         ownership.service_file = Some(plist_path.clone());
         ownership.service_kind = Some("launchd-user".into());
         ownership.worker_executable = Some(executable.clone());
         let owner_file = config_path
             .parent()
-            .context("config path has no parent")?
+            .context(language.message(MessageKey::InstallDiagnosticsConfigPathParentMissing))?
             .join("ownership.json");
         write_json_private(&owner_file, ownership)?;
         let domain = launchd_domain()?;
@@ -3980,21 +4694,29 @@ fn install_user_service(
             &[
                 "bootstrap",
                 &domain,
-                plist_path
-                    .to_str()
-                    .context("LaunchAgent path is not valid UTF-8")?,
+                plist_path.to_str().context(
+                    language.message(crate::i18n::MessageKey::InstallDiagnostic4e1eaa350966),
+                )?,
             ],
         )?;
         run_checked("launchctl", &["kickstart", &format!("{domain}/{label}")])?;
         if !launchd_is_loaded(&label, &executable, &config_path)? {
-            bail!("launchctl accepted {label}, but the owned LaunchAgent is not loaded");
+            bail!(
+                "{}",
+                language
+                    .message(MessageKey::InstallDiagnosticsLaunchagentNotLoaded)
+                    .replace("{0}", &label)
+            );
         }
         Ok(())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = (config_path, ownership, executable);
-        bail!("user service installation is currently supported on Linux, macOS, and Windows")
+        bail!(
+            "{}",
+            language.message(crate::i18n::MessageKey::InstallDiagnostic1f1662532541)
+        )
     }
 }
 
@@ -4012,15 +4734,22 @@ fn launchd_identity_for_service(
 
     let config_root = config_path
         .parent()
-        .context("profile config has no parent directory")?
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticD291d3959b7f),
+        )?
         .canonicalize()
-        .context("resolve profile config directory for LaunchAgent identity")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticDb69884ec0ce),
+        )?;
     let digest = Sha256::digest(config_root.as_os_str().as_bytes());
     let suffix = format!("{digest:x}");
     let label = format!("{service_name}.{}", &suffix[..16]);
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set for the user LaunchAgent")?;
+    let home = env::var_os("HOME").map(PathBuf::from).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic8ff08c663d6f),
+    )?;
     let plist = home
         .join("Library/LaunchAgents")
         .join(format!("{label}.plist"));
@@ -4029,16 +4758,23 @@ fn launchd_identity_for_service(
 
 #[cfg(target_os = "macos")]
 fn launchd_domain() -> Result<String> {
-    let output = command_without_console("id")
-        .arg("-u")
-        .output()
-        .context("read current user id for LaunchAgent domain")?;
+    let output = command_without_console("id").arg("-u").output().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic49a7e8526a28),
+    )?;
     if !output.status.success() {
-        bail!("id -u failed while resolving the user LaunchAgent domain");
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLaunchdDomainIdFailed)
+        );
     }
     let uid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if uid.is_empty() || !uid.bytes().all(|byte| byte.is_ascii_digit()) {
-        bail!("id -u returned an invalid user id for the LaunchAgent domain");
+        bail!(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLaunchdDomainUidInvalid)
+        );
     }
     Ok(format!("gui/{uid}"))
 }
@@ -4075,24 +4811,30 @@ fn existing_launchd_plist_matches(
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
                 bail!(
-                    "LaunchAgent path {} is not a regular owned file",
-                    path.display()
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsLaunchdPlistNotRegular)
+                        .replace("{0}", &path.display().to_string())
                 );
             }
             let matches = ownership_matches
                 && fs::read_to_string(path).ok().as_deref() == Some(expected_contents);
             if !matches {
                 bail!(
-                    "the LaunchAgent plist {} is not the matching owned service; it was left unchanged",
-                    path.display()
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsLaunchdPlistMismatch)
+                        .replace("{0}", &path.display().to_string())
                 );
             }
             Ok(true)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => {
-            Err(error).with_context(|| format!("inspect LaunchAgent plist {}", path.display()))
-        }
+        Err(error) => Err(error).context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLaunchdPlistInspect)
+                .replace("{0}", &path.display().to_string()),
+        ),
     }
 }
 
@@ -4103,7 +4845,10 @@ fn launchd_is_loaded(label: &str, executable: &Path, config_path: &Path) -> Resu
     let output = command_without_console("launchctl")
         .args(["print", &target])
         .output()
-        .context("inspect user LaunchAgent registration")?;
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsInspectUserLaunchagentRegistration),
+        )?;
     if !output.status.success() {
         let detail = format!(
             "{} {}",
@@ -4113,7 +4858,13 @@ fn launchd_is_loaded(label: &str, executable: &Path, config_path: &Path) -> Resu
         if detail.contains("Could not find service") || detail.contains("No such process") {
             return Ok(false);
         }
-        bail!("launchctl could not inspect {target}: {}", detail.trim());
+        bail!(
+            "{}",
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLaunchctlInspectFailed)
+                .replace("{0}", &target)
+                .replace("{1}", detail.trim())
+        );
     }
 
     let report = String::from_utf8_lossy(&output.stdout);
@@ -4121,9 +4872,17 @@ fn launchd_is_loaded(label: &str, executable: &Path, config_path: &Path) -> Resu
     let program = report
         .lines()
         .find_map(|line| line.trim().strip_prefix("program = "))
-        .context("loaded LaunchAgent has no program readback")?;
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLoadedLaunchagentNoProgramReadback),
+        )?;
     if program != expected_program {
-        bail!("loaded LaunchAgent {label} runs unexpected program {program}");
+        bail!(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLaunchdProgramMismatch)
+                .replace("{0}", label)
+                .replace("{1}", &program)
+        );
     }
 
     let mut lines = report.lines();
@@ -4163,7 +4922,9 @@ fn launchd_is_loaded(label: &str, executable: &Path, config_path: &Path) -> Resu
     ];
     if arguments.as_deref() != Some(expected.as_slice()) {
         bail!(
-            "loaded LaunchAgent {label} has unexpected arguments; refusing to stop or replace it"
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsLoadedLaunchagentUnexpectedArguments)
+                .replace("{0}", label)
         );
     }
     Ok(true)
@@ -4176,13 +4937,19 @@ fn wait_for_launchd_unloaded(label: &str, executable: &Path, config_path: &Path)
         match launchd_is_loaded(label, executable, config_path) {
             Ok(false) => return Ok(()),
             Ok(true) if Instant::now() >= deadline => {
-                bail!("LaunchAgent {label} remained loaded after bootout timeout")
+                bail!(
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsLaunchdBootoutTimeout)
+                        .replace("{0}", label)
+                )
             }
             Ok(true) => {}
             Err(error) if Instant::now() >= deadline => {
-                return Err(error).context(format!(
-                    "could not confirm that LaunchAgent {label} unloaded after bootout"
-                ));
+                return Err(error).context(
+                    crate::i18n::Language::English
+                        .message(MessageKey::InstallDiagnosticsLaunchagentUnloadConfirmFailed)
+                        .replace("{0}", label),
+                );
             }
             Err(_) => {}
         }
@@ -4220,6 +4987,7 @@ fn inspect_owned_windows_task(
     executable: &str,
     arguments: &str,
     ownership: &Ownership,
+    language: Language,
 ) -> Result<(String, WindowsTaskRunLevel)> {
     for level in windows_task_recorded_levels(ownership) {
         let output = command_without_console("powershell.exe")
@@ -4236,15 +5004,17 @@ fn inspect_owned_windows_task(
             ])
             .stdin(Stdio::null())
             .output()
-            .context("inspect the owned Windows task")?;
+            .context(language.message(crate::i18n::MessageKey::InstallDiagnostic30ad19392dcf))?;
         if !output.status.success() {
-            bail!("could not inspect the Windows task; it was left unchanged");
+            bail!(language.message(MessageKey::InstallDiagnosticsWindowsTaskInspectionFailed));
         }
         let state = String::from_utf8(output.stdout)?.trim().to_owned();
         match state.as_str() {
             "matching" | "absent" => return Ok((state, level)),
             "different" => {}
-            _ => bail!("unexpected Windows task inspection result; it was left unchanged"),
+            _ => bail!(
+                language.message(MessageKey::InstallDiagnosticsWindowsTaskInspectionUnexpected)
+            ),
         }
     }
     Ok(("different".into(), ownership.windows_task_run_level))
@@ -4446,22 +5216,33 @@ fn run_elevated_powershell(operation: &str) -> Result<()> {
     let identity = command_without_console("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command",
             "$i=[System.Security.Principal.WindowsIdentity]::GetCurrent(); $p=[System.Security.Principal.WindowsPrincipal]::new($i); @{sid=$i.User.Value; elevated=$p.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)} | ConvertTo-Json -Compress"])
-        .stdin(Stdio::null()).output().context("read installer Windows identity")?;
+        .stdin(Stdio::null()).output().context(crate::i18n::Language::English.message(crate::i18n::MessageKey::InstallDiagnosticE376a5401de1))?;
     if !identity.status.success() {
-        bail!("could not determine the installing Windows user; no elevated operation was started");
+        bail!(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsWindowsIdentityUnavailable)
+        );
     }
-    let identity: serde_json::Value =
-        serde_json::from_slice(&identity.stdout).context("decode installer Windows identity")?;
-    let sid = identity["sid"]
-        .as_str()
-        .context("installer Windows SID is missing")?;
+    let identity: serde_json::Value = serde_json::from_slice(&identity.stdout).context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic686af139d784),
+    )?;
+    let sid = identity["sid"].as_str().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic91ae76642013),
+    )?;
     if !valid_windows_sid(sid) {
-        bail!("invalid installer Windows SID; no elevated operation was started");
+        bail!(
+            crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsWindowsSidInvalid)
+        );
     }
     if identity["elevated"].as_bool() == Some(true) {
         return run_powershell(operation);
     }
-    let temp = tempfile::tempdir().context("prepare temporary Windows task operation")?;
+    let temp = tempfile::tempdir().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic9f52d4f57bd6),
+    )?;
     set_private_dir(temp.path())?;
     let script_path = temp.path().join("task-operation.ps1");
     let result_path = temp.path().join("result.txt");
@@ -4488,8 +5269,13 @@ try {{
     // Windows PowerShell 5.1 requires a BOM for non-ASCII profile paths.
     fs::write(&script_path, format!("\u{feff}{script}"))?;
     set_private_file(&script_path)?;
-    let powershell = PathBuf::from(env::var_os("SystemRoot").context("SystemRoot is not set")?)
-        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    let powershell = PathBuf::from(
+        env::var_os("SystemRoot").context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic36de562c10ec),
+        )?,
+    )
+    .join("System32/WindowsPowerShell/v1.0/powershell.exe");
     let launcher = format!(
         r#"$ErrorActionPreference='Stop'
 $p=Start-Process -FilePath '{}' -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','"{}"') -Wait -PassThru
@@ -4501,7 +5287,10 @@ exit $p.ExitCode"#,
         .args(["-NoProfile", "-NonInteractive", "-Command", &launcher])
         .stdin(Stdio::null())
         .output()
-        .context("request Windows administrator consent")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic365b1e5cf848),
+        )?;
     if !launched.status.success() {
         let result_detail = match fs::read_to_string(&result_path) {
             Ok(detail) => detail.trim().to_owned(),
@@ -4556,7 +5345,11 @@ fn valid_windows_sid(value: &str) -> bool {
     }
 }
 
-fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Result<()> {
+fn uninstall_user_service(
+    ownership: &mut Ownership,
+    owner_file: &Path,
+    language: Language,
+) -> Result<()> {
     let service_kind = ownership.service_kind.as_deref().or_else(|| {
         ownership
             .windows_task_pending_run_level
@@ -4564,14 +5357,15 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
     });
     match service_kind {
         Some("systemd-user") => {
-            let unit_path = ownership
-                .service_file
-                .as_deref()
-                .context("owned systemd service has no recorded unit path")?;
+            let unit_path = ownership.service_file.as_deref().context(
+                language.message(MessageKey::InstallDiagnosticsOwnedSystemdUnitPathMissing),
+            )?;
             let unit_name = unit_path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .context("owned systemd unit path has no valid service name")?;
+                .context(
+                    language.message(MessageKey::InstallDiagnosticsOwnedSystemdServiceNameMissing),
+                )?;
             let expected_service = if ownership
                 .config_file
                 .parent()
@@ -4585,14 +5379,14 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
             };
             if unit_name != format!("{expected_service}.service") {
                 bail!(
-                    "owned systemd unit path does not name the expected {expected_service}.service; preserving configuration and ownership"
+                    language
+                        .message(MessageKey::InstallDiagnosticsOwnedSystemdUnitUnexpected)
+                        .replace("{0}", expected_service)
                 )
             }
-            run_checked(
-                "systemctl",
-                &["--user", "disable", "--now", unit_name],
-            )
-                .context("could not stop and disable the owned user service; config and credentials were preserved")?;
+            run_checked("systemctl", &["--user", "disable", "--now", unit_name]).context(
+                language.message(MessageKey::InstallDiagnosticsStopOwnedUserServiceFailed),
+            )?;
             if let Some(path) = &ownership.service_file {
                 remove_if_file(path)?;
             }
@@ -4603,28 +5397,39 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
         }
         #[cfg(windows)]
         Some("scheduled-task-user") => {
-            let executable = ownership
-                .worker_executable
-                .as_deref()
-                .context("owned Windows task has no recorded worker executable; preserving config and ownership")?;
-            let task_executable = windows_task_executable_path(executable)?;
+            let executable =
+                ownership
+                    .worker_executable
+                    .as_deref()
+                    .context(language.message(
+                        MessageKey::InstallDiagnosticsOwnedWindowsTaskExecutableMissing,
+                    ))?;
+            let task_executable = windows_task_executable_path(executable, language)?;
             let expected_executable = ps_single_quote(&task_executable.display().to_string());
             let expected_arguments = ps_single_quote(&format!(
                 "run --config \"{}\"",
                 ownership.config_file.display()
             ));
-            let (state, level) =
-                inspect_owned_windows_task(&expected_executable, &expected_arguments, ownership)?;
+            let (state, level) = inspect_owned_windows_task(
+                &expected_executable,
+                &expected_arguments,
+                ownership,
+                language,
+            )?;
             if state == "different" {
-                bail!(
-                    "Windows task differs from this ownership record; config and credentials were preserved"
-                );
+                bail!(language.message(MessageKey::InstallDiagnosticsWindowsTaskOwnershipMismatch));
             }
             if state != "absent" {
                 run_elevated_powershell(&windows_task_unregistration_script(
-                    &expected_executable, &expected_arguments, level, windows_task_name_for_config(&ownership.config_file),
+                    &expected_executable,
+                    &expected_arguments,
+                    level,
+                    windows_task_name_for_config(&ownership.config_file),
                 ))
-                .context("could not verify, stop, and unregister the owned Windows task; config and credentials were preserved")?;
+                .context(
+                    language
+                        .message(MessageKey::InstallDiagnosticsUnregisterOwnedWindowsTaskFailed),
+                )?;
             }
             ownership.windows_task_pending_run_level = None;
             ownership.service_kind = None;
@@ -4633,14 +5438,19 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
         }
         #[cfg(target_os = "macos")]
         Some("launchd-user") => {
-            let executable = ownership
-                .worker_executable
-                .as_deref()
-                .context("owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership")?;
+            let executable =
+                ownership
+                    .worker_executable
+                    .as_deref()
+                    .context(language.message(
+                        MessageKey::InstallDiagnosticsOwnedLaunchagentExecutableMissing,
+                    ))?;
             let config_path = ownership
                 .config_file
                 .canonicalize()
-                .context("resolve the owned profile config before removing its LaunchAgent")?;
+                .context(language.message(
+                    MessageKey::InstallDiagnosticsResolveOwnedProfileConfigForLaunchagentRemoval,
+                ))?;
             let service_name = if config_path
                 .parent()
                 .and_then(Path::file_name)
@@ -4653,30 +5463,34 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
             };
             let (label, expected_plist_path) =
                 launchd_identity_for_service(&config_path, service_name)?;
-            let plist_path = ownership
-                .service_file
-                .as_deref()
-                .context("owned LaunchAgent has no recorded plist path")?;
+            let plist_path = ownership.service_file.as_deref().context(
+                language.message(MessageKey::InstallDiagnosticsOwnedLaunchagentPlistMissing),
+            )?;
             if plist_path != expected_plist_path {
                 bail!(
-                    "owned LaunchAgent path does not match this profile identity; preserving configuration and ownership"
+                    language
+                        .message(MessageKey::InstallDiagnosticsOwnedLaunchagentIdentityMismatch)
                 );
             }
             let executable = executable
                 .canonicalize()
-                .context("resolve the owned bridge executable before removing its LaunchAgent")?;
+                .context(language.message(MessageKey::InstallDiagnosticsOwnedBridgePathResolve))?;
             let expected_plist = launchd_plist(&label, &executable, &config_path);
-            existing_launchd_plist_matches(plist_path, &expected_plist, true)
-                .context("owned LaunchAgent plist changed outside this install; preserving configuration and ownership")?;
+            existing_launchd_plist_matches(plist_path, &expected_plist, true).context(
+                language.message(MessageKey::InstallDiagnosticsOwnedLaunchagentPlistChanged),
+            )?;
             if launchd_is_loaded(&label, &executable, &config_path)? {
                 let domain = launchd_domain()?;
-                run_checked("launchctl", &["bootout", &format!("{domain}/{label}")])
-                    .context("could not stop the matching owned LaunchAgent; config and credentials were preserved")?;
+                run_checked("launchctl", &["bootout", &format!("{domain}/{label}")]).context(
+                    language.message(MessageKey::InstallDiagnosticsStopOwnedLaunchagentFailed),
+                )?;
             }
             if plist_path.exists() {
                 remove_if_file(plist_path)?;
             }
-            let config_parent = config_path.parent().context("config path has no parent")?;
+            let config_parent = config_path
+                .parent()
+                .context(language.message(MessageKey::InstallDiagnosticsConfigPathParentMissing))?;
             remove_if_file(&config_parent.join("worker.stdout.log"))?;
             remove_if_file(&config_parent.join("worker.stderr.log"))?;
             ownership.service_kind = None;
@@ -4684,9 +5498,9 @@ fn uninstall_user_service(ownership: &mut Ownership, owner_file: &Path) -> Resul
             write_json_private(owner_file, ownership)?;
         }
         #[cfg(all(not(windows), not(target_os = "macos")))]
-        Some("scheduled-task-user") => bail!(
-            "this installation owns a Windows task; uninstall it on Windows so its running process can be stopped safely"
-        ),
+        Some("scheduled-task-user") => {
+            bail!(language.message(MessageKey::InstallDiagnosticsWindowsTaskUninstallPlatform))
+        }
         _ => {}
     }
     Ok(())
@@ -4696,10 +5510,13 @@ fn remove_registered_commands(
     config_path: &Path,
     credential_path: &Path,
     state_dir: &Path,
+    language: Language,
 ) -> Result<()> {
     if !config_path.is_file() || !credential_path.is_file() {
         if state_dir.join("discord-command-id.json").exists() {
-            bail!("the owned Discord command marker exists, but its config or token is missing")
+            bail!(
+                language.message(MessageKey::InstallDiagnosticsOwnedDiscordCommandMarkerIncomplete)
+            )
         }
         return Ok(());
     }
@@ -4718,14 +5535,14 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
     let result = async {
         ensure_native_account(&native, config.language).await?;
 
-        let models = native.model_catalog().await.context("read the native provider model catalog")?;
+        let models = native.model_catalog().await.context(crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsNativeModelCatalogRead))?;
         if let Some(selected) = &config.model {
             if !crate::model_catalog::catalog_has_model(&models, selected) {
-                bail!("selected model is absent from the native provider catalog and configuration");
+                bail!(crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsNativeSelectedModelMissing));
             }
         }
 
-        let profiles = native.permission_profiles().await.context("read permissionProfile/list")?;
+        let profiles = native.permission_profiles().await.context(crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsNativePermissionProfilesRead))?;
         let profile_id = choose_permission_profile(&profiles, config.permissions.as_deref(), config.language)?;
         config.permissions = Some(profile_id.clone());
         write_json_private(config_path, config)?;
@@ -4734,7 +5551,10 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
     }.await;
     let shutdown = native.shutdown().await;
     result?;
-    shutdown.context("shut down native installation probe")?;
+    shutdown.context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticBbde88b3361c),
+    )?;
     Ok(())
 }
 
@@ -4743,9 +5563,10 @@ async fn ensure_native_account(
     language: Language,
 ) -> Result<serde_json::Value> {
     let account_read = || native.request("account/read", serde_json::json!({}));
-    let mut response = account_read()
-        .await
-        .context("query official Codex account/read")?;
+    let mut response = account_read().await.context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticB8e810f6a08f),
+    )?;
     if !crate::model_catalog::needs_chatgpt_login(&response) {
         println!(
             "{}",
@@ -4761,16 +5582,25 @@ async fn ensure_native_account(
             serde_json::json!({"type": "chatgpt"}),
         )
         .await
-        .context("start the official ChatGPT account login")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticB9008a5c8306),
+        )?;
     let login_id = login
         .get("loginId")
         .and_then(serde_json::Value::as_str)
-        .context("official ChatGPT login did not return a login ID")?
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic9bb67b063a71),
+        )?
         .to_owned();
     let auth_url = login
         .get("authUrl")
         .and_then(serde_json::Value::as_str)
-        .context("official ChatGPT login did not return an authorization URL")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic804d161cfb96),
+        )?;
     println!(
         "Complete ChatGPT sign-in in the official Codex login page. MFA and other identity checks remain user interactions."
     );
@@ -4810,20 +5640,26 @@ async fn ensure_native_account(
         }
     })
     .await
-    .context("timed out waiting for the official ChatGPT sign-in and MFA interaction")?;
+    .context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticF7a7a98ad83b),
+    )?;
     completed?;
 
-    response = account_read()
-        .await
-        .context("verify official ChatGPT account/read after login")?;
+    response = account_read().await.context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic9e2391b40a76),
+    )?;
     if response
         .pointer("/account/type")
         .and_then(serde_json::Value::as_str)
         != Some("chatgpt")
     {
         bail!(
-            "official login finished, but account/read still does not report a ChatGPT account: {}",
-            serde_json::to_string(&response)?
+            "{}",
+            language
+                .message(MessageKey::InstallDiagnosticsChatgptLoginAccountMissing)
+                .replace("{0}", &serde_json::to_string(&response)?)
         );
     }
     println!("Codex account/read now confirms a ChatGPT account.");
@@ -4838,7 +5674,10 @@ fn open_login_url(url: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .context("start xdg-open for the official ChatGPT login URL")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticD2b430952bb1),
+        )?;
     Ok(())
 }
 
@@ -4850,13 +5689,19 @@ fn open_login_url(url: &str) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .context("open the official ChatGPT login URL")?;
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic8dc4f52e9de4),
+        )?;
     Ok(())
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
 fn open_login_url(_url: &str) -> Result<()> {
-    bail!("automatic browser opening is supported on Linux and Windows")
+    bail!(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticFeda221fb8f4)
+    )
 }
 
 fn permission_profile_is_allowed(item: &serde_json::Value) -> bool {
@@ -4923,13 +5768,18 @@ fn choose_permission_profile(
     let entries = catalog
         .get("data")
         .and_then(serde_json::Value::as_array)
-        .context("permissionProfile/list returned no data array")?;
+        .context(
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsPermissionProfileDataMissing),
+        )?;
     if let Some(id) = preferred_permission_profile_id(entries, preferred_id) {
         println!("The current native catalog still allows saved permission profile `{id}`.");
         return Ok(id);
     }
-    let default_id = default_permission_profile_id(entries)
-        .context("the current native catalog has no allowed permission profiles")?;
+    let default_id = default_permission_profile_id(entries).context(
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsNativePermissionProfilesMissing),
+    )?;
     println!(
         "Choose an allowed permission profile by its exact ID. Press Enter to use the default."
     );
@@ -4975,7 +5825,10 @@ where
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .context("create setup runtime")?
+            .context(
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::InstallDiagnosticAb07350c58fb),
+            )?
             .block_on(future)
     }
 }
@@ -4984,36 +5837,69 @@ fn remove_if_file(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("remove owned file {}", path.display())),
+        Err(error) => Err(error).with_context(|| {
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedFileRemove)
+                .replace("{0}", &path.display().to_string())
+        }),
     }
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))
+    let bytes = fs::read(path).with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsJsonReadPath)
+            .replace("{0}", &path.display().to_string())
+    })?;
+    serde_json::from_slice(&bytes).with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsJsonParsePath)
+            .replace("{0}", &path.display().to_string())
+    })
 }
 
 fn write_json_private<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let parent = path.parent().context("file has no parent directory")?;
-    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    let parent = path.parent().context(
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticEeda37817ff9),
+    )?;
+    fs::create_dir_all(parent).with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsJsonCreateParent)
+            .replace("{0}", &parent.display().to_string())
+    })?;
     set_private_dir(parent)?;
     let bytes = serde_json::to_vec_pretty(value)?;
-    fs::write(path, bytes).with_context(|| format!("write {}", path.display()))?;
+    fs::write(path, bytes).with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsJsonWritePath)
+            .replace("{0}", &path.display().to_string())
+    })?;
     set_private_file(path)
 }
 
 fn write_secret(path: &Path, secret: &str) -> Result<()> {
     if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("replace owned secret file {}", path.display()))?;
+        fs::remove_file(path).with_context(|| {
+            crate::i18n::Language::English
+                .message(MessageKey::InstallDiagnosticsOwnedSecretReplace)
+                .replace("{0}", &path.display().to_string())
+        })?;
     }
-    fs::write(path, format!("{secret}\n"))
-        .with_context(|| format!("write secret file {}", path.display()))?;
+    fs::write(path, format!("{secret}\n")).with_context(|| {
+        crate::i18n::Language::English
+            .message(MessageKey::InstallDiagnosticsOwnedSecretWrite)
+            .replace("{0}", &path.display().to_string())
+    })?;
     set_private_file(path)
 }
 
 fn create_private_dir(path: &Path) -> Result<()> {
-    fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
+    fs::create_dir_all(path).with_context(|| {
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnosticC6adae3fdf08)
+            .replace("{0}", &path.display().to_string())
+    })?;
     set_private_dir(path)
 }
 
@@ -5021,8 +5907,11 @@ fn set_private_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("restrict directory permissions for {}", path.display()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnostic717e831a3658)
+                .replace("{0}", &path.display().to_string())
+        })?;
     }
     #[cfg(windows)]
     {
@@ -5038,8 +5927,11 @@ fn set_private_file(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("restrict file permissions for {}", path.display()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticAb8520f1e238)
+                .replace("{0}", &path.display().to_string())
+        })?;
     }
     #[cfg(windows)]
     {
@@ -5054,8 +5946,11 @@ fn set_private_file(path: &Path) -> Result<()> {
 #[cfg(unix)]
 fn set_executable(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("make {} executable", path.display()))
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
+        crate::i18n::Language::English
+            .message(crate::i18n::MessageKey::InstallDiagnostic19693d52d60e)
+            .replace("{0}", &path.display().to_string())
+    })
 }
 
 #[cfg(not(unix))]
@@ -5092,17 +5987,20 @@ fn run_checked(program: &str, args: &[&str]) -> Result<()> {
         .args(args)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| format!("start {program}"))?;
+        .with_context(|| {
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::UpdateErrorStartCommand)
+                .replace("{0}", program)
+        })?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         bail!(
-            "{program} exited with {}{}",
-            output.status,
-            if detail.is_empty() {
-                String::new()
-            } else {
-                format!(": {detail}")
-            }
+            "{}",
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallErrorCommandFailed)
+                .replace("{0}", program)
+                .replace("{1}", &output.status.to_string())
+                .replace("{2}", &detail)
         );
     }
     Ok(())
@@ -5744,7 +6642,8 @@ mod tests {
     fn project_directory_is_created_and_canonicalized() {
         let root = tempfile::tempdir().expect("temporary parent directory");
         let selected = root.path().join("new").join("nested").join("project");
-        let prepared = prepare_project_directory(&selected).expect("prepare project directory");
+        let prepared = prepare_project_directory(&selected, Language::English)
+            .expect("prepare project directory");
         assert_eq!(
             prepared,
             selected.canonicalize().expect("canonical project path")
@@ -5902,23 +6801,35 @@ mod tests {
     #[test]
     fn scheduled_task_executable_path_strips_only_a_local_verbatim_prefix() {
         assert_eq!(
-            windows_task_executable_path(Path::new(
-                r"\\?\C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"
-            ))
+            windows_task_executable_path(
+                Path::new(r"\\?\C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"),
+                Language::English
+            )
             .expect("normalize a local extended path"),
             PathBuf::from(r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe")
         );
         assert_eq!(
-            windows_task_executable_path(Path::new(
-                r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"
-            ))
+            windows_task_executable_path(
+                Path::new(r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe"),
+                Language::English
+            )
             .expect("retain a local DOS path"),
             PathBuf::from(r"C:\Users\test\AppData\Local\codex-worker\bin\worker.exe")
         );
         assert!(
-            windows_task_executable_path(Path::new(r"\\?\UNC\server\share\worker.exe")).is_err()
+            windows_task_executable_path(
+                Path::new(r"\\?\UNC\server\share\worker.exe"),
+                Language::English
+            )
+            .is_err()
         );
-        assert!(windows_task_executable_path(Path::new(r"\\server\share\worker.exe")).is_err());
+        assert!(
+            windows_task_executable_path(
+                Path::new(r"\\server\share\worker.exe"),
+                Language::English
+            )
+            .is_err()
+        );
     }
 
     #[test]

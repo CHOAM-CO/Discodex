@@ -53,6 +53,12 @@
     "zh": "更新辅助进程未确认启动（已记录取消：{0}，状态：{1}，详情：{2}）。",
     "ja": "更新ヘルパーから起動確認がありません（キャンセル記録: {0}、状態: {1}、詳細: {2}）。"
   },
+  "update.detail_helper_startup_unacknowledged": {
+    "en": "The detached update helper did not acknowledge startup.",
+    "ko": "분리된 업데이트 helper가 시작 확인을 보내지 않았습니다.",
+    "zh": "独立运行的更新辅助进程未确认启动。",
+    "ja": "分離された更新ヘルパーから起動確認がありません。"
+  },
   "update.error_missing_helper_pid": {
     "en": "The applying update acknowledged startup without a helper process ID.",
     "ko": "적용 중인 업데이트가 helper 프로세스 ID 없이 시작을 확인했습니다.",
@@ -82,6 +88,12 @@
     "ko": "임시 업데이트 wrapper를 제거하지 못했습니다: {0}",
     "zh": "无法删除临时更新程序包装脚本：{0}",
     "ja": "一時更新ラッパーを削除できませんでした: {0}"
+  },
+  "update.error_missing_platform_asset": {
+    "en": "Release {0} has no prebuilt executable for this platform ({1}).",
+    "ko": "릴리스 {0}에 이 플랫폼용 사전 빌드 실행 파일이 없습니다({1}).",
+    "zh": "发行版 {0} 没有适用于此平台的预构建可执行文件（{1}）。",
+    "ja": "リリース {0} にこのプラットフォーム用のビルド済み実行ファイルがありません（{1}）。"
   },
   "update.error_persist_failure_state": {
     "en": "Also failed to persist the update failure state: {0}",
