@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
 use codex_uds::{UnixListener, UnixStream, prepare_private_socket_directory};
@@ -51,6 +51,9 @@ use windows_sys::Win32::System::Threading::{
 };
 
 type Socket = WebSocketStream<UnixStream>;
+
+#[path = "agy_catalog_cache.rs"]
+pub(crate) mod agy_catalog_cache;
 
 pub type VoiceLeaveHandler =
     Arc<dyn Fn(String) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
@@ -230,6 +233,7 @@ struct Inner {
     external_turns: Mutex<HashMap<String, external::ActiveTurn>>,
     child: AsyncMutex<Option<Child>>,
     reconnect: AsyncMutex<()>,
+    agy_catalog_refresh: AsyncMutex<()>,
     endpoint: PathBuf,
     endpoint_dir: PathBuf,
     voice_tool_endpoint: PathBuf,
@@ -381,6 +385,180 @@ mod memory_config_tests {
 #[derive(Clone)]
 pub struct Native {
     inner: Arc<Inner>,
+}
+
+async fn apply_native_feature_preferences_resolved<F, Fut>(
+    store: &NativeFeatureStore,
+    preferences: &NativeFeaturePreferences,
+    previous: &NativeFeaturePreferences,
+    model_catalog: Option<&Value>,
+    fetch_catalog: F,
+) -> Result<NativeFeatureApplyResult>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Value>>,
+{
+    let mut preferences = preferences.clone();
+    if preferences.subagent_model != previous.subagent_model
+        || preferences.subagent_model_provider != previous.subagent_model_provider
+        || preferences.subagent_model_executor != previous.subagent_model_executor
+    {
+        if let Some(model) = preferences.subagent_model.as_deref() {
+            let catalog = match model_catalog {
+                Some(catalog) => catalog.clone(),
+                None => fetch_catalog().await?,
+            };
+            let requested = if let Some(provider) = preferences.subagent_model_provider.as_ref() {
+                ModelSelection {
+                    executor: match preferences.subagent_model_executor.as_deref() {
+                        Some("antigravity") => ModelExecutor::Antigravity,
+                        _ => ModelExecutor::Codex,
+                    },
+                    provider: provider.clone(),
+                    model: model.to_owned(),
+                }
+                .value()
+            } else {
+                model.to_owned()
+            };
+            let selection = crate::model_catalog::resolve_selection(&catalog, &requested)?;
+            preferences.subagent_model = Some(selection.model);
+            preferences.subagent_model_provider = Some(selection.provider);
+            preferences.subagent_model_executor = Some(selection.executor.as_str().into());
+        } else {
+            preferences.subagent_model_provider = None;
+            preferences.subagent_model_executor = None;
+        }
+    }
+    store.apply(&preferences)
+}
+
+#[cfg(test)]
+mod native_feature_preferences_apply_tests {
+    use super::*;
+
+    fn agy_preferences(model: &str) -> NativeFeaturePreferences {
+        NativeFeaturePreferences {
+            subagent_model: Some(model.to_owned()),
+            subagent_model_provider: Some("antigravity".to_owned()),
+            subagent_model_executor: Some("antigravity".to_owned()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn supplied_catalog_is_reused_at_the_preferences_apply_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = NativeFeatureStore::new(directory.path());
+        let previous = store.read().unwrap();
+        let requested = agy_preferences("agy-exact-id");
+        let mut catalog = json!({"data": []});
+        crate::model_catalog::add_antigravity_models(
+            &mut catalog,
+            true,
+            &["agy-exact-id".to_owned()],
+        );
+        let fetches = std::cell::Cell::new(0);
+
+        let result = apply_native_feature_preferences_resolved(
+            &store,
+            &requested,
+            &previous,
+            Some(&catalog),
+            || {
+                fetches.set(fetches.get() + 1);
+                std::future::ready(Ok(json!({"data": []})))
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, NativeFeatureApplyResult::Saved);
+        assert_eq!(fetches.get(), 0);
+        let saved = store.read().unwrap();
+        assert_eq!(saved.subagent_model.as_deref(), Some("agy-exact-id"));
+        assert_eq!(
+            saved.subagent_model_provider.as_deref(),
+            Some("antigravity")
+        );
+        assert_eq!(
+            saved.subagent_model_executor.as_deref(),
+            Some("antigravity")
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_catalog_is_fetched_once_and_resolution_failure_does_not_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = NativeFeatureStore::new(directory.path());
+        let previous = store.read().unwrap();
+        let requested = agy_preferences("agy-exact-id");
+        let mut fetches = 0;
+        let result =
+            apply_native_feature_preferences_resolved(&store, &requested, &previous, None, || {
+                fetches += 1;
+                let mut catalog = json!({"data": []});
+                crate::model_catalog::add_antigravity_models(
+                    &mut catalog,
+                    true,
+                    &["agy-exact-id".to_owned()],
+                );
+                std::future::ready(Ok(catalog))
+            })
+            .await
+            .unwrap();
+        assert_eq!(result, NativeFeatureApplyResult::Saved);
+        assert_eq!(fetches, 1);
+        let saved = store.read().unwrap();
+        assert_eq!(saved.subagent_model.as_deref(), Some("agy-exact-id"));
+
+        let before_failure = saved.clone();
+        let unresolved = agy_preferences("unlisted-model");
+        let mut catalog = json!({"data": []});
+        crate::model_catalog::add_antigravity_models(
+            &mut catalog,
+            true,
+            &["agy-exact-id".to_owned()],
+        );
+        let failed = apply_native_feature_preferences_resolved(
+            &store,
+            &unresolved,
+            &saved,
+            Some(&catalog),
+            || std::future::ready(Ok(json!({"data": []}))),
+        )
+        .await;
+        assert!(failed.is_err());
+        assert_eq!(store.read().unwrap(), before_failure);
+    }
+
+    #[tokio::test]
+    async fn preferences_apply_returns_storage_failure_without_reporting_saved() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_file = directory.path().join("not-a-directory");
+        std::fs::write(&state_file, b"occupied").unwrap();
+        let store = NativeFeatureStore::new(&state_file);
+        let previous = NativeFeaturePreferences::default();
+        let requested = agy_preferences("agy-exact-id");
+        let mut catalog = json!({"data": []});
+        crate::model_catalog::add_antigravity_models(
+            &mut catalog,
+            true,
+            &["agy-exact-id".to_owned()],
+        );
+
+        let result = apply_native_feature_preferences_resolved(
+            &store,
+            &requested,
+            &previous,
+            Some(&catalog),
+            || std::future::ready(Ok(json!({"data": []}))),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&state_file).unwrap(), b"occupied");
+    }
 }
 
 impl Native {
@@ -720,6 +898,7 @@ impl Native {
             external_turns: Mutex::new(HashMap::new()),
             child: AsyncMutex::new(Some(child)),
             reconnect: AsyncMutex::new(()),
+            agy_catalog_refresh: AsyncMutex::new(()),
             endpoint,
             endpoint_dir,
             voice_tool_endpoint,
@@ -1204,6 +1383,48 @@ impl Native {
     /// The official catalog is scoped to the active provider. Include configured
     /// model names because local/custom providers may omit them from model/list.
     pub async fn model_catalog(&self) -> Result<Value> {
+        self.model_catalog_with_agy_refresh(false).await
+    }
+
+    /// Explicitly refresh AGY metadata and return the combined catalog. A
+    /// successful return means the new AGY snapshot was discovered and saved.
+    pub async fn refresh_agy_model_catalog(&self) -> Result<Value> {
+        self.model_catalog_with_agy_refresh(true).await
+    }
+
+    pub(crate) async fn cached_agy_catalog(&self) -> Result<agy_catalog_cache::CatalogLookup> {
+        self.read_agy_catalog(false).await
+    }
+
+    async fn read_agy_catalog(&self, force: bool) -> Result<agy_catalog_cache::CatalogLookup> {
+        let _guard = self.inner.agy_catalog_refresh.lock().await;
+        let preferences = self.read_native_feature_preferences()?;
+        if !preferences.antigravity_enabled {
+            anyhow::bail!("AGY is not enabled for this profile");
+        }
+        let runtime = crate::agy::Runtime::for_preferences(&self.inner.config, &preferences)?;
+        let context = format!(
+            "profile={}\nexecutable={}\narguments={}",
+            std::path::absolute(&self.inner.config.state_dir)
+                .context("resolve AGY catalog profile state directory")?
+                .display(),
+            runtime.executable.display(),
+            runtime.arguments.join("\0")
+        );
+        let context_key = context;
+        let cache = agy_catalog_cache::CatalogCache::new(&self.inner.config.state_dir, context_key);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before the Unix epoch")?
+            .as_secs();
+        cache
+            .get_or_refresh(now, force, || async {
+                crate::agy::discover_catalog(&runtime).await
+            })
+            .await
+    }
+
+    async fn model_catalog_with_agy_refresh(&self, force_agy_refresh: bool) -> Result<Value> {
         let native_config = self
             .request(
                 "config/read",
@@ -1239,20 +1460,28 @@ impl Native {
             &configured_agy_models,
         );
         if preferences.antigravity_enabled {
-            let discovery = async {
-                let runtime =
-                    crate::agy::Runtime::for_preferences(&self.inner.config, &preferences)?;
-                crate::agy::discover_catalog(&runtime).await
-            }
-            .await;
-            match discovery {
-                Ok(discovered) => {
-                    crate::model_catalog::add_antigravity_catalog(&mut catalog, &discovered)
+            match self.read_agy_catalog(force_agy_refresh).await {
+                Ok(lookup) => {
+                    if let Some(discovered) = lookup.catalog {
+                        crate::model_catalog::add_antigravity_catalog(&mut catalog, &discovered);
+                    }
+                    if let Some(warning) = lookup.warning {
+                        let mut warnings = catalog
+                            .get("warnings")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        warnings.push(Value::String(warning));
+                        catalog["warnings"] = Value::Array(warnings);
+                    }
                 }
-                Err(error) => {
+                Err(error) if !force_agy_refresh => {
                     catalog["warnings"] = json!([format!("AGY model discovery failed: {error:#}")]);
                 }
+                Err(error) => return Err(error),
             }
+        } else if force_agy_refresh {
+            anyhow::bail!("AGY is not enabled for this profile");
         }
         Ok(catalog)
     }
@@ -1302,38 +1531,27 @@ impl Native {
         &self,
         preferences: &NativeFeaturePreferences,
     ) -> Result<NativeFeatureApplyResult> {
-        let mut preferences = preferences.clone();
+        self.apply_native_feature_preferences_with_catalog(preferences, None)
+            .await
+    }
+
+    /// Applies preferences using a model catalog already fetched by the caller.
+    /// This keeps a single settings operation from discovering the same catalog
+    /// again while resolving a changed subagent model.
+    pub async fn apply_native_feature_preferences_with_catalog(
+        &self,
+        preferences: &NativeFeaturePreferences,
+        model_catalog: Option<&Value>,
+    ) -> Result<NativeFeatureApplyResult> {
         let previous = self.read_native_feature_preferences()?;
-        if preferences.subagent_model != previous.subagent_model
-            || preferences.subagent_model_provider != previous.subagent_model_provider
-            || preferences.subagent_model_executor != previous.subagent_model_executor
-        {
-            if let Some(model) = preferences.subagent_model.as_deref() {
-                let catalog = self.model_catalog().await?;
-                let requested = if let Some(provider) = preferences.subagent_model_provider.as_ref()
-                {
-                    ModelSelection {
-                        executor: match preferences.subagent_model_executor.as_deref() {
-                            Some("antigravity") => ModelExecutor::Antigravity,
-                            _ => ModelExecutor::Codex,
-                        },
-                        provider: provider.clone(),
-                        model: model.to_owned(),
-                    }
-                    .value()
-                } else {
-                    model.to_owned()
-                };
-                let selection = crate::model_catalog::resolve_selection(&catalog, &requested)?;
-                preferences.subagent_model = Some(selection.model);
-                preferences.subagent_model_provider = Some(selection.provider);
-                preferences.subagent_model_executor = Some(selection.executor.as_str().into());
-            } else {
-                preferences.subagent_model_provider = None;
-                preferences.subagent_model_executor = None;
-            }
-        }
-        NativeFeatureStore::new(&self.inner.config.state_dir).apply(&preferences)
+        apply_native_feature_preferences_resolved(
+            &NativeFeatureStore::new(&self.inner.config.state_dir),
+            preferences,
+            &previous,
+            model_catalog,
+            || self.model_catalog(),
+        )
+        .await
     }
 
     pub async fn permission_profiles(&self) -> Result<Value> {

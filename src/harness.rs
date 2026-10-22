@@ -636,6 +636,93 @@ mod tests {
     }
 
     #[test]
+    fn native_catalog_exposes_collaboration_tools_alongside_codex_guidance() {
+        let native_specs = [json!({
+            "type":"namespace",
+            "name":"multi_agent_v1",
+            "tools":[
+                {"type":"function","name":"spawn_agent","description":"Start a parallel task","parameters":{"type":"object","properties":{"task_name":{"type":"string"}}}},
+                {"type":"function","name":"wait_agent","description":"Wait for a task","parameters":{"type":"object","properties":{"task_name":{"type":"string"}}}}
+            ]
+        })];
+        let output = combined_tool_specs(&native_specs);
+        let names: Vec<&str> = output
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+
+        assert!(names.contains(&"multi_agent_v1__spawn_agent"));
+        assert!(names.contains(&"multi_agent_v1__wait_agent"));
+        assert_eq!(
+            output
+                .iter()
+                .find(|tool| tool["name"] == "multi_agent_v1__spawn_agent")
+                .unwrap()["inputSchema"]["properties"]["task_name"]["type"],
+            "string"
+        );
+        assert_eq!(
+            output
+                .iter()
+                .find(|tool| tool["name"] == "multi_agent_v1__wait_agent")
+                .unwrap()["inputSchema"]["properties"]["task_name"]["type"],
+            "string"
+        );
+    }
+
+    #[tokio::test]
+    async fn native_mcp_tools_list_returns_collaboration_specs() {
+        let directory = tempfile::tempdir().unwrap();
+        let endpoint = directory.path().join("native-tools.sock");
+        let mut listener = codex_uds::UnixListener::bind(&endpoint).await.unwrap();
+        let server = tokio::spawn(async move {
+            let stream = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "thread/tool/list");
+            assert_eq!(request["params"]["threadId"], "thread-fixture");
+            assert_eq!(request["params"]["runId"], "thread-fixture-run");
+            let specs = json!([{
+                "type":"namespace",
+                "name":"multi_agent_v1",
+                "tools":[
+                    {"type":"function","name":"spawn_agent","description":"Start a parallel task","parameters":{"type":"object","properties":{"task_name":{"type":"string"}}}},
+                    {"type":"function","name":"wait_agent","description":"Wait for a task","parameters":{"type":"object","properties":{"task_name":{"type":"string"}}}}
+                ]
+            }]);
+            let mut response = serde_json::to_vec(&json!({
+                "jsonrpc":"2.0","id":request["id"],"result":{"tools":specs}
+            }))
+            .unwrap();
+            response.push(b'\n');
+            stream.get_mut().write_all(&response).await.unwrap();
+            stream.get_mut().flush().await.unwrap();
+        });
+
+        let response = reply_native(
+            &endpoint,
+            &native_binding("thread-fixture"),
+            json!({"jsonrpc":"2.0","id":"mcp-1","method":"tools/list","params":{}}),
+        )
+        .await
+        .unwrap();
+        server.await.unwrap();
+
+        let tools = response
+            .pointer("/result/tools")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+        assert!(names.contains(&"multi_agent_v1__spawn_agent"));
+        assert!(names.contains(&"multi_agent_v1__wait_agent"));
+    }
+
+    #[test]
     fn combined_catalog_adds_host_tools_without_enabling_agy_voice() {
         let tools = combined_tool_specs(&[
             json!({"type":"function","name":"native_extra","description":"extra","parameters":{"type":"object"}}),

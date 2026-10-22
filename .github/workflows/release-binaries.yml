@@ -7,6 +7,10 @@ on:
         description: Existing draft release tag to receive the verified build assets
         required: true
         type: string
+      reuse_runtime_tag:
+        description: Optional release tag whose matching Codex runtime archive can be reused
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -114,6 +118,8 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           CODEX_REPO_ROOT: ${{ github.workspace }}/third_party/codex
+          REUSE_RUNTIME_TAG: ${{ inputs.reuse_runtime_tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -m unittest discover -s scripts -p 'test_runtime_manifest.py'
           STABLE_GIT_COMMIT="$(git -C third_party/codex rev-parse HEAD)"
@@ -121,15 +127,28 @@ jobs:
           if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
             export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
           fi
-          # rust-cache prunes gn_out but retains V8's build-script fingerprint.
-          # Let the official build script restore its verified native archive.
-          cargo clean --manifest-path third_party/codex/codex-rs/Cargo.toml \
-            --package v8 --target "$TARGET" --release
-          python third_party/codex/scripts/build_codex_package.py \
-            --variant codex --target "$TARGET" --cargo-profile release \
-            --package-dir "runtime-package" \
-            --archive-output "discodex-runtime-${TARGET}.tar.gz"
-          python scripts/runtime-manifest.py --target "$TARGET" --package runtime-package
+          if [[ -n "$REUSE_RUNTIME_TAG" ]]; then
+            gh release download "$REUSE_RUNTIME_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "discodex-runtime-${TARGET}.tar.gz" \
+              --pattern "discodex-runtime-${TARGET}.json" \
+              --dir .
+            python scripts/runtime-manifest.py \
+              --target "$TARGET" \
+              --package runtime-package \
+              --extract-archive "discodex-runtime-${TARGET}.tar.gz" \
+              --reuse-manifest "discodex-runtime-${TARGET}.json"
+          else
+            # rust-cache prunes gn_out but retains V8's build-script fingerprint.
+            # Let the official build script restore its verified native archive.
+            cargo clean --manifest-path third_party/codex/codex-rs/Cargo.toml \
+              --package v8 --target "$TARGET" --release
+            python third_party/codex/scripts/build_codex_package.py \
+              --variant codex --target "$TARGET" --cargo-profile release \
+              --package-dir "runtime-package" \
+              --archive-output "discodex-runtime-${TARGET}.tar.gz"
+            python scripts/runtime-manifest.py --target "$TARGET" --package runtime-package
+          fi
       - name: Prepare release assets
         shell: bash
         env:

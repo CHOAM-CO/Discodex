@@ -1027,6 +1027,38 @@ async fn build_settings_menu(
     requester_id: u64,
     connection_generation: u64,
 ) -> anyhow::Result<SettingsMenuState> {
+    build_settings_menu_with_catalog(
+        ctx,
+        state,
+        kind,
+        page,
+        requester_id,
+        connection_generation,
+        None,
+    )
+    .await
+}
+
+fn settings_kind_uses_model_catalog(kind: SettingsKind) -> bool {
+    matches!(
+        kind,
+        SettingsKind::Model
+            | SettingsKind::SubagentModel
+            | SettingsKind::Effort
+            | SettingsKind::Fast
+            | SettingsKind::NativeFeature(NativeFeatureKey::SubagentModel)
+    )
+}
+
+async fn build_settings_menu_with_catalog(
+    ctx: &Context,
+    state: &BridgeState,
+    kind: SettingsKind,
+    page: usize,
+    requester_id: u64,
+    connection_generation: u64,
+    model_catalog: Option<&Value>,
+) -> anyhow::Result<SettingsMenuState> {
     let language = state.config.language;
     if state.native.current_generation() != connection_generation {
         bail!("Codex connection changed while settings were opening");
@@ -1038,6 +1070,11 @@ async fn build_settings_menu(
         state.native.refresh_thread_state().await?
     };
     let model_scope = thread_model_scope(&thread);
+    let model_catalog = match model_catalog {
+        Some(catalog) => Some(catalog.clone()),
+        None if settings_kind_uses_model_catalog(kind) => Some(state.native.model_catalog().await?),
+        None => None,
+    };
     let (current_value, current, choices) = match kind {
         SettingsKind::Hub => settings_home_values(
             &thread,
@@ -1047,7 +1084,9 @@ async fn build_settings_menu(
         ),
         SettingsKind::SubagentModel => {
             let snapshot = state.native.read_native_feature_snapshot().await?;
-            let catalog = state.native.model_catalog().await?;
+            let catalog = model_catalog
+                .as_ref()
+                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
             subagent_model_settings_values(&thread, &snapshot, &catalog, language)
         }
         SettingsKind::NativeFeatures => {
@@ -1062,11 +1101,11 @@ async fn build_settings_menu(
             let saved = native_feature_saved_value(&snapshot.preferences, key);
             let effective = effective_native_feature_text(&snapshot.native_config, key, language);
             let subagent_catalog = if key == NativeFeatureKey::SubagentModel {
-                Some(state.native.model_catalog().await?)
+                model_catalog.as_ref()
             } else {
                 None
             };
-            let choices = if let Some(catalog) = &subagent_catalog {
+            let choices = if let Some(catalog) = subagent_catalog {
                 subagent_model_choices(catalog, language)
             } else {
                 vec![
@@ -1093,7 +1132,6 @@ async fn build_settings_menu(
             };
             let current_value = if key == NativeFeatureKey::SubagentModel {
                 subagent_catalog
-                    .as_ref()
                     .and_then(|catalog| {
                         subagent_preference_scope(&snapshot.preferences, catalog)
                             .and_then(|value| normalized_model_value(catalog, &value))
@@ -1303,7 +1341,9 @@ async fn build_settings_menu(
             (Some(value.to_owned()), current, choices)
         }
         SettingsKind::Model => {
-            let catalog = state.native.model_catalog().await?;
+            let catalog = model_catalog
+                .as_ref()
+                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
             let choices = catalog_model_choices(&catalog);
             let selected = model_scope
                 .as_deref()
@@ -1322,7 +1362,9 @@ async fn build_settings_menu(
             (selected, model_catalog_warnings(current, &catalog), choices)
         }
         SettingsKind::Effort | SettingsKind::Fast => {
-            let catalog = state.native.model_catalog().await?;
+            let catalog = model_catalog
+                .as_ref()
+                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
             let model = selected_model(&catalog, &model_scope)?;
             if kind == SettingsKind::Effort {
                 let choices = model
@@ -1330,13 +1372,20 @@ async fn build_settings_menu(
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|item| effort_settings_choice(item, language))
+                    .filter_map(|item| model_effort_settings_choice(item, language))
                     .collect::<Vec<_>>();
                 let selected = thread
                     .get("effort")
                     .and_then(Value::as_str)
-                    .map(str::to_owned);
-                let current = effort_current_label(&choices, thread.get("effort"), language);
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        thread
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .and_then(|id| agy_variant_effort(model, id))
+                    });
+                let effort_value = selected.as_ref().map(|effort| json!(effort));
+                let current = effort_current_label(&choices, effort_value.as_ref(), language);
                 (selected, model_catalog_warnings(current, &catalog), choices)
             } else {
                 let mut choices = vec![SettingsChoice {
@@ -1514,6 +1563,35 @@ fn effort_settings_choice(item: &Value, language: crate::i18n::Language) -> Opti
         value: value.to_owned(),
         label: label.to_owned(),
     })
+}
+
+fn model_effort_settings_choice(
+    item: &Value,
+    language: crate::i18n::Language,
+) -> Option<SettingsChoice> {
+    let mut choice = effort_settings_choice(item, language)?;
+    if item.get("agyOrchestration").and_then(Value::as_bool) == Some(true) {
+        choice.label = language
+            .text(
+                "Ultra (Codex proactive orchestration; AGY default effort)",
+                "Ultra (Codex 선제적 오케스트레이션; AGY 기본 추론 강도)",
+                "Ultra（Codex 主动编排；AGY 默认推理强度）",
+                "Ultra（Codex プロアクティブなオーケストレーション、AGY 既定の推論強度）",
+            )
+            .to_owned();
+    }
+    Some(choice)
+}
+
+fn agy_variant_effort(model: &Value, model_id: &str) -> Option<String> {
+    model
+        .get("agyVariants")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|variant| variant.get("id").and_then(Value::as_str) == Some(model_id))?
+        .get("effort")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn service_tier_settings_choice(
@@ -2073,6 +2151,11 @@ fn render_settings_menu(
                 .disabled(menu.page + 1 >= pages),
             );
         }
+        controls.push(
+            CreateButton::new(format!("codex:settings:{menu_id}:x"))
+                .label(language.text("Exit", "나가기", "退出", "閉じる"))
+                .style(ButtonStyle::Secondary),
+        );
     }
     if menu.kind == SettingsKind::Hub {
         controls.push(
@@ -2081,7 +2164,9 @@ fn render_settings_menu(
                 .style(ButtonStyle::Secondary),
         );
     }
-    rows.push(CreateActionRow::Buttons(controls));
+    for group in controls.chunks(5) {
+        rows.push(CreateActionRow::Buttons(group.to_vec()));
+    }
     (content, rows)
 }
 
@@ -2555,6 +2640,15 @@ fn antigravity_settings_values(
             "models",
             language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
         ),
+        (
+            "refresh-models",
+            language.text(
+                "Update model list",
+                "모델 목록 업데이트",
+                "更新模型列表",
+                "モデル一覧を更新",
+            ),
+        ),
     ]
     .into_iter()
     .map(|(value, label)| SettingsChoice {
@@ -2563,6 +2657,34 @@ fn antigravity_settings_values(
     })
     .collect();
     (Some(enabled.to_owned()), current, choices)
+}
+
+async fn refresh_agy_catalog_notice<F, Fut>(
+    refresh: F,
+    language: crate::i18n::Language,
+) -> anyhow::Result<(Value, String)>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Value>>,
+{
+    let catalog = refresh().await?;
+    let count = catalog
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| row.get("executor").and_then(Value::as_str) == Some("antigravity"))
+        .count();
+    let notice = format!(
+        "{} ({count})",
+        language.text(
+            "Updated the Antigravity model list",
+            "Antigravity 모델 목록을 업데이트했습니다",
+            "已更新 Antigravity 模型列表",
+            "Antigravity モデル一覧を更新しました",
+        )
+    );
+    Ok((catalog, notice))
 }
 
 fn antigravity_text_field<'a>(menu: &'a SettingsMenuState, action: &str) -> Option<&'a str> {
@@ -2662,6 +2784,96 @@ fn claim_settings_menu(
 fn release_settings_menu(menus: &mut HashMap<String, SettingsMenuState>, menu_id: &str) {
     if let Some(menu) = menus.get_mut(menu_id) {
         menu.claimed = false;
+    }
+}
+
+fn settings_menu_is_current(menu: &SettingsMenuState, generation: u64, thread_id: &str) -> bool {
+    menu.connection_generation == generation && menu.thread_id == thread_id
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsChoiceFreshness {
+    Current,
+    ModelChanged,
+    Unavailable,
+}
+
+#[derive(Debug)]
+struct SettingsModelScopeChanged;
+
+impl std::fmt::Display for SettingsModelScopeChanged {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("settings model changed before the choice was applied")
+    }
+}
+
+impl std::error::Error for SettingsModelScopeChanged {}
+
+fn ensure_settings_model_scope(
+    kind: SettingsKind,
+    expected_model_scope: &Option<String>,
+    current_model_scope: Option<String>,
+) -> anyhow::Result<()> {
+    if matches!(kind, SettingsKind::Effort | SettingsKind::Fast)
+        && *expected_model_scope != current_model_scope
+    {
+        return Err(SettingsModelScopeChanged.into());
+    }
+    Ok(())
+}
+
+fn ensure_settings_apply_target(
+    expected_generation: Option<u64>,
+    current_generation: u64,
+    expected_thread_id: Option<&str>,
+    current_thread_id: &str,
+) -> anyhow::Result<()> {
+    if expected_generation.is_some_and(|generation| generation != current_generation) {
+        bail!("Codex connection changed before the setting could be applied");
+    }
+    if expected_thread_id.is_some_and(|thread| thread != current_thread_id) {
+        bail!("Codex conversation changed before the setting could be applied");
+    }
+    Ok(())
+}
+
+fn settings_choice_freshness(
+    kind: SettingsKind,
+    previous_model_scope: &Option<String>,
+    current_model_scope: &Option<String>,
+    choices: &[SettingsChoice],
+    requested: &str,
+) -> SettingsChoiceFreshness {
+    if matches!(kind, SettingsKind::Effort | SettingsKind::Fast)
+        && previous_model_scope != current_model_scope
+    {
+        SettingsChoiceFreshness::ModelChanged
+    } else if choices.iter().any(|choice| choice.value == requested) {
+        SettingsChoiceFreshness::Current
+    } else {
+        SettingsChoiceFreshness::Unavailable
+    }
+}
+
+fn settings_apply_notice(
+    result: anyhow::Result<String>,
+    language: crate::i18n::Language,
+) -> String {
+    match result {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!(error = ?error, "failed to apply Discord settings choice");
+            format!(
+                "{}\n{}",
+                language.text(
+                    "Could not apply that setting. The current choices are shown below.",
+                    "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
+                    "无法应用该设置。当前选项如下。",
+                    "設定を適用できませんでした。現在の選択肢を表示します。",
+                ),
+                settings_error_detail(&error)
+            )
+        }
     }
 }
 
@@ -2811,9 +3023,11 @@ async fn handle_settings_component(
             state.settings_menus.lock().await.remove(menu_id);
             return Ok(());
         }
-        if menu.connection_generation != state.native.current_generation()
-            || menu.thread_id != state.native.thread_id()
-        {
+        if !settings_menu_is_current(
+            &menu,
+            state.native.current_generation(),
+            &state.native.thread_id(),
+        ) {
             interaction
                 .edit_response(
                     ctx,
@@ -2940,6 +3154,34 @@ async fn handle_claimed_settings_action(
             .cloned()
             .ok_or_else(|| anyhow!("unknown settings choice"))?;
         if menu.kind == SettingsKind::Antigravity {
+            if selected.value == "refresh-models" {
+                let (_catalog, notice) = {
+                    let _settings_change = state.settings_change_lock.lock().await;
+                    refresh_agy_catalog_notice(
+                        || state.native.refresh_agy_model_catalog(),
+                        state.config.language,
+                    )
+                    .await?
+                };
+                let refreshed = build_settings_menu(
+                    ctx,
+                    state,
+                    SettingsKind::Antigravity,
+                    0,
+                    menu.requester_id,
+                    menu.connection_generation,
+                )
+                .await?;
+                return update_settings_panel_with_notice(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    refreshed,
+                    &notice,
+                )
+                .await;
+            }
             if matches!(selected.value.as_str(), "on" | "sharing") {
                 return crate::discord_agy_setup::begin(
                     ctx,
@@ -3033,72 +3275,87 @@ async fn handle_claimed_settings_action(
             )
             .await;
         }
-        let fresh = build_settings_menu(
+        let model_catalog = if settings_kind_uses_model_catalog(menu.kind) {
+            Some(state.native.model_catalog().await?)
+        } else {
+            None
+        };
+        let fresh = build_settings_menu_with_catalog(
             ctx,
             state,
             menu.kind,
             menu.page,
             menu.requester_id,
             menu.connection_generation,
+            model_catalog.as_ref(),
         )
         .await?;
-        if matches!(menu.kind, SettingsKind::Effort | SettingsKind::Fast)
-            && fresh.model_scope != menu.model_scope
-        {
-            return update_settings_panel(ctx, interaction, state, menu_id, fresh).await;
+        match settings_choice_freshness(
+            menu.kind,
+            &menu.model_scope,
+            &fresh.model_scope,
+            &fresh.choices,
+            &selected.value,
+        ) {
+            SettingsChoiceFreshness::ModelChanged => {
+                return update_settings_panel(ctx, interaction, state, menu_id, fresh).await;
+            }
+            SettingsChoiceFreshness::Unavailable => {
+                let stale = state.config.language.text(
+                    "That choice is no longer available. Current choices were refreshed.",
+                    "선택한 항목을 더 이상 사용할 수 없어 최신 선택지를 표시했습니다.",
+                    "此选项已不可用，已刷新当前选项。",
+                    "選んだ項目は利用できなくなったため、選択肢を更新しました。",
+                );
+                return update_settings_panel_with_notice(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    fresh,
+                    stale,
+                )
+                .await;
+            }
+            SettingsChoiceFreshness::Current => {}
         }
-        if !fresh
-            .choices
-            .iter()
-            .any(|choice| choice.value == selected.value)
-        {
-            let stale = state.config.language.text(
-                "That choice is no longer available. Current choices were refreshed.",
-                "선택한 항목을 더 이상 사용할 수 없어 최신 선택지를 표시했습니다.",
-                "此选项已不可用，已刷新当前选项。",
-                "選んだ項目は利用できなくなったため、選択肢を更新しました。",
-            );
-            return update_settings_panel_with_notice(
-                ctx,
-                interaction,
-                state,
-                menu_id,
-                fresh,
-                stale,
-            )
-            .await;
-        }
-        let result = match apply_setting_choice(
+        let applied = apply_setting_choice(
             state,
             interaction.id.get(),
             menu.kind,
             &selected.value,
             Some(&menu.thread_id),
+            Some(menu.connection_generation),
+            menu.model_scope.clone(),
+            model_catalog.as_ref(),
         )
-        .await
+        .await;
+        if applied
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.is::<SettingsModelScopeChanged>())
         {
-            Ok(result) => result,
-            Err(error) => {
-                tracing::warn!(error = ?error, "failed to apply Discord settings choice");
-                format!(
-                    "{}\n{}",
-                    state.config.language.text(
-                        "Could not apply that setting. The current choices are shown below.",
-                        "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
-                        "无法应用该设置。当前选项如下。",
-                        "設定を適用できませんでした。現在の選択肢を表示します。",
-                    ),
-                    settings_error_detail(&error)
-                )
-            }
-        };
-        let refreshed = build_settings_menu(
+            let refreshed = build_settings_menu_with_catalog(
+                ctx,
+                state,
+                menu.kind,
+                menu.page,
+                menu.requester_id,
+                menu.connection_generation,
+                model_catalog.as_ref(),
+            )
+            .await?;
+            return update_settings_panel(ctx, interaction, state, menu_id, refreshed).await;
+        }
+        let result = settings_apply_notice(applied, state.config.language);
+        let refreshed = build_settings_menu_with_catalog(
             ctx,
             state,
             menu.kind,
             menu.page,
             menu.requester_id,
             menu.connection_generation,
+            model_catalog.as_ref(),
         )
         .await?;
         return update_settings_panel_with_notice(
@@ -3215,6 +3472,9 @@ async fn apply_setting_choice(
     kind: SettingsKind,
     requested: &str,
     expected_thread_id: Option<&str>,
+    expected_generation: Option<u64>,
+    expected_model_scope: Option<String>,
+    model_catalog: Option<&Value>,
 ) -> anyhow::Result<String> {
     // Match new-session admission order: input gate, settings, then active turn.
     // Keep incoming Discord input outside a provider detach/resume transition.
@@ -3224,9 +3484,12 @@ async fn apply_setting_choice(
         None
     };
     let _settings_change = state.settings_change_lock.lock().await;
-    if expected_thread_id.is_some_and(|thread| thread != state.native.thread_id()) {
-        bail!("Codex conversation changed before the setting could be applied");
-    }
+    ensure_settings_apply_target(
+        expected_generation,
+        state.native.current_generation(),
+        expected_thread_id,
+        &state.native.thread_id(),
+    )?;
     let thread_id = expected_thread_id
         .map(str::to_owned)
         .unwrap_or_else(|| state.native.thread_id());
@@ -3363,7 +3626,16 @@ async fn apply_setting_choice(
         }
         SettingsKind::Model => {
             let thread = state.native.refresh_thread_state().await?;
-            let catalog = state.native.model_catalog().await?;
+            ensure_settings_apply_target(
+                expected_generation,
+                state.native.current_generation(),
+                expected_thread_id,
+                &state.native.thread_id(),
+            )?;
+            let catalog = match model_catalog {
+                Some(catalog) => catalog.clone(),
+                None => state.native.model_catalog().await?,
+            };
             let selection = crate::model_catalog::resolve_selection(&catalog, requested)?;
             if thread_model_scope(&thread).as_deref() == Some(selection.value().as_str()) {
                 return Ok(format_settings_with_language(
@@ -3463,11 +3735,21 @@ async fn apply_setting_choice(
                 _ => unreachable!(),
             };
             let thread = state.native.refresh_thread_state().await?;
+            ensure_settings_apply_target(
+                expected_generation,
+                state.native.current_generation(),
+                expected_thread_id,
+                &state.native.thread_id(),
+            )?;
+            ensure_settings_model_scope(kind, &expected_model_scope, thread_model_scope(&thread))?;
             let current_model = thread
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            let catalog = state.native.model_catalog().await?;
+            let catalog = match model_catalog {
+                Some(catalog) => catalog.clone(),
+                None => state.native.model_catalog().await?,
+            };
             if kind == SettingsKind::SubagentModel {
                 let selection = if requested == "native-default" {
                     None
@@ -3478,7 +3760,7 @@ async fn apply_setting_choice(
                 set_subagent_model_selection(&mut preferences, selection.as_ref());
                 state
                     .native
-                    .apply_native_feature_preferences(&preferences)
+                    .apply_native_feature_preferences_with_catalog(&preferences, Some(&catalog))
                     .await?;
                 return Ok(child_default_saved_notice(language));
             }
@@ -3564,7 +3846,10 @@ async fn apply_setting_choice(
             let selection =
                 if key == NativeFeatureKey::SubagentModel && requested != "native-default" {
                     Some(subagent_model_selection(
-                        &state.native.model_catalog().await?,
+                        &match model_catalog {
+                            Some(catalog) => catalog.clone(),
+                            None => state.native.model_catalog().await?,
+                        },
                         requested,
                         language,
                     )?)
@@ -3586,7 +3871,12 @@ async fn apply_setting_choice(
             }
             state
                 .native
-                .apply_native_feature_preferences(&preferences)
+                .apply_native_feature_preferences_with_catalog(
+                    &preferences,
+                    (key == NativeFeatureKey::SubagentModel)
+                        .then_some(model_catalog)
+                        .flatten(),
+                )
                 .await?;
             if key == NativeFeatureKey::SubagentModel {
                 return Ok(child_default_saved_notice(language));
@@ -6306,9 +6596,19 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
                 let values = efforts
                     .iter()
                     .filter_map(|item| {
-                        item.get("reasoningEffort")
+                        let effort = item
+                            .get("reasoningEffort")
                             .and_then(Value::as_str)
-                            .or_else(|| item.as_str())
+                            .or_else(|| item.as_str())?;
+                        Some(
+                            if item.get("agyOrchestration").and_then(Value::as_bool) == Some(true) {
+                                format!(
+                                    "{effort} (Codex proactive orchestration; AGY default effort)"
+                                )
+                            } else {
+                                effort.to_owned()
+                            },
+                        )
                     })
                     .collect::<Vec<_>>();
                 if !values.is_empty() {
@@ -8896,9 +9196,11 @@ mod display_tests {
             let controls = detail_rows.as_array().unwrap().last().unwrap()["components"]
                 .as_array()
                 .unwrap();
-            assert_eq!(controls.len(), 1);
+            assert_eq!(controls.len(), 2);
             assert_eq!(controls[0]["label"], back);
             assert_eq!(controls[0]["custom_id"], "codex:settings:profile-p:h");
+            assert_eq!(controls[1]["label"], exit);
+            assert_eq!(controls[1]["custom_id"], "codex:settings:profile-p:x");
             assert_eq!(settings_back_target(detail.kind), SettingsKind::Hub);
             assert_eq!(
                 settings_back_target(SettingsKind::NativeFeature(NativeFeatureKey::Clock)),
@@ -9458,6 +9760,10 @@ mod display_tests {
             assert_eq!(payload[0]["components"][1]["label"], format!("✓ {off}"));
             assert_eq!(payload[0]["components"][2]["label"], sharing);
             assert_eq!(payload[0]["components"][3]["label"], models);
+            assert_eq!(
+                payload[0]["components"][4]["custom_id"],
+                "codex:settings:agy-example:c4"
+            );
             assert_eq!(antigravity_text_field(&menu, "c0"), None);
             assert_eq!(antigravity_text_field(&menu, "c2"), None);
             assert_eq!(antigravity_text_field(&menu, "c3"), Some("models"));
@@ -10776,6 +11082,76 @@ mod display_tests {
         );
     }
 
+    #[test]
+    fn stale_settings_model_scope_and_choice_are_rejected_before_apply() {
+        let choices = vec![SettingsChoice {
+            value: "high".to_owned(),
+            label: "High".to_owned(),
+        }];
+        let prior_scope = Some("[\"antigravity\",\"antigravity\",\"model-a\"]".to_owned());
+        let changed_scope = Some("[\"antigravity\",\"antigravity\",\"model-b\"]".to_owned());
+        assert_eq!(
+            settings_choice_freshness(
+                SettingsKind::Effort,
+                &prior_scope,
+                &changed_scope,
+                &choices,
+                "high"
+            ),
+            SettingsChoiceFreshness::ModelChanged
+        );
+        assert_eq!(
+            settings_choice_freshness(
+                SettingsKind::Effort,
+                &prior_scope,
+                &prior_scope,
+                &choices,
+                "low"
+            ),
+            SettingsChoiceFreshness::Unavailable
+        );
+        assert_eq!(
+            settings_choice_freshness(
+                SettingsKind::Effort,
+                &prior_scope,
+                &prior_scope,
+                &choices,
+                "high"
+            ),
+            SettingsChoiceFreshness::Current
+        );
+
+        let menu = menu_fixture();
+        assert!(settings_menu_is_current(&menu, 7, "thread-menu"));
+        assert!(!settings_menu_is_current(&menu, 8, "thread-menu"));
+        assert!(!settings_menu_is_current(&menu, 7, "thread-other"));
+
+        assert!(
+            ensure_settings_apply_target(Some(7), 7, Some("thread-menu"), "thread-menu").is_ok()
+        );
+        assert!(
+            ensure_settings_apply_target(Some(8), 7, Some("thread-menu"), "thread-menu").is_err()
+        );
+        assert!(
+            ensure_settings_apply_target(Some(7), 7, Some("thread-old"), "thread-menu").is_err()
+        );
+        assert!(
+            ensure_settings_model_scope(SettingsKind::Effort, &prior_scope, changed_scope.clone())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn failed_model_selection_persistence_cannot_be_reported_as_success() {
+        let notice = settings_apply_notice(
+            Err(anyhow!("could not persist selected model")),
+            crate::i18n::Language::Korean,
+        );
+        assert!(notice.starts_with("설정을 적용하지 못했습니다."));
+        assert!(notice.contains("could not persist selected model"));
+        assert!(!notice.contains("설정을 적용했습니다"));
+    }
+
     #[tokio::test]
     async fn setting_choices_use_current_catalog_without_stale_fallbacks() {
         let catalog = json!({"data":[
@@ -10921,15 +11297,26 @@ mod display_tests {
                     unique.len(),
                     "duplicate ID for {count} choices, page {page}"
                 );
-                let nav = payload.as_array().unwrap().last().unwrap()["components"]
-                    .as_array()
-                    .unwrap();
+                let nav_rows = payload.as_array().unwrap();
+                let nav = nav_rows
+                    .iter()
+                    .flat_map(|row| row["components"].as_array().unwrap())
+                    .filter(|button| {
+                        let id = button["custom_id"].as_str().unwrap();
+                        id.ends_with(":h")
+                            || id.ends_with(":x")
+                            || id.rsplit(':').next().is_some_and(|action| {
+                                action.starts_with('p') || action.starts_with('n')
+                            })
+                    })
+                    .collect::<Vec<_>>();
                 if pages == 1 {
-                    assert_eq!(nav.len(), 1);
+                    assert_eq!(nav.len(), 2);
                     assert_eq!(nav[0]["custom_id"], "codex:settings:menu-regression:h");
+                    assert_eq!(nav[1]["custom_id"], "codex:settings:menu-regression:x");
                     continue;
                 }
-                assert_eq!(nav.len(), 3);
+                assert_eq!(nav.len(), 4);
                 for (button, expected_page, disabled) in [
                     (&nav[0], page.saturating_sub(1), page == 0),
                     (&nav[2], (page + 1).min(pages - 1), page + 1 >= pages),
@@ -10943,6 +11330,8 @@ mod display_tests {
                     assert_eq!(settings_page_from_action(action), Some(expected_page));
                     assert_eq!(button["disabled"], disabled);
                 }
+                assert_eq!(nav[1]["custom_id"], "codex:settings:menu-regression:h");
+                assert_eq!(nav[3]["custom_id"], "codex:settings:menu-regression:x");
             }
         }
     }
@@ -11096,6 +11485,15 @@ mod display_tests {
                 SettingsKind::Permissions,
                 SettingsKind::Input,
                 SettingsKind::Voice,
+                SettingsKind::Updates,
+                SettingsKind::MessageAccess,
+                SettingsKind::PairedAccounts,
+                SettingsKind::Whitelist,
+                SettingsKind::Blacklist,
+                SettingsKind::RegisteredChannels,
+                SettingsKind::NativeFeatures,
+                SettingsKind::Antigravity,
+                SettingsKind::NativeFeature(NativeFeatureKey::CodeMode),
             ] {
                 for count in [1, 21] {
                     if kind == SettingsKind::Hub && count == 21 {
@@ -11103,38 +11501,54 @@ mod display_tests {
                     }
                     let mut menu = menu_fixture();
                     menu.kind = kind;
-                    menu.choices = (0..count)
-                        .map(|index| SettingsChoice {
-                            value: format!("choice-{index}"),
-                            label: format!("Choice {index}"),
-                        })
-                        .collect();
+                    menu.choices = if kind == SettingsKind::Hub {
+                        Vec::new()
+                    } else {
+                        (0..count)
+                            .map(|index| SettingsChoice {
+                                value: format!("choice-{index}"),
+                                label: format!("Choice {index}"),
+                            })
+                            .collect()
+                    };
                     let (_, rows) = render_settings_menu("localized", &menu, language);
                     let payload = serde_json::to_value(rows).unwrap();
                     let rows = payload.as_array().unwrap();
                     assert!(rows.len() <= 5);
-                    let controls = rows.last().unwrap()["components"].as_array().unwrap();
+                    let controls = rows
+                        .iter()
+                        .flat_map(|row| row["components"].as_array().unwrap())
+                        .collect::<Vec<_>>();
                     let labels = controls
                         .iter()
                         .map(|button| button["label"].as_str().unwrap())
                         .collect::<Vec<_>>();
-                    let expected = if kind == SettingsKind::Hub {
-                        vec![exit]
+                    let expected = if is_access_list(kind) {
+                        None
+                    } else if kind == SettingsKind::Hub {
+                        Some(vec![exit])
                     } else if count <= SETTINGS_PAGE_SIZE {
-                        vec![back]
+                        Some(vec![back, exit])
                     } else {
-                        vec![previous, back, next]
+                        Some(vec![previous, back, next, exit])
                     };
-                    assert_eq!(labels, expected);
+                    if let Some(expected) = expected {
+                        assert!(labels.ends_with(&expected));
+                    } else {
+                        assert!(labels.contains(&exit));
+                    }
                     let ids = controls
                         .iter()
                         .map(|button| button["custom_id"].as_str().unwrap())
                         .collect::<Vec<_>>();
                     if kind == SettingsKind::Hub {
                         assert_eq!(ids, ["codex:settings:localized:x"]);
+                    } else if is_access_list(kind) {
+                        assert!(ids.contains(&"codex:settings:localized:b"));
+                        assert!(ids.contains(&"codex:settings:localized:x"));
                     } else {
                         assert!(ids.contains(&"codex:settings:localized:h"));
-                        assert!(!ids.contains(&"codex:settings:localized:x"));
+                        assert!(ids.contains(&"codex:settings:localized:x"));
                     }
                 }
             }
@@ -11348,9 +11762,12 @@ mod display_tests {
         assert!(!first.contains("Member 11 (ID: 11)"));
         assert!(!first.contains("ID: 1 (ID: 1)"));
         let payload = serde_json::to_value(first_rows).unwrap();
-        let controls = payload.as_array().unwrap().last().unwrap()["components"]
+        let controls = payload
             .as_array()
-            .unwrap();
+            .unwrap()
+            .iter()
+            .flat_map(|row| row["components"].as_array().unwrap())
+            .collect::<Vec<_>>();
         let ids = controls
             .iter()
             .map(|button| button["custom_id"].as_str().unwrap())
@@ -11358,7 +11775,7 @@ mod display_tests {
         assert!(ids.contains(&"codex:settings:access-menu:a"));
         assert!(ids.contains(&"codex:settings:access-menu:r"));
         assert!(ids.contains(&"codex:settings:access-menu:b"));
-        assert!(!ids.contains(&"codex:settings:access-menu:x"));
+        assert!(ids.contains(&"codex:settings:access-menu:x"));
 
         menu.page = 2;
         let (last, rows) = render_settings_menu("access-menu", &menu, Language::English);
@@ -11366,9 +11783,12 @@ mod display_tests {
         assert!(last.contains("Member 25 (ID: 25)"));
         assert!(!last.contains("Member 20 (ID: 20)"));
         let controls = serde_json::to_value(rows).unwrap();
-        let buttons = controls.as_array().unwrap().last().unwrap()["components"]
+        let buttons = controls
             .as_array()
-            .unwrap();
+            .unwrap()
+            .iter()
+            .flat_map(|row| row["components"].as_array().unwrap())
+            .collect::<Vec<_>>();
         assert!(
             buttons
                 .iter()
@@ -11913,6 +12333,97 @@ mod native_feature_settings_tests {
             preferences.subagent_model.as_deref(),
             Some("provider/model-a")
         );
+    }
+
+    #[tokio::test]
+    async fn agy_family_menu_preserves_legacy_selection_and_marks_ultra_as_orchestration() {
+        let mut catalog = json!({"data": []});
+        crate::model_catalog::add_antigravity_catalog(
+            &mut catalog,
+            &crate::agy::Catalog {
+                models: vec![
+                    crate::agy::ModelOption {
+                        id: "sample-family-high".into(),
+                        label: "Sample Family (High)".into(),
+                    },
+                    crate::agy::ModelOption {
+                        id: "sample-family-medium".into(),
+                        label: "Sample Family (Medium)".into(),
+                    },
+                    crate::agy::ModelOption {
+                        id: "sample-family-low".into(),
+                        label: "Sample Family (Low)".into(),
+                    },
+                ],
+                efforts: vec!["low".into(), "medium".into(), "high".into()],
+            },
+        );
+        let models = catalog_model_choices(&catalog);
+        assert_eq!(models.len(), 1);
+        assert_eq!(
+            models[0].value,
+            "[\"antigravity\",\"antigravity\",\"sample-family\"]"
+        );
+        assert!(models[0].label.contains("Sample Family"));
+        assert_eq!(
+            normalized_model_value(&catalog, "sample-family-high"),
+            Some(models[0].value.clone())
+        );
+        let current = Some("sample-family-high".to_owned());
+        let selected_model = selected_model(&catalog, &current).unwrap();
+        let choices = selected_model["supportedReasoningEfforts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| model_effort_settings_choice(item, crate::i18n::Language::English))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["high", "medium", "low", "ultra"]
+        );
+        assert!(choices[3].label.contains("Codex proactive orchestration"));
+        assert!(
+            validate_setting_choice("effort", "ultra", &catalog, &current)
+                .await
+                .is_ok()
+        );
+        assert!(
+            validate_setting_choice("effort", "xhigh", &catalog, &current)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            agy_variant_effort(selected_model, "sample-family-high").as_deref(),
+            Some("high")
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_agy_refresh_only_returns_success_notice_after_catalog_refresh_succeeds() {
+        let (catalog, notice) = refresh_agy_catalog_notice(
+            || async {
+                Ok(json!({"data":[
+                    {"executor":"antigravity","id":"sample-family"},
+                    {"executor":"antigravity","id":"sample-other"},
+                    {"executor":"codex","id":"native"}
+                ]}))
+            },
+            crate::i18n::Language::English,
+        )
+        .await
+        .unwrap();
+        assert_eq!(catalog["data"].as_array().unwrap().len(), 3);
+        assert_eq!(notice, "Updated the Antigravity model list (2)");
+
+        let failure = refresh_agy_catalog_notice(
+            || async { anyhow::bail!("discovery failed") },
+            crate::i18n::Language::English,
+        )
+        .await;
+        assert!(failure.is_err());
     }
 
     #[test]
