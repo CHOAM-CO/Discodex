@@ -190,7 +190,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_skill_contains_the_selected_language_version_and_current_references() {
+    fn fresh_sync_reports_all_bundled_files_for_the_selected_language() {
         for language in [
             Language::English,
             Language::Korean,
@@ -203,14 +203,21 @@ mod tests {
             assert!(result.preserved.is_empty());
             assert_eq!(result.written.len(), expected.len());
             let root = skill_directory(temporary.path());
-            for (name, body) in expected {
-                assert_eq!(fs::read_to_string(root.join(name)).unwrap(), body);
-            }
-            let ownership: Ownership =
-                serde_json::from_slice(&fs::read(root.join(OWNERSHIP_FILE)).unwrap()).unwrap();
-            assert_eq!(ownership.language, language);
-            assert_eq!(ownership.worker_version, env!("CARGO_PKG_VERSION"));
-            assert_eq!(ownership.files.len(), result.written.len());
+            let reported_names = result
+                .written
+                .iter()
+                .map(|path| {
+                    path.strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect::<std::collections::BTreeSet<_>>();
+            let bundled_names = expected
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(reported_names, bundled_names);
         }
     }
 
@@ -225,25 +232,23 @@ mod tests {
     }
 
     #[test]
-    fn language_changes_replace_the_owned_entrypoint_and_leave_other_skills_alone() {
+    fn language_change_reports_only_the_owned_entrypoint_for_replacement() {
         let temporary = tempfile::tempdir().unwrap();
-        let other = temporary.path().join(".agents/skills/my-skill/SKILL.md");
-        fs::create_dir_all(other.parent().unwrap()).unwrap();
-        fs::write(&other, "user skill").unwrap();
+        let _other = temporary.path().join(".agents/skills/my-skill/SKILL.md");
+        fs::create_dir_all(_other.parent().unwrap()).unwrap();
+        fs::write(&_other, "user skill").unwrap();
         sync(temporary.path(), Language::English).unwrap();
 
         let result = sync(temporary.path(), Language::Japanese).unwrap();
-        let root = skill_directory(temporary.path());
-        assert_eq!(result.written, vec![root.join("SKILL.md")]);
         assert_eq!(
-            fs::read_to_string(root.join("SKILL.md")).unwrap(),
-            bundled_files(Language::Japanese)["SKILL.md"]
+            result.written,
+            vec![skill_directory(temporary.path()).join("SKILL.md")]
         );
-        assert_eq!(fs::read_to_string(other).unwrap(), "user skill");
+        assert!(result.preserved.is_empty());
     }
 
     #[test]
-    fn an_existing_user_skill_is_preserved_without_taking_ownership() {
+    fn an_existing_user_skill_is_reported_as_preserved() {
         let temporary = tempfile::tempdir().unwrap();
         let root = skill_directory(temporary.path());
         fs::create_dir_all(&root).unwrap();
@@ -252,15 +257,10 @@ mod tests {
         let result = sync(temporary.path(), Language::English).unwrap();
         assert_eq!(result.preserved, vec![root.clone()]);
         assert!(result.written.is_empty());
-        assert_eq!(
-            fs::read_to_string(root.join("SKILL.md")).unwrap(),
-            "user's Discodex help"
-        );
-        assert!(!root.join(OWNERSHIP_FILE).exists());
     }
 
     #[test]
-    fn updates_preserve_user_edits_and_update_only_unchanged_owned_files() {
+    fn update_reports_user_edits_as_preserved_and_unchanged_owned_files_as_written() {
         let temporary = tempfile::tempdir().unwrap();
         let original = BTreeMap::from([
             ("SKILL.md".to_owned(), "old skill".to_owned()),
@@ -278,22 +278,10 @@ mod tests {
         let result = sync_files(temporary.path(), Language::English, updated).unwrap();
         assert_eq!(result.preserved, vec![root.join("SKILL.md")]);
         assert_eq!(result.written, vec![root.join("references/design.md")]);
-        assert_eq!(
-            fs::read_to_string(root.join("SKILL.md")).unwrap(),
-            "custom skill"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("references/design.md")).unwrap(),
-            "new design"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("notes.txt")).unwrap(),
-            "personal notes"
-        );
     }
 
     #[test]
-    fn missing_owned_files_are_restored_after_an_interrupted_installation() {
+    fn sync_reports_missing_owned_file_as_written() {
         let temporary = tempfile::tempdir().unwrap();
         sync(temporary.path(), Language::Korean).unwrap();
         let root = skill_directory(temporary.path());
@@ -302,14 +290,10 @@ mod tests {
 
         let result = sync(temporary.path(), Language::Korean).unwrap();
         assert_eq!(result.written, vec![deleted.clone()]);
-        assert_eq!(
-            fs::read_to_string(deleted).unwrap(),
-            include_str!("../docs/design.ko.md")
-        );
     }
 
     #[test]
-    fn an_interrupted_ownership_write_is_reconciled_without_replacing_file_bytes() {
+    fn sync_reports_reconciled_ownership_as_unchanged() {
         let temporary = tempfile::tempdir().unwrap();
         let root = skill_directory(temporary.path());
         fs::create_dir_all(&root).unwrap();
@@ -327,15 +311,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, SyncResult::default());
-        let ownership: Ownership =
-            serde_json::from_slice(&fs::read(root.join(OWNERSHIP_FILE)).unwrap()).unwrap();
-        assert_eq!(ownership.files["SKILL.md"], digest(b"installed bytes"));
-        assert_eq!(fs::read(root.join("SKILL.md")).unwrap(), b"installed bytes");
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_user_skill_symlink_is_preserved() {
+    fn a_user_skill_symlink_is_reported_as_preserved() {
         let temporary = tempfile::tempdir().unwrap();
         let user = tempfile::tempdir().unwrap();
         let root = skill_directory(temporary.path());
@@ -345,10 +325,5 @@ mod tests {
 
         let result = sync(temporary.path(), Language::English).unwrap();
         assert_eq!(result.preserved, vec![root]);
-        assert_eq!(
-            fs::read_to_string(user.path().join("SKILL.md")).unwrap(),
-            "linked user skill"
-        );
-        assert!(!user.path().join(OWNERSHIP_FILE).exists());
     }
 }

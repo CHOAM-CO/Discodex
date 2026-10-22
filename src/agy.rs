@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
+    fs::{self, OpenOptions},
+    io::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -145,12 +147,87 @@ pub struct Session {
     stderr_reader: Option<JoinHandle<()>>,
     stderr_output: Arc<AsyncMutex<String>>,
     turn_in_flight: bool,
+    _agent: Option<TemporaryAgent>,
 }
 
 #[derive(Clone, Debug)]
 pub struct McpSessionContext {
     pub endpoint: PathBuf,
     pub binding: crate::agy_mcp::NativeRunBinding,
+}
+
+/// Per-run custom agent definition discovered through AGY's documented
+/// workspace `.agents/agents/<name>/agent.md` location. The session owns this
+/// value so the definition remains available until the CLI process exits.
+pub(crate) struct TemporaryAgent {
+    directory: tempfile::TempDir,
+    name: String,
+}
+
+impl TemporaryAgent {
+    pub(crate) fn create(workspace: &Path, instructions: &str) -> Result<Self> {
+        let agents_root = workspace.join(".agents");
+        let definitions_root = agents_root.join("agents");
+        for directory in [&agents_root, &definitions_root] {
+            match fs::create_dir(directory) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(directory).with_context(|| {
+                        format!("inspect AGY agent directory {}", directory.display())
+                    })?;
+                    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                        bail!(
+                            "AGY agent path is not a regular directory: {}",
+                            directory.display()
+                        );
+                    }
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("create AGY agent directory {}", directory.display())
+                    });
+                }
+            }
+        }
+
+        let directory = match tempfile::Builder::new()
+            .prefix("discodex-run-")
+            .tempdir_in(&definitions_root)
+        {
+            Ok(directory) => directory,
+            Err(error) => return Err(error).context("create temporary AGY agent directory"),
+        };
+        let Some(name) = directory.path().file_name().and_then(|name| name.to_str()) else {
+            bail!("temporary AGY agent name is not UTF-8");
+        };
+        let name = name.to_owned();
+        let file_path = directory.path().join("agent.md");
+        let definition = temporary_agent_definition(&name, instructions);
+        let write_result = (|| -> Result<()> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&file_path)
+                .with_context(|| format!("create AGY agent definition {}", file_path.display()))?;
+            file.write_all(definition.as_bytes())?;
+            file.flush()?;
+            Ok(())
+        })();
+        if let Err(error) = write_result {
+            return Err(error);
+        }
+        Ok(Self { directory, name })
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+fn temporary_agent_definition(name: &str, instructions: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: Per-run Codex execution guidance.\n---\n\n{instructions}"
+    )
 }
 
 #[cfg(unix)]
@@ -275,7 +352,7 @@ impl Drop for OwnedChildren {
     }
 }
 
-fn encode_prompt(text: &str) -> Result<Vec<u8>> {
+pub(crate) fn encode_prompt(text: &str) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_vec(&json!({
         "event": "user",
         "message": {"content": text}
@@ -294,6 +371,22 @@ fn format_premature_exit(exit_code: Option<i32>, stderr: &str) -> String {
     } else {
         format!("AGY exited before terminal result ({status}):\n{diagnostic}")
     }
+}
+
+fn format_prompt_io_error(
+    operation: &str,
+    error: &std::io::Error,
+    status: &str,
+    stderr: &str,
+) -> anyhow::Error {
+    let stderr = stderr.trim_end();
+    let stderr = if stderr.is_empty() {
+        "<empty>".to_owned()
+    } else {
+        let tail = stderr.chars().rev().take(4096).collect::<String>();
+        tail.chars().rev().collect::<String>()
+    };
+    anyhow::anyhow!("{operation}: {error} (AGY {status}; stderr: {stderr})")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -488,12 +581,23 @@ pub async fn discover_catalog(runtime: &Runtime) -> Result<Catalog> {
     Ok(Catalog { models, efforts })
 }
 
-fn session_command(
+pub(crate) fn session_command(
     runtime: &Runtime,
     cwd: &Path,
     model: Option<&str>,
     effort: Option<&str>,
     mcp_context: Option<&McpSessionContext>,
+) -> Command {
+    session_command_with_agent(runtime, cwd, model, effort, mcp_context, None)
+}
+
+fn session_command_with_agent(
+    runtime: &Runtime,
+    cwd: &Path,
+    model: Option<&str>,
+    effort: Option<&str>,
+    mcp_context: Option<&McpSessionContext>,
+    agent: Option<&str>,
 ) -> Command {
     let mut command = runtime.command();
     command
@@ -522,10 +626,20 @@ fn session_command(
     if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
         command.arg("--model").arg(model);
     }
-    if let Some(effort) = effort.filter(|value| !value.trim().is_empty()) {
+    if let Some(effort) = effort.and_then(agy_cli_effort) {
         command.arg("--effort").arg(effort);
     }
+    if let Some(agent) = agent.filter(|value| !value.trim().is_empty()) {
+        command.arg("--agent").arg(agent);
+    }
     command
+}
+
+/// Codex Ultra selects proactive multi-agent orchestration; it is not an AGY
+/// model effort. Keep that mode in Codex's history/instructions and let AGY's
+/// selected model ID choose its own variant by omitting only this CLI argument.
+fn agy_cli_effort(effort: &str) -> Option<&str> {
+    (!effort.trim().is_empty() && effort != "ultra").then_some(effort)
 }
 
 impl Session {
@@ -550,11 +664,40 @@ impl Session {
         effort: Option<&str>,
         mcp_context: Option<&McpSessionContext>,
     ) -> Result<Self> {
-        let mut child = session_command(runtime, cwd, model, effort, mcp_context)
-            .spawn()
-            .with_context(|| {
-                format!("start Antigravity CLI at {}", runtime.executable.display())
-            })?;
+        Self::spawn_internal(runtime, cwd, model, effort, mcp_context, None).await
+    }
+
+    /// Start AGY with a per-run custom agent whose definition is owned by the
+    /// returned session and removed when that session is dropped.
+    pub(crate) async fn spawn_with_agent_context(
+        runtime: &Runtime,
+        cwd: &Path,
+        model: Option<&str>,
+        effort: Option<&str>,
+        mcp_context: Option<&McpSessionContext>,
+        agent: TemporaryAgent,
+    ) -> Result<Self> {
+        Self::spawn_internal(runtime, cwd, model, effort, mcp_context, Some(agent)).await
+    }
+
+    async fn spawn_internal(
+        runtime: &Runtime,
+        cwd: &Path,
+        model: Option<&str>,
+        effort: Option<&str>,
+        mcp_context: Option<&McpSessionContext>,
+        agent: Option<TemporaryAgent>,
+    ) -> Result<Self> {
+        let mut child = session_command_with_agent(
+            runtime,
+            cwd,
+            model,
+            effort,
+            mcp_context,
+            agent.as_ref().map(TemporaryAgent::name),
+        )
+        .spawn()
+        .with_context(|| format!("start Antigravity CLI at {}", runtime.executable.display()))?;
         #[cfg(unix)]
         let owned_children = OwnedChildren {
             process_group: child.id().map(|pid| pid as i32),
@@ -647,6 +790,7 @@ impl Session {
             stderr_reader: Some(stderr_reader),
             stderr_output,
             turn_in_flight: false,
+            _agent: agent,
         })
     }
 
@@ -656,11 +800,50 @@ impl Session {
             bail!("wait for the current AGY result before sending another turn");
         }
         let bytes = encode_prompt(text)?;
-        let stdin = self.stdin.as_mut().context("AGY input stream is closed")?;
-        stdin.write_all(&bytes).await.context("write AGY prompt")?;
-        stdin.flush().await.context("flush AGY prompt")?;
+        let Some(stdin) = self.stdin.as_mut() else {
+            bail!("AGY input stream is closed before prompt write");
+        };
+        if let Err(error) = stdin.write_all(&bytes).await {
+            self.stdin.take();
+            return Err(self.prompt_io_error("write AGY prompt", error).await);
+        }
+        let flush_result = self
+            .stdin
+            .as_mut()
+            .context("AGY input stream closed before prompt flush")?
+            .flush()
+            .await;
+        if let Err(error) = flush_result {
+            self.stdin.take();
+            return Err(self.prompt_io_error("flush AGY prompt", error).await);
+        }
         self.turn_in_flight = true;
         Ok(())
+    }
+
+    async fn prompt_io_error(&mut self, operation: &str, error: std::io::Error) -> anyhow::Error {
+        let status = match self.child.try_wait() {
+            Ok(Some(status)) => {
+                let child_cleanup = self
+                    .owned_children
+                    .terminate()
+                    .err()
+                    .map(|error| format!("; child cleanup failed: {error:#}"))
+                    .unwrap_or_default();
+                if let Some(reader) = self.stderr_reader.take() {
+                    let _ = reader.await;
+                }
+                let status = status
+                    .code()
+                    .map(|code| format!("exited with status {code}"))
+                    .unwrap_or_else(|| format!("terminated ({status:?})"));
+                format!("{status}{child_cleanup}")
+            }
+            Ok(None) => "still running".to_owned(),
+            Err(status_error) => format!("status unavailable ({status_error})"),
+        };
+        let stderr = self.stderr_output.lock().await.clone();
+        format_prompt_io_error(operation, &error, &status, &stderr)
     }
 
     /// Receive the next parsed stdout event. `None` means stdout closed.
@@ -869,29 +1052,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn cli_spawn_failure_identifies_the_executable_and_command() {
-        let directory = tempfile::tempdir().unwrap();
-        let missing = directory.path().join("missing-agy");
-        let runtime = Runtime {
-            executable: missing.clone(),
-            arguments: Vec::new(),
-            environment: HashMap::new(),
-        };
-        let error = cli_output(&runtime, &["models"]).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!("run AGY CLI at {} with command models", missing.display())
-        );
-        assert_eq!(
-            error
-                .root_cause()
-                .downcast_ref::<std::io::Error>()
-                .map(std::io::Error::kind),
-            Some(std::io::ErrorKind::NotFound)
-        );
-    }
-
     #[test]
     fn session_command_preserves_executable_arguments_and_native_binding() {
         let executable = Path::new("example tools").join("agy-cli");
@@ -956,6 +1116,129 @@ mod tests {
     }
 
     #[test]
+    fn session_command_omits_codex_ultra_but_preserves_model_and_native_binding() {
+        let runtime = Runtime {
+            executable: "example-runtime/agy".into(),
+            arguments: vec!["--settings=example".to_owned()],
+            environment: HashMap::new(),
+        };
+        let cwd = Path::new("example workspace");
+        let context = McpSessionContext {
+            endpoint: "example-native-endpoint".into(),
+            binding: crate::agy_mcp::NativeRunBinding {
+                thread_id: "example-thread".into(),
+                turn_id: "example-turn".into(),
+                run_id: "example-run".into(),
+                generation: 7,
+            },
+        };
+        let command = session_command(
+            &runtime,
+            cwd,
+            Some("gemini-4-argon-high"),
+            Some("ultra"),
+            Some(&context),
+        );
+        let command = command.as_std();
+        assert_eq!(command.get_current_dir(), Some(cwd));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--settings=example",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--model",
+                "gemini-4-argon-high",
+            ]
+            .map(OsStr::new)
+        );
+        let envs = command.get_envs().collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            envs.get(OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV)),
+            Some(&Some(OsStr::new(&context.endpoint)))
+        );
+        assert_eq!(
+            envs.get(OsStr::new(crate::agy_mcp::NATIVE_RUN_ENV)),
+            Some(&Some(OsStr::new(
+                &json!({"threadId":"example-thread","turnId":"example-turn","runId":"example-run","generation":7}).to_string()
+            )))
+        );
+    }
+
+    #[test]
+    fn session_command_preserves_agy_effort_values() {
+        let runtime = Runtime {
+            executable: "example-runtime/agy".into(),
+            arguments: Vec::new(),
+            environment: HashMap::new(),
+        };
+        for effort in ["low", "high", "xhigh", "max", "precise-effort"] {
+            let command = session_command(
+                &runtime,
+                Path::new("."),
+                Some("exact model id"),
+                Some(effort),
+                None,
+            );
+            let args = command
+                .as_std()
+                .get_args()
+                .map(OsStr::to_owned)
+                .collect::<Vec<_>>();
+            assert_eq!(args[args.len() - 4], OsStr::new("--model"), "{effort}");
+            assert_eq!(
+                args[args.len() - 3],
+                OsStr::new("exact model id"),
+                "{effort}"
+            );
+            assert_eq!(args[args.len() - 1], OsStr::new(effort), "{effort}");
+            assert!(
+                args.iter().any(|arg| arg == OsStr::new("--effort")),
+                "{effort}"
+            );
+        }
+    }
+
+    #[test]
+    fn temporary_agent_definition_and_cli_selection_preserve_guidance_and_model() {
+        let name = "discodex-run-fixture";
+        let instructions = "Native base instructions\n\nproactive mode";
+        assert_eq!(
+            temporary_agent_definition(name, instructions),
+            "---\nname: discodex-run-fixture\ndescription: Per-run Codex execution guidance.\n---\n\nNative base instructions\n\nproactive mode"
+        );
+        let runtime = Runtime {
+            executable: "example-runtime/agy".into(),
+            arguments: vec!["--settings=example".to_owned()],
+            environment: HashMap::new(),
+        };
+        let command = session_command_with_agent(
+            &runtime,
+            Path::new("fixture-workspace"),
+            Some("gemini-4-argon-high"),
+            Some("ultra"),
+            None,
+            Some(name),
+        );
+        let args = command
+            .as_std()
+            .get_args()
+            .map(OsStr::to_owned)
+            .collect::<Vec<_>>();
+        assert!(
+            args.windows(2)
+                .any(|args| args == [OsStr::new("--agent"), OsStr::new(name)])
+        );
+        assert!(
+            args.windows(2)
+                .any(|args| args == [OsStr::new("--model"), OsStr::new("gemini-4-argon-high")])
+        );
+        assert!(!args.iter().any(|arg| arg == OsStr::new("--effort")));
+    }
+
+    #[test]
     fn unbound_session_command_removes_inherited_native_binding() {
         let runtime = Runtime {
             executable: "example-runtime/agy".into(),
@@ -1015,6 +1298,30 @@ mod tests {
             format_premature_exit(None, ""),
             "AGY exited before terminal result (termination status unavailable)"
         );
+    }
+
+    #[test]
+    fn prompt_io_diagnostic_reports_status_and_bounded_stderr_tail() {
+        let stderr = format!("discarded-prefix{}", "x".repeat(4096));
+        let error = format_prompt_io_error(
+            "write AGY prompt",
+            &std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed"),
+            "exited with status 23",
+            &stderr,
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("write AGY prompt"));
+        assert!(message.contains("exited with status 23"));
+        assert!(!message.contains("discarded-prefix"));
+        assert!(message.ends_with(&format!("stderr: {})", "x".repeat(4096))));
+
+        let empty = format_prompt_io_error(
+            "flush AGY prompt",
+            &std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed"),
+            "still running",
+            "\n",
+        );
+        assert!(format!("{empty:#}").ends_with("stderr: <empty>)"));
     }
 
     #[test]

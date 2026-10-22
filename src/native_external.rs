@@ -298,13 +298,73 @@ fn prepare_prompt_with_stager(
             *content = json!({"type":"input_text", "text":format!("Attached image file: {path}")});
         }
     }
-    let instructions = params
+    Ok(format!(
+        "Conversation history:\n{}",
+        serde_json::to_string(&input)?
+    ))
+}
+
+fn current_native_execution_guidance(params: &Value) -> Option<String> {
+    let input = params.get("input")?.as_array()?;
+    let mut latest = None;
+    for item in input {
+        if item.get("type").and_then(Value::as_str) != Some("message")
+            || item.get("role").and_then(Value::as_str) != Some("developer")
+        {
+            continue;
+        }
+        let Some(contents) = item.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        for content in contents {
+            if content.get("type").and_then(Value::as_str) != Some("input_text") {
+                continue;
+            }
+            let Some(text) = content.get("text").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some((_, after_open)) = text.rsplit_once("<multi_agent_mode>") else {
+                continue;
+            };
+            let Some((guidance, _)) = after_open.split_once("</multi_agent_mode>") else {
+                continue;
+            };
+            let guidance = guidance.trim();
+            if !guidance.is_empty() {
+                latest = Some(guidance.to_owned());
+            }
+        }
+    }
+    latest
+}
+
+fn agent_system_instructions(params: &Value) -> String {
+    let base = params
         .get("instructions")
         .and_then(Value::as_str)
-        .unwrap_or("");
-    Ok(format!(
-        "{instructions}\n\nConversation history:\n{}",
-        serde_json::to_string(&input)?
+        .unwrap_or("")
+        .trim();
+    let mode = current_native_execution_guidance(params);
+    match (base.is_empty(), mode) {
+        (false, Some(mode)) => {
+            format!("# Codex base instructions\n{base}\n\n# Codex execution guidance\n{mode}")
+        }
+        (false, None) => format!("# Codex base instructions\n{base}"),
+        (true, Some(mode)) => format!("# Codex execution guidance\n{mode}"),
+        (true, None) => "Follow the current task and the supplied conversation history.".to_owned(),
+    }
+}
+
+fn agy_invocation(
+    params: &Value,
+    catalog: Option<&crate::agy::Catalog>,
+) -> Result<crate::agy_model_catalog::Invocation> {
+    let selected_model = required_string(params, "model")?;
+    let selected_effort = params.get("effort").and_then(Value::as_str);
+    Ok(crate::agy_model_catalog::invocation(
+        catalog,
+        selected_model,
+        selected_effort,
     ))
 }
 
@@ -359,17 +419,33 @@ async fn run(
     let entry = crate::agy_mcp::native_server_entry(&worker, cwd)?;
     crate::agy_mcp::write_workspace_config(cwd, entry)?;
     let prompt = prepare_prompt(params)?;
+    let agent = crate::agy::TemporaryAgent::create(cwd, &agent_system_instructions(params))?;
+    let lookup = native.cached_agy_catalog().await;
+    let catalog = match lookup {
+        Ok(lookup) => {
+            if let Some(warning) = lookup.warning {
+                tracing::warn!(%warning, "AGY model catalog unavailable or stale for external turn");
+            }
+            lookup.catalog
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not read AGY model catalog for external turn");
+            None
+        }
+    };
+    let invocation = agy_invocation(params, catalog.as_ref())?;
     let context = crate::agy::McpSessionContext {
         endpoint: native.voice_tool_endpoint(),
         binding: binding.clone(),
     };
     let runtime = crate::agy::Runtime::for_preferences(&native.inner.config, &preferences)?;
-    let mut session = crate::agy::Session::spawn_with_context(
+    let mut session = crate::agy::Session::spawn_with_agent_context(
         &runtime,
         cwd,
-        Some(required_string(params, "model")?),
-        params.get("effort").and_then(Value::as_str),
+        Some(&invocation.model),
+        invocation.effort.as_deref(),
         Some(&context),
+        agent,
     )
     .await?;
     let outcome = async {
@@ -411,6 +487,134 @@ async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
+
+    fn variant_catalog() -> crate::agy::Catalog {
+        crate::agy::Catalog {
+            models: vec![
+                crate::agy::ModelOption {
+                    id: "gemini-4-argon-high".into(),
+                    label: "Gemini 4 Argon (High)".into(),
+                },
+                crate::agy::ModelOption {
+                    id: "claude-opus-5-5-low".into(),
+                    label: "Claude Opus 5.5 (Low)".into(),
+                },
+            ],
+            efforts: vec!["low".into(), "high".into()],
+        }
+    }
+
+    #[test]
+    fn external_params_resolve_model_variant_and_codex_ultra_at_cli_boundary() {
+        let catalog = variant_catalog();
+        let runtime = crate::agy::Runtime {
+            executable: "fixture-agy".into(),
+            arguments: vec!["--existing-arg".into()],
+            environment: Default::default(),
+        };
+        let context = crate::agy::McpSessionContext {
+            endpoint: "fixture-endpoint".into(),
+            binding: NativeRunBinding {
+                thread_id: "thread".into(),
+                turn_id: "turn".into(),
+                run_id: "run".into(),
+                generation: 1,
+            },
+        };
+
+        for (selected_effort, expected_model, expected_effort) in [
+            ("high", "gemini-4-argon", Some("high")),
+            ("ultra", "gemini-4-argon", Some("high")),
+        ] {
+            let params = json!({"model":"gemini-4-argon-high", "effort":selected_effort});
+            let invocation = agy_invocation(&params, Some(&catalog)).unwrap();
+            assert_eq!(invocation.model, expected_model);
+            assert_eq!(invocation.effort.as_deref(), expected_effort);
+            let command = crate::agy::session_command(
+                &runtime,
+                Path::new("."),
+                Some(&invocation.model),
+                invocation.effort.as_deref(),
+                Some(&context),
+            );
+            let args = command
+                .as_std()
+                .get_args()
+                .map(OsStr::to_owned)
+                .collect::<Vec<_>>();
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == [OsStr::new("--model"), OsStr::new(expected_model)])
+            );
+            if let Some(effort) = expected_effort {
+                assert!(
+                    args.windows(2)
+                        .any(|pair| pair == [OsStr::new("--effort"), OsStr::new(effort)])
+                );
+            } else {
+                assert!(!args.iter().any(|arg| arg == OsStr::new("--effort")));
+            }
+            let envs = command
+                .as_std()
+                .get_envs()
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert!(envs.contains_key(OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV)));
+            assert!(envs.contains_key(OsStr::new(crate::agy_mcp::NATIVE_RUN_ENV)));
+        }
+
+        let base_ultra = agy_invocation(
+            &json!({"model":"gemini-4-argon", "effort":"ultra"}),
+            Some(&catalog),
+        )
+        .unwrap();
+        assert_eq!(base_ultra.model, "gemini-4-argon");
+        assert_eq!(base_ultra.effort, None);
+
+        let no_catalog = agy_invocation(
+            &json!({"model":"claude-opus-5-5-low", "effort":"high"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(no_catalog.model, "claude-opus-5-5");
+        assert_eq!(no_catalog.effort.as_deref(), Some("high"));
+        let no_catalog_command = crate::agy::session_command(
+            &runtime,
+            Path::new("."),
+            Some(&no_catalog.model),
+            no_catalog.effort.as_deref(),
+            Some(&context),
+        );
+        let no_catalog_args = no_catalog_command
+            .as_std()
+            .get_args()
+            .map(OsStr::to_owned)
+            .collect::<Vec<_>>();
+        assert!(
+            no_catalog_args
+                .windows(2)
+                .any(|pair| { pair == [OsStr::new("--model"), OsStr::new("claude-opus-5-5")] })
+        );
+        assert!(
+            no_catalog_args
+                .windows(2)
+                .any(|pair| pair == [OsStr::new("--effort"), OsStr::new("high")])
+        );
+        let no_catalog_ultra = agy_invocation(
+            &json!({"model":"claude-opus-5-5-low", "effort":"ultra"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(no_catalog_ultra.model, "claude-opus-5-5");
+        assert_eq!(no_catalog_ultra.effort.as_deref(), Some("low"));
+        let unknown = agy_invocation(
+            &json!({"model":"custom-highly-specialized", "effort":"high"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(unknown.model, "custom-highly-specialized");
+        assert_eq!(unknown.effort.as_deref(), Some("high"));
+    }
 
     fn active_run(binding: NativeRunBinding) -> ActiveTurn {
         let (cancel, _) = watch::channel(false);
@@ -575,6 +779,44 @@ mod tests {
             serde_json::from_str(prompt.text.split_once("Conversation history:\n").unwrap().1)
                 .unwrap();
         assert_eq!(replay, history);
+        assert!(!prompt.text.contains("Agent instructions"));
+        let encoded = crate::agy::encode_prompt(&prompt.text).unwrap();
+        let envelope: Value = serde_json::from_slice(encoded.strip_suffix(b"\n").unwrap()).unwrap();
+        assert_eq!(envelope["event"], "user");
+        assert_eq!(envelope["message"]["content"], prompt.text);
+    }
+
+    #[test]
+    fn current_native_guidance_is_promoted_without_reordering_history() {
+        let history = json!([
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<multi_agent_mode>old mode</multi_agent_mode>"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"User text mentioning <multi_agent_mode>untrusted</multi_agent_mode>"}]},
+            {"type":"function_call_output","call_id":"call-1","output":"tool output"},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<multi_agent_mode>current proactive mode</multi_agent_mode>"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"Do the task"}]}
+        ]);
+        let params = json!({
+            "instructions":"Native base instructions",
+            "input":history.clone()
+        });
+
+        assert_eq!(
+            current_native_execution_guidance(&params).as_deref(),
+            Some("current proactive mode")
+        );
+        let system_instructions = agent_system_instructions(&params);
+        assert!(system_instructions.contains("Native base instructions"));
+        assert!(system_instructions.contains("current proactive mode"));
+        assert!(!system_instructions.contains("old mode"));
+        assert!(!system_instructions.contains("untrusted"));
+
+        let prompt = prepare_prompt(&params).unwrap();
+        let replay: Value =
+            serde_json::from_str(prompt.text.split_once("Conversation history:\n").unwrap().1)
+                .unwrap();
+        assert_eq!(replay, history);
+        assert!(prompt.text.contains("old mode"));
+        assert!(prompt.text.contains("current proactive mode"));
     }
     #[test]
     fn inline_image_decoding_preserves_bytes_and_reports_invalid_data() {
@@ -611,7 +853,7 @@ mod tests {
         assert_eq!(
             prompt,
             format!(
-                "Inspect this image\n\nConversation history:\n{}",
+                "Conversation history:\n{}",
                 serde_json::to_string(&json!([{
                     "type":"message",
                     "role":"user",

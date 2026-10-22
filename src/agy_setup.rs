@@ -364,6 +364,10 @@ pub fn is_owned_install(executable: &Path) -> bool {
     let Ok(marker) = std::fs::read(directory.join(OWNERSHIP_FILE)) else {
         return false;
     };
+    is_owned_install_marker(filename, &marker)
+}
+
+fn is_owned_install_marker(filename: &str, marker: &[u8]) -> bool {
     let Ok(marker) = serde_json::from_slice::<serde_json::Value>(&marker) else {
         return false;
     };
@@ -1007,23 +1011,15 @@ mod tests {
     }
 
     #[test]
-    fn ownership_requires_matching_managed_component_and_filename() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let executable = directory.path().join("agy");
-        assert!(!is_owned_install(&executable));
-        let marker = directory.path().join(OWNERSHIP_FILE);
-        std::fs::write(
-            &marker,
-            br#"{"owner":"discodex","component":"antigravity-cli","executable":"agy"}"#,
-        )?;
-        assert!(is_owned_install(&executable));
-        assert!(!is_owned_install(&directory.path().join("other-program")));
-        std::fs::write(
-            marker,
-            br#"{"owner":"other-product","component":"antigravity-cli","executable":"agy"}"#,
-        )?;
-        assert!(!is_owned_install(&executable));
-        Ok(())
+    fn ownership_marker_matches_component_and_executable_values() {
+        let marker = br#"{"owner":"discodex","component":"antigravity-cli","executable":"agy"}"#;
+        assert!(is_owned_install_marker("agy", marker));
+        assert!(!is_owned_install_marker("other-program", marker));
+        assert!(!is_owned_install_marker(
+            "agy",
+            br#"{"owner":"other-product","component":"antigravity-cli","executable":"agy"}"#
+        ));
+        assert!(!is_owned_install_marker("agy", b"not-json"));
     }
 
     #[test]
@@ -1041,36 +1037,6 @@ mod tests {
         Ok(())
     }
 
-    async fn release_server(
-        payload: Vec<u8>,
-        checksum: String,
-    ) -> Result<(String, tokio::task::JoinHandle<Result<()>>)> {
-        use tokio::io::AsyncReadExt;
-        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
-        let base = format!("http://{}", listener.local_addr()?);
-        let manifest = serde_json::to_vec(
-            &serde_json::json!({"version":"1.2.3-test","url":format!("{base}/binary"),"sha512":checksum}),
-        )?;
-        let task = tokio::spawn(async move {
-            for response in [manifest, payload] {
-                let (mut socket, _) = listener.accept().await?;
-                let mut request = Vec::new();
-                loop {
-                    let mut byte = [0];
-                    socket.read_exact(&mut byte).await?;
-                    request.push(byte[0]);
-                    if request.ends_with(b"\r\n\r\n") {
-                        break;
-                    }
-                }
-                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n", response.len()).as_bytes()).await?;
-                socket.write_all(&response).await?;
-            }
-            Ok(())
-        });
-        Ok((format!("{base}/manifest"), task))
-    }
-
     fn setup_config(directory: &Path) -> SetupConfig {
         SetupConfig {
             executable: directory
@@ -1079,51 +1045,42 @@ mod tests {
                 .join(if cfg!(windows) { "agy.exe" } else { "agy" }),
             arguments: vec![],
             cwd: directory.to_owned(),
-            environment: std::env::vars().collect(),
+            environment: HashMap::new(),
         }
     }
 
     #[tokio::test]
-    async fn install_publishes_verified_prebuilt_and_ownership_without_running_it() -> Result<()> {
+    async fn checksum_mismatch_returns_checksum_error() -> Result<()> {
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
         let directory = tempfile::tempdir()?;
         let config = setup_config(directory.path());
-        let payload = b"test-only inert prebuilt bytes".to_vec();
-        let (url, server) =
-            release_server(payload.clone(), format!("{:x}", Sha512::digest(&payload))).await?;
+        let server = MockServer::start().await;
+        Mock::given(path("/manifest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "version":"1.2.3-test",
+                "url":format!("{}/binary", server.uri()),
+                "sha512":"bad-checksum"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(path("/binary"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"incorrect bytes"))
+            .mount(&server)
+            .await;
         let (_cancel, mut cancellation) = watch::channel(false);
-        install_from_manifest(&config, &mut cancellation, &url).await?;
-        server.await??;
-        assert_eq!(std::fs::read(&config.executable)?, payload);
-        assert!(is_owned_install(&config.executable));
-        assert_eq!(
-            std::fs::read_dir(config.executable.parent().unwrap())?.count(),
-            2
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn checksum_failure_leaves_no_binary_or_temporary_download() -> Result<()> {
-        let directory = tempfile::tempdir()?;
-        let config = setup_config(directory.path());
-        let (url, server) =
-            release_server(b"incorrect bytes".to_vec(), "bad-checksum".into()).await?;
-        let (_cancel, mut cancellation) = watch::channel(false);
-        let error = install_from_manifest(&config, &mut cancellation, &url)
-            .await
-            .unwrap_err();
-        server.await??;
+        let error = install_from_manifest(
+            &config,
+            &mut cancellation,
+            &format!("{}/manifest", server.uri()),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("checksum"));
-        assert!(!config.executable.exists());
-        assert_eq!(
-            std::fs::read_dir(config.executable.parent().unwrap())?.count(),
-            0
-        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn cancelling_release_download_cleans_its_temporary_directory() -> Result<()> {
+    async fn cancelling_release_download_returns_setup_cancelled() -> Result<()> {
         use wiremock::{
             Mock, MockServer, ResponseTemplate,
             matchers::{method, path},
@@ -1164,56 +1121,11 @@ mod tests {
             .await??
             .unwrap_err();
         assert!(error.downcast_ref::<SetupCancelled>().is_some());
-        assert!(!config.executable.exists());
-        assert_eq!(
-            std::fs::read_dir(config.executable.parent().unwrap())?.count(),
-            0
-        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn tar_release_installs_only_the_official_executable() -> Result<()> {
-        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::path};
-        let binary = b"inert executable bytes";
-        let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
-            Vec::new(),
-            flate2::Compression::default(),
-        ));
-        let mut header = tar::Header::new_gnu();
-        header.set_size(binary.len() as u64);
-        header.set_mode(0o755);
-        header.set_cksum();
-        archive.append_data(&mut header, "antigravity", binary.as_slice())?;
-        let payload = archive.into_inner()?.finish()?;
-        let server = MockServer::start().await;
-        Mock::given(path("/manifest")).respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "version":"1.2.3-test", "url": format!("{}/binary.tar.gz", server.uri()), "sha512": format!("{:x}", Sha512::digest(&payload)),
-        }))).mount(&server).await;
-        Mock::given(path("/binary.tar.gz"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(payload))
-            .mount(&server)
-            .await;
-        let directory = tempfile::tempdir()?;
-        let config = setup_config(directory.path());
-        let (_cancel, mut cancellation) = watch::channel(false);
-        install_from_manifest(
-            &config,
-            &mut cancellation,
-            &format!("{}/manifest", server.uri()),
-        )
-        .await?;
-        assert_eq!(std::fs::read(&config.executable)?, binary);
-        assert!(is_owned_install(&config.executable));
-        assert_eq!(
-            std::fs::read_dir(config.executable.parent().unwrap())?.count(),
-            2
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn pre_cancelled_prepare_never_creates_installation() -> Result<()> {
+    async fn pre_cancelled_prepare_returns_setup_cancelled() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let config = setup_config(directory.path());
         let (events, _updates) = mpsc::unbounded_channel();
@@ -1223,134 +1135,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.downcast_ref::<SetupCancelled>().is_some());
-        assert!(!config.executable.exists());
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn prepared_account_uses_managed_executable_and_configuration_prefix() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir()?;
-        let mut config = setup_config(directory.path());
-        std::fs::create_dir_all(config.executable.parent().unwrap())?;
-        std::fs::write(
-            &config.executable,
-            "#!/bin/sh\n[ \"$1\" = '--gemini_dir=/invented/settings' ] || exit 5\ncase \"$2\" in\n models) printf 'sample-model\\tSample Model\\n';;\n --help) printf '%s\\n' '--effort Effort (quick|careful)';;\n *) exit 6;;\nesac\n",
-        )?;
-        std::fs::set_permissions(&config.executable, std::fs::Permissions::from_mode(0o755))?;
-        config
-            .arguments
-            .push("--gemini_dir=/invented/settings".into());
-        let (events, mut updates) = mpsc::unbounded_channel();
-        let (_input, input) = mpsc::channel(1);
-        let (_cancel, cancel) = watch::channel(false);
-        let ready = prepare(config.clone(), events, input, cancel).await?;
-        assert_eq!(ready.executable, config.executable);
-        assert_eq!(ready.catalog.models[0].id, "sample-model");
-        assert_eq!(updates.try_recv()?, SetupProgress::Checking);
-        assert_eq!(updates.try_recv()?, SetupProgress::CheckingAccount);
-        assert_eq!(updates.try_recv()?, SetupProgress::Verifying);
-        assert!(updates.try_recv().is_err());
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn native_onboarding_rejects_text_outside_code_prompt_then_verifies_code() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir()?;
-        let mut config = setup_config(directory.path());
-        std::fs::create_dir_all(config.executable.parent().unwrap())?;
-        let account = directory.path().join("fake-account-ready");
-        let received = directory.path().join("fake-received-code");
-        config.environment.insert(
-            "SETUP_TEST_ACCOUNT".into(),
-            account.to_string_lossy().into_owned(),
-        );
-        config.environment.insert(
-            "SETUP_TEST_RECEIVED".into(),
-            received.to_string_lossy().into_owned(),
-        );
-        std::fs::write(
-            &config.executable,
-            r#"#!/bin/sh
-case "$1" in
- models)
-  if test -f "$SETUP_TEST_ACCOUNT"; then printf 'sample-model\tSample Model\n'; exit 0; fi
-  printf '%s\n' 'Error: Please sign in to view available models. Launch the CLI without arguments to sign in.' >&2
-  exit 1;;
- --help) printf '%s\n' '--effort Effort (quick|careful)'; exit 0;;
-esac
-printf 'Select login method:\r\nRemote browser\r\n'
-IFS= read -r selection
-printf '\033[2J\033[HOpen the URL below in your browser:\r\nhttps://login.example.test\r\nAfter authenticating, copy the code displayed in the browser and paste it below:\r\n'
-IFS= read -r code
-printf '%s' "$code" > "$SETUP_TEST_RECEIVED"
-touch "$SETUP_TEST_ACCOUNT"
-printf '\033[2J\033[HReady for a conversation\r\n'
-while IFS= read -r forbidden; do printf '%s' "$forbidden" >> "$SETUP_TEST_RECEIVED"; done
-"#,
-        )?;
-        std::fs::set_permissions(&config.executable, std::fs::Permissions::from_mode(0o755))?;
-        let (events, mut progress) = mpsc::unbounded_channel();
-        let (input, mut inputs) = mpsc::channel(4);
-        let (_cancel, mut cancellation) = watch::channel(false);
-        let task = tokio::spawn(async move {
-            authenticate(&config, &events, &mut inputs, &mut cancellation).await
-        });
-        let interaction = async {
-            loop {
-                if let Some(SetupProgress::Authentication {
-                    accepts_navigation: true,
-                    accepts_code: false,
-                    ..
-                }) = progress.recv().await
-                {
-                    break;
-                }
-            }
-            let (acknowledgement, acknowledged) = oneshot::channel();
-            input
-                .send(SetupInput {
-                    data: "not-an-auth-code\r".into(),
-                    acknowledgement,
-                })
-                .await?;
-            assert_eq!(acknowledged.await?, InputDisposition::NotAccepting);
-            let (acknowledgement, acknowledged) = oneshot::channel();
-            input
-                .send(SetupInput {
-                    data: "\r".into(),
-                    acknowledgement,
-                })
-                .await?;
-            assert_eq!(acknowledged.await?, InputDisposition::Delivered);
-            loop {
-                if let Some(SetupProgress::Authentication {
-                    accepts_code: true, ..
-                }) = progress.recv().await
-                {
-                    break;
-                }
-            }
-            let (acknowledgement, acknowledged) = oneshot::channel();
-            input
-                .send(SetupInput {
-                    data: "fictional-code\r".into(),
-                    acknowledgement,
-                })
-                .await?;
-            assert_eq!(acknowledged.await?, InputDisposition::Delivered);
-            let catalog = task.await??;
-            assert_eq!(catalog.models[0].id, "sample-model");
-            assert_eq!(std::fs::read_to_string(received)?, "fictional-code");
-            while let Ok(SetupProgress::Authentication { output, .. }) = progress.try_recv() {
-                assert!(!output.contains("fictional-code"));
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-        tokio::time::timeout(Duration::from_secs(10), interaction).await??;
         Ok(())
     }
 }

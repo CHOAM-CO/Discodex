@@ -18,6 +18,14 @@ pub(crate) fn selection_value(row: &Value) -> Option<&str> {
 pub(crate) fn model_matches(row: &Value, requested: &str) -> bool {
     selection_value(row) == Some(requested)
         || model_id(row) == Some(requested)
+        || row
+            .get("agyVariants")
+            .and_then(Value::as_array)
+            .is_some_and(|variants| {
+                variants
+                    .iter()
+                    .any(|variant| variant.get("id").and_then(Value::as_str) == Some(requested))
+            })
         || ["id", "slug"]
             .into_iter()
             .any(|k| row.get(k).and_then(Value::as_str) == Some(requested))
@@ -107,27 +115,98 @@ pub(crate) fn add_antigravity_models(catalog: &mut Value, enabled: bool, models:
     }
 }
 pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::agy::Catalog) {
-    let ids = discovered
-        .models
+    let groups = crate::agy_model_catalog::families(discovered);
+    let variant_ids = groups
         .iter()
-        .map(|model| model.id.clone())
-        .collect::<Vec<_>>();
-    add_antigravity_models(catalog, true, &ids);
-    if let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) {
-        for row in rows
-            .iter_mut()
-            .filter(|row| row.get("executor").and_then(Value::as_str) == Some("antigravity"))
-        {
-            if let Some(model) = discovered
-                .models
+        .flat_map(|family| family.variants.iter().map(|variant| variant.id.clone()))
+        .collect::<HashSet<_>>();
+    let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let mut existing = std::mem::take(rows);
+    for family in groups {
+        let selection = ModelSelection {
+            executor: ModelExecutor::Antigravity,
+            provider: "antigravity".into(),
+            model: family.id.clone(),
+        };
+        let mut row = existing
+            .iter()
+            .position(|row| {
+                row.get("executor").and_then(Value::as_str) == Some("antigravity")
+                    && model_id(row) == Some(family.id.as_str())
+            })
+            .map(|index| existing.remove(index))
+            .unwrap_or_else(|| json!({}));
+        row["id"] = json!(family.id);
+        row["model"] = json!(family.id);
+        row["displayName"] = json!(family.label);
+        row["executor"] = json!("antigravity");
+        row["provider"] = json!("antigravity");
+        row["modelProvider"] = json!("antigravity");
+        row["selectionValue"] = json!(selection.value());
+        row["agyVariants"] = json!(
+            family
+                .variants
                 .iter()
-                .find(|model| model_id(row) == Some(model.id.as_str()))
-            {
-                row["displayName"] = json!(model.label);
+                .map(|variant| json!({
+                    "id": variant.id,
+                    "label": variant.label,
+                    "effort": variant.effort,
+                }))
+                .collect::<Vec<_>>()
+        );
+        let mut efforts = Vec::new();
+        for variant in &family.variants {
+            if !efforts.contains(&variant.effort) {
+                efforts.push(variant.effort.clone());
             }
-            // These are CLI argument choices, not guessed model capabilities.
-            // The CLI remains responsible for validating model-specific support.
-            row["supportedReasoningEfforts"] = json!(discovered.efforts);
+        }
+        row["supportedReasoningEfforts"] = json!(
+            efforts
+                .iter()
+                .map(|effort| json!({
+                    "reasoningEffort": effort,
+                    "source": "agy-model-variant",
+                }))
+                .chain(std::iter::once(json!({
+                    "reasoningEffort": "ultra",
+                    "agyOrchestration": true,
+                })))
+                .collect::<Vec<_>>()
+        );
+        rows.push(row);
+    }
+    existing.retain(|row| {
+        !(row.get("executor").and_then(Value::as_str) == Some("antigravity")
+            && model_id(row).is_some_and(|id| variant_ids.contains(id)))
+    });
+    rows.extend(existing);
+    // Discovered models that could not be safely grouped retain their exact
+    // IDs and labels, with no model-specific effort claims.
+    for model in &discovered.models {
+        if variant_ids.contains(&model.id) {
+            continue;
+        }
+        let selection = ModelSelection {
+            executor: ModelExecutor::Antigravity,
+            provider: "antigravity".into(),
+            model: model.id.clone(),
+        };
+        if let Some(row) = rows.iter_mut().find(|row| {
+            row.get("executor").and_then(Value::as_str) == Some("antigravity")
+                && model_id(row) == Some(model.id.as_str())
+        }) {
+            row["displayName"] = json!(model.label);
+            row["selectionValue"] = json!(selection.value());
+            row.as_object_mut()
+                .map(|object| object.remove("supportedReasoningEfforts"));
+        } else {
+            rows.push(
+                json!({"id":model.id,"model":model.id,"displayName":model.label,
+                "executor":"antigravity","provider":"antigravity","modelProvider":"antigravity",
+                "selectionValue":selection.value()}),
+            );
         }
     }
 }
@@ -332,7 +411,7 @@ pub(crate) fn needs_chatgpt_login(a: &Value) -> bool {
 mod tests {
     use super::*;
     #[test]
-    fn cli_catalog_adds_exact_names_and_efforts_without_replacing_configured_choices() {
+    fn cli_catalog_preserves_unmatched_names_without_claiming_model_efforts() {
         let mut catalog = json!({"data":[]});
         add_antigravity_models(&mut catalog, true, &["manual".into(), "listed".into()]);
         add_antigravity_catalog(
@@ -348,10 +427,90 @@ mod tests {
         assert_eq!(catalog["data"].as_array().unwrap().len(), 2);
         assert_eq!(catalog["data"][0]["model"], "manual");
         assert_eq!(catalog["data"][1]["displayName"], "CLI model");
-        for row in catalog["data"].as_array().unwrap() {
-            assert_eq!(row["supportedReasoningEfforts"], json!(["medium", "high"]));
-            assert_eq!(row["executor"], "antigravity");
-        }
+        assert!(
+            catalog["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row["executor"] == "antigravity")
+        );
+        assert!(
+            catalog["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|row| row.get("supportedReasoningEfforts").is_none())
+        );
+    }
+
+    #[test]
+    fn discovered_variant_family_is_one_model_with_only_observed_efforts_and_legacy_aliases() {
+        let mut catalog = json!({"data": []});
+        add_antigravity_catalog(
+            &mut catalog,
+            &crate::agy::Catalog {
+                models: vec![
+                    crate::agy::ModelOption {
+                        id: "sample-family-high".into(),
+                        label: "Sample Family (High)".into(),
+                    },
+                    crate::agy::ModelOption {
+                        id: "sample-family-medium".into(),
+                        label: "Sample Family (Medium)".into(),
+                    },
+                    crate::agy::ModelOption {
+                        id: "sample-family-low".into(),
+                        label: "Sample Family (Low)".into(),
+                    },
+                    crate::agy::ModelOption {
+                        id: "sample-other-high".into(),
+                        label: "Sample Other (High)".into(),
+                    },
+                ],
+                efforts: vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+            },
+        );
+        let rows = catalog["data"].as_array().unwrap();
+        let family = rows
+            .iter()
+            .find(|row| row["id"] == "sample-family")
+            .unwrap();
+        assert_eq!(family["displayName"], "Sample Family");
+        assert_eq!(
+            family["supportedReasoningEfforts"],
+            json!([
+                {"reasoningEffort":"high","source":"agy-model-variant"},
+                {"reasoningEffort":"medium","source":"agy-model-variant"},
+                {"reasoningEffort":"low","source":"agy-model-variant"},
+                {"reasoningEffort":"ultra","agyOrchestration":true}
+            ])
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("sample-family-"))
+                .count(),
+            0
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(catalog_has_model(&catalog, "sample-family-low"));
+        assert_eq!(
+            resolve_selection(&catalog, "sample-family-high")
+                .unwrap()
+                .model,
+            "sample-family"
+        );
+        let other = rows.iter().find(|row| row["id"] == "sample-other").unwrap();
+        assert_eq!(
+            other["supportedReasoningEfforts"],
+            json!([
+                {"reasoningEffort":"high","source":"agy-model-variant"},
+                {"reasoningEffort":"ultra","agyOrchestration":true}
+            ])
+        );
+        assert!(!catalog_has_model(&catalog, "sample-other-xhigh"));
     }
     #[test]
     fn agy_catalog_is_opt_in_and_keeps_executor_identity_distinct() {
