@@ -22,6 +22,23 @@ pub(super) fn record_native_call(inner: &Inner, binding: &NativeRunBinding, rece
 }
 
 fn consume_recorded_call(receipts: &mut Vec<Value>, event: &Value) -> bool {
+    let wrapped = event
+        .get("arguments")
+        .filter(|arguments| {
+            event.get("name").and_then(Value::as_str) == Some("call_mcp_tool")
+                && arguments.get("ServerName").and_then(Value::as_str)
+                    == Some(crate::agy_mcp::SERVER_NAME)
+        })
+        .and_then(|arguments| {
+            let name = arguments.get("ToolName")?.as_str()?;
+            let args = arguments.get("Arguments")?;
+            let args = match args.as_str() {
+                Some(text) => serde_json::from_str::<Value>(text).ok()?,
+                None => args.clone(),
+            };
+            Some(json!({"name":name,"arguments":args}))
+        });
+    let event = wrapped.as_ref().unwrap_or(event);
     let matching = receipts.iter().position(|receipt| {
         receipt.get("name") == event.get("name")
             && receipt.get("arguments") == event.get("arguments")
@@ -281,109 +298,10 @@ fn validate_admission(
     Ok(())
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct StreamDiagnostics {
-    text_delta_count: usize,
-    text_delta_bytes: usize,
-    text_delta_has_visible_text: bool,
-    pending_leading_whitespace: String,
-}
-
-impl StreamDiagnostics {
-    fn record_text_delta(&mut self, text: &str) -> Option<String> {
-        if !text.is_empty() {
-            self.text_delta_count += 1;
-            self.text_delta_bytes += text.len();
-        }
-        let visible = !text.trim().is_empty();
-        if !self.text_delta_has_visible_text && !visible {
-            self.pending_leading_whitespace.push_str(text);
-            return None;
-        }
-        self.text_delta_has_visible_text |= visible;
-        if self.pending_leading_whitespace.is_empty() {
-            Some(text.to_owned())
-        } else {
-            let mut delta = std::mem::take(&mut self.pending_leading_whitespace);
-            delta.push_str(text);
-            Some(delta)
-        }
-    }
-
-    fn terminal(
-        &self,
-        status: Option<&str>,
-        response: Option<&str>,
-        error: Option<&str>,
-    ) -> StreamSummary {
-        StreamSummary {
-            terminal_received: true,
-            status: status.map(str::to_owned),
-            text_delta_count: self.text_delta_count,
-            text_delta_bytes: self.text_delta_bytes,
-            assistant_text_visible: self.has_assistant_text(response),
-            response_present: response.is_some(),
-            response_bytes: response.map(str::len),
-            error_present: error.is_some(),
-            stream_error_present: false,
-        }
-    }
-
-    fn ended_without_terminal(&self, stream_error_present: bool) -> StreamSummary {
-        StreamSummary {
-            terminal_received: false,
-            status: None,
-            text_delta_count: self.text_delta_count,
-            text_delta_bytes: self.text_delta_bytes,
-            assistant_text_visible: self.text_delta_has_visible_text,
-            response_present: false,
-            response_bytes: None,
-            error_present: false,
-            stream_error_present,
-        }
-    }
-
-    fn has_assistant_text(&self, response: Option<&str>) -> bool {
-        self.text_delta_has_visible_text || response.is_some_and(|text| !text.trim().is_empty())
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct StreamSummary {
-    terminal_received: bool,
-    status: Option<String>,
-    text_delta_count: usize,
-    text_delta_bytes: usize,
-    assistant_text_visible: bool,
-    response_present: bool,
-    response_bytes: Option<usize>,
-    error_present: bool,
-    stream_error_present: bool,
-}
-
-impl StreamSummary {
-    fn log(&self) {
-        tracing::info!(
-            terminal_received = self.terminal_received,
-            terminal_status = self.status.as_deref().unwrap_or("none"),
-            text_delta_count = self.text_delta_count,
-            text_delta_bytes = self.text_delta_bytes,
-            assistant_text_visible = self.assistant_text_visible,
-            response_present = self.response_present,
-            response_bytes = self.response_bytes,
-            terminal_error_present = self.error_present,
-            stream_error_present = self.stream_error_present,
-            "AGY external stream summary"
-        );
-    }
-}
-
-fn terminal_response_fallback(text_streamed: bool, response: Option<&str>) -> Option<&str> {
-    if text_streamed {
-        None
-    } else {
-        response.filter(|text| !text.trim().is_empty())
-    }
+fn terminal_response_fallback<'a>(streamed: &str, response: Option<&'a str>) -> Option<&'a str> {
+    let response = response?;
+    let remaining = response.strip_prefix(streamed).unwrap_or(response);
+    (!remaining.is_empty()).then_some(remaining)
 }
 
 fn terminal_result(
@@ -585,13 +503,14 @@ fn completed_tool_event(event: &crate::agy::Event) -> Option<Value> {
         return None;
     }
     let info = tool_info.as_ref()?;
+    let output = info.get("output").or_else(|| info.get("error"))?;
     let name = tool_name
         .as_deref()
         .or_else(|| info.get("name").and_then(Value::as_str))?;
     Some(
         json!({"type":"tool", "callId":format!("agy-{}-{}", conversation_id.as_deref().unwrap_or("turn"), step_index.unwrap_or_default()),
         "name":name, "arguments":info.get("parameters").cloned().unwrap_or_else(|| json!({})),
-        "output":info.get("output").cloned().or_else(|| info.get("error").cloned()).unwrap_or(Value::Null)}),
+        "output":output}),
     )
 }
 
@@ -656,19 +575,14 @@ async fn run(
     let outcome = async {
         if *canceled.borrow() { bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)); }
         session.send_text(&prompt.text).await?;
-        let mut text_streamed = false;
-        let mut stream_diagnostics = StreamDiagnostics::default();
+        let mut streamed = String::new();
         loop {
             let event = tokio::select! {
                 _ = canceled.changed() => bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)),
                 event = session.next_event() => match event {
                     Some(Ok(event)) => event,
-                    Some(Err(error)) => {
-                        stream_diagnostics.ended_without_terminal(true).log();
-                        return Err(error);
-                    }
+                    Some(Err(error)) => return Err(error),
                     None => {
-                        stream_diagnostics.ended_without_terminal(false).log();
                         bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalCliExitedEarly));
                     }
                 },
@@ -679,19 +593,12 @@ async fn run(
             }
             match event {
                 crate::agy::Event::TextDelta { text, .. } if !text.is_empty() => {
-                    if let Some(delta) = stream_diagnostics.record_text_delta(&text) {
-                        text_streamed = true;
-                        native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":delta}})).await?;
-                    }
+                    streamed.push_str(&text);
+                    native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
                 }
                 crate::agy::Event::Result { status, response, error, .. } => {
-                    let summary = stream_diagnostics.terminal(
-                        status.as_deref(),
-                        response.as_deref(),
-                        error.as_deref(),
-                    );
-                    summary.log();
-                    if let Some(text) = terminal_response_fallback(text_streamed, response.as_deref()) {
+                    tracing::info!(status = status.as_deref(), response_bytes = response.as_deref().map(str::len), error_present = error.is_some(), "AGY turn completed");
+                    if let Some(text) = terminal_response_fallback(&streamed, response.as_deref()) {
                         native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
                     }
                     return terminal_result(
@@ -1086,90 +993,6 @@ mod tests {
         let rendered = format!("{result:#}");
         assert!(rendered.contains("AGY cleanup also failed: cleanup cause:"));
         assert!(rendered.contains("primary turn cause:"));
-    }
-
-    #[test]
-    fn stream_summary_counts_text_and_reports_terminal_metadata_without_content() {
-        let mut diagnostics = StreamDiagnostics::default();
-        assert_eq!(diagnostics.record_text_delta(""), None);
-        assert_eq!(diagnostics.record_text_delta("abc").as_deref(), Some("abc"));
-        assert_eq!(
-            diagnostics.record_text_delta("한글").as_deref(),
-            Some("한글")
-        );
-
-        assert_eq!(
-            diagnostics.terminal(Some("SUCCESS"), Some(""), None),
-            StreamSummary {
-                terminal_received: true,
-                status: Some("SUCCESS".into()),
-                text_delta_count: 2,
-                text_delta_bytes: 9,
-                assistant_text_visible: true,
-                response_present: true,
-                response_bytes: Some(0),
-                error_present: false,
-                stream_error_present: false,
-            }
-        );
-        assert_eq!(
-            diagnostics.terminal(Some("ERROR"), None, Some("private diagnostic text")),
-            StreamSummary {
-                terminal_received: true,
-                status: Some("ERROR".into()),
-                text_delta_count: 2,
-                text_delta_bytes: 9,
-                assistant_text_visible: true,
-                response_present: false,
-                response_bytes: None,
-                error_present: true,
-                stream_error_present: false,
-            }
-        );
-        assert_eq!(
-            diagnostics.ended_without_terminal(true),
-            StreamSummary {
-                terminal_received: false,
-                status: None,
-                text_delta_count: 2,
-                text_delta_bytes: 9,
-                assistant_text_visible: true,
-                response_present: false,
-                response_bytes: None,
-                error_present: false,
-                stream_error_present: true,
-            }
-        );
-        assert!(diagnostics.has_assistant_text(Some("terminal text")));
-        assert!(diagnostics.has_assistant_text(Some("")));
-        let empty = StreamDiagnostics::default();
-        assert!(!empty.has_assistant_text(None));
-        assert!(!empty.has_assistant_text(Some("")));
-        assert!(empty.has_assistant_text(Some("terminal text")));
-        assert!(!empty.has_assistant_text(Some(" \n\t")));
-        assert_eq!(
-            terminal_response_fallback(false, Some("final answer")),
-            Some("final answer")
-        );
-        assert_eq!(
-            terminal_response_fallback(false, Some(" final answer \n")),
-            Some(" final answer \n")
-        );
-        assert_eq!(terminal_response_fallback(true, Some("final answer")), None);
-        assert_eq!(terminal_response_fallback(false, Some(" \n\t")), None);
-
-        let mut whitespace_deltas = StreamDiagnostics::default();
-        assert_eq!(whitespace_deltas.record_text_delta(" \n"), None);
-        assert!(!whitespace_deltas.has_assistant_text(None));
-        assert_eq!(
-            whitespace_deltas.record_text_delta("answer").as_deref(),
-            Some(" \nanswer")
-        );
-        assert_eq!(
-            whitespace_deltas.record_text_delta(" ").as_deref(),
-            Some(" ")
-        );
-        assert!(whitespace_deltas.has_assistant_text(None));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! The CLI currently exposes variants as model IDs and labels (for example,
 //! `foo-high` / `Foo (High)`) and publishes its effort vocabulary separately.
-//! We only form a family when both observed fields agree on a discovered effort.
+//! Published variant IDs determine support; labels are display text only.
 
 /// Codex orchestration mode; never a CLI-native AGY effort value.
 pub(crate) const CODEX_ORCHESTRATION_EFFORT: &str = "ultra";
@@ -34,44 +34,35 @@ pub(crate) struct EffortAlias {
     pub actual: String,
 }
 
-#[derive(serde::Deserialize)]
-struct EffortAliasRule {
-    requested: String,
-    actual: String,
-    requires: Vec<String>,
-    excludes: Vec<String>,
-}
-
-fn effort_alias_rules() -> &'static [EffortAliasRule] {
-    static RULES: std::sync::OnceLock<Vec<EffortAliasRule>> = std::sync::OnceLock::new();
-    RULES.get_or_init(|| {
-        serde_json::from_str(include_str!("../resources/agy_effort_aliases.json"))
-            .expect("embedded AGY effort aliases are valid")
+fn effort_order() -> &'static [String] {
+    static ORDER: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ORDER.get_or_init(|| {
+        serde_json::from_str(include_str!("../resources/agy_effort_order.json"))
+            .expect("embedded AGY effort order is valid")
     })
 }
 
-fn resolve_alias_for_family(family: &Family, requested: &str) -> Option<String> {
-    let has_effort = |effort: &str| {
+fn floor_effort(family: &Family, requested: &str) -> Option<String> {
+    let available = |effort: &str| {
         family
             .variants
             .iter()
-            .any(|variant| variant.effort.eq_ignore_ascii_case(effort))
+            .find(|variant| variant.effort.eq_ignore_ascii_case(effort))
+            .map(|variant| variant.effort.clone())
     };
-    effort_alias_rules()
-        .iter()
-        .find(|rule| rule.requested.eq_ignore_ascii_case(requested))
-        .filter(|rule| rule.requires.iter().all(|effort| has_effort(effort)))
-        .filter(|rule| rule.excludes.iter().all(|effort| !has_effort(effort)))
-        .and_then(|rule| {
-            family
-                .variants
-                .iter()
-                .find(|variant| variant.effort.eq_ignore_ascii_case(&rule.actual))
-                .map(|variant| variant.effort.clone())
-        })
+    available(requested).or_else(|| {
+        let order = effort_order();
+        let index = order
+            .iter()
+            .position(|effort| effort.eq_ignore_ascii_case(requested))?;
+        order[..index]
+            .iter()
+            .rev()
+            .find_map(|effort| available(effort))
+    })
 }
 
-/// Return the explicitly configured aliases that apply to a discovered model.
+/// Share the same supported-effort flooring between settings and execution.
 /// UI/catalog serialization and CLI invocation share this metadata source.
 pub(crate) fn effort_aliases(
     catalog: &crate::agy::Catalog,
@@ -90,11 +81,12 @@ pub(crate) fn effort_aliases(
 }
 
 pub(crate) fn effort_aliases_for_family(family: &Family) -> Vec<EffortAlias> {
-    effort_alias_rules()
+    effort_order()
         .iter()
-        .filter_map(|rule| {
-            resolve_alias_for_family(&family, &rule.requested).map(|actual| EffortAlias {
-                requested: rule.requested.clone(),
+        .filter_map(|requested| {
+            let actual = floor_effort(family, requested)?;
+            (!actual.eq_ignore_ascii_case(requested)).then(|| EffortAlias {
+                requested: requested.clone(),
                 actual,
             })
         })
@@ -132,25 +124,22 @@ fn split_label<'a>(label: &'a str, efforts: &[String]) -> Option<(&'a str, &'a s
 }
 
 /// Build family metadata exclusively from discovered model rows and effort
-/// alternatives. A row becomes a family variant only when slug and label agree.
+/// alternatives. Display-label formatting never determines capabilities.
 pub(crate) fn families(catalog: &crate::agy::Catalog) -> Vec<Family> {
     let mut result: Vec<Family> = Vec::new();
     for model in &catalog.models {
-        let (Some((base_id, id_effort)), Some((base_label, label_effort))) = (
-            split_id(&model.id, &catalog.efforts),
-            split_label(&model.label, &catalog.efforts),
-        ) else {
+        let Some((base_id, id_effort)) = split_id(&model.id, &catalog.efforts) else {
             continue;
         };
-        if !id_effort.eq_ignore_ascii_case(label_effort) {
-            continue;
-        }
+        let base_label = split_label(&model.label, &catalog.efforts)
+            .map(|(label, _)| label)
+            .unwrap_or(&model.label);
         let Some(effort) = normalized_effort(id_effort, &catalog.efforts) else {
             continue;
         };
         let index = result
             .iter()
-            .position(|family| family.id == base_id && family.label == base_label)
+            .position(|family| family.id == base_id)
             .unwrap_or_else(|| {
                 result.push(Family {
                     id: base_id.to_owned(),
@@ -171,17 +160,13 @@ pub(crate) fn families(catalog: &crate::agy::Catalog) -> Vec<Family> {
     result
 }
 
-/// Resolve only metadata-confirmed variants into a base alias and CLI effort.
-/// Without a matching discovered family, preserve the exact model ID. `ultra`
-/// is a Codex orchestration marker and is never sent to AGY; a legacy variant
-/// retains its concrete effort only when discovery metadata identifies it.
+/// Separate model and effort, flooring only against published model variants.
+/// Ultra stays in Codex instructions and resolves to the highest lower tier.
 pub(crate) fn invocation(
     catalog: Option<&crate::agy::Catalog>,
     selected_model: &str,
     selected_effort: Option<&str>,
 ) -> Invocation {
-    let requested =
-        selected_effort.filter(|effort| !effort.eq_ignore_ascii_case(CODEX_ORCHESTRATION_EFFORT));
     if let Some(catalog) = catalog {
         let families = families(catalog);
         if let Some(family) = families.iter().find(|family| {
@@ -191,42 +176,30 @@ pub(crate) fn invocation(
                     .iter()
                     .any(|variant| variant.id == selected_model)
         }) {
-            let legacy_effort = family
-                .variants
-                .iter()
-                .find(|variant| variant.id == selected_model)
-                .map(|variant| variant.effort.as_str());
-            let compatible_requested = requested.and_then(|effort| {
+            let requested = selected_effort.or_else(|| {
                 family
                     .variants
                     .iter()
-                    .find(|variant| variant.effort.eq_ignore_ascii_case(effort))
+                    .find(|variant| variant.id == selected_model)
                     .map(|variant| variant.effort.as_str())
             });
-            let mapped =
-                selected_effort.and_then(|effort| resolve_alias_for_family(family, effort));
             return Invocation {
                 model: family.id.clone(),
-                effort: compatible_requested
-                    .map(str::to_owned)
-                    .or(mapped)
-                    .or_else(|| legacy_effort.map(str::to_owned)),
+                effort: requested.and_then(|effort| {
+                    floor_effort(family, effort).or_else(|| {
+                        (!effort.eq_ignore_ascii_case(CODEX_ORCHESTRATION_EFFORT))
+                            .then(|| effort.to_owned())
+                    })
+                }),
             };
         }
-
-        // A present discovery snapshot is authoritative. If this exact ID was
-        // not safely grouped from observed ID/label metadata, do not infer a
-        // base alias from its spelling. This also preserves explicitly
-        // configured IDs absent from the discovery snapshot.
-        return Invocation {
-            model: selected_model.to_owned(),
-            effort: requested.map(str::to_owned),
-        };
     }
 
     Invocation {
         model: selected_model.to_owned(),
-        effort: requested.map(str::to_owned),
+        effort: selected_effort
+            .filter(|effort| !effort.eq_ignore_ascii_case(CODEX_ORCHESTRATION_EFFORT))
+            .map(str::to_owned),
     }
 }
 
@@ -367,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn xhigh_and_ultra_do_not_map_without_discovered_high_support() {
+    fn xhigh_and_ultra_use_the_highest_lower_discovered_effort() {
         let catalog = crate::agy::Catalog {
             models: vec![
                 crate::agy::ModelOption {
@@ -385,14 +358,14 @@ mod tests {
             invocation(Some(&catalog), "synthetic-model", Some("xhigh")),
             Invocation {
                 model: "synthetic-model".into(),
-                effort: None,
+                effort: Some("medium".into()),
             }
         );
         assert_eq!(
             invocation(Some(&catalog), "synthetic-model", Some("ultra")),
             Invocation {
                 model: "synthetic-model".into(),
-                effort: None,
+                effort: Some("medium".into()),
             }
         );
     }
@@ -405,6 +378,10 @@ mod tests {
             vec![
                 EffortAlias {
                     requested: "xhigh".into(),
+                    actual: "high".into(),
+                },
+                EffortAlias {
+                    requested: "max".into(),
                     actual: "high".into(),
                 },
                 EffortAlias {
@@ -488,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_slug_and_label_are_not_normalized() {
+    fn published_variants_do_not_depend_on_display_labels() {
         let catalog = crate::agy::Catalog {
             models: vec![crate::agy::ModelOption {
                 id: "model-high".into(),
@@ -496,18 +473,18 @@ mod tests {
             }],
             efforts: vec!["low".into(), "high".into()],
         };
-        assert!(families(&catalog).is_empty());
+        assert_eq!(families(&catalog).len(), 1);
         assert_eq!(
             invocation(Some(&catalog), "model-high", None),
             Invocation {
-                model: "model-high".into(),
-                effort: None,
+                model: "model".into(),
+                effort: Some("high".into()),
             }
         );
     }
 
     #[test]
-    fn present_catalog_does_not_infer_suffix_for_unobserved_or_unmatched_id() {
+    fn published_variants_normalize_but_unknown_ids_are_preserved() {
         let mut catalog = catalog();
         catalog.models.push(crate::agy::ModelOption {
             id: "observed-low".into(),
@@ -517,8 +494,8 @@ mod tests {
         assert_eq!(
             invocation(Some(&catalog), "observed-low", None),
             Invocation {
-                model: "observed-low".into(),
-                effort: None,
+                model: "observed".into(),
+                effort: Some("low".into()),
             }
         );
         assert_eq!(

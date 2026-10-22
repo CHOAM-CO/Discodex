@@ -544,6 +544,7 @@ mod tests {
             family["reasoningEffortAliases"],
             json!([
                 {"requested":"xhigh","actual":"high"},
+                {"requested":"max","actual":"high"},
                 {"requested":"ultra","actual":"high"}
             ])
         );
