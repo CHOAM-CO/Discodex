@@ -71,11 +71,11 @@
     "zh": "原生请求失败",
     "ja": "ネイティブ要求に失敗しました"
   },
-  "native.configured_settings_queue_context": {
-    "en": "Queue configured thread settings update",
-    "ko": "설정된 스레드 설정 변경 요청을 전달하지 못했습니다",
-    "zh": "无法排入已配置的线程设置更新",
-    "ja": "設定済みスレッド設定の更新をキューに登録できませんでした"
+  "native.configured_settings_update_context": {
+    "en": "Apply configured thread settings update",
+    "ko": "요청한 스레드 설정을 적용하지 못했습니다",
+    "zh": "无法应用请求的线程设置更新",
+    "ja": "要求したスレッド設定の更新を適用できませんでした"
   },
   "native.configured_settings_apply_context": {
     "en": "Apply and confirm configured settings on the newly started Codex thread",
@@ -90,10 +90,40 @@
     "ja": "更新確認後に新しいスレッド設定を読み取れませんでした"
   },
   "native.configured_settings_wrong_thread": {
-    "en": "Thread read returned a different thread while confirming configured settings",
-    "ko": "설정 확인 중 다른 스레드의 읽기 결과가 반환되었습니다",
-    "zh": "确认设置时读取结果属于其他线程",
-    "ja": "設定の確認中に別のスレッドの読み取り結果が返されました"
+    "en": "Settings confirmation returned a different thread than requested",
+    "ko": "설정 확인 결과의 스레드가 요청한 대상과 다릅니다",
+    "zh": "设置确认返回的线程与请求的目标不同",
+    "ja": "設定確認の結果が要求したスレッドと異なります"
+  },
+  "native.configured_settings_snapshot_missing": {
+    "en": "Codex did not return the completed thread settings snapshot",
+    "ko": "Codex가 적용을 완료한 스레드 설정을 반환하지 않았습니다",
+    "zh": "Codex 未返回已完成应用的线程设置快照",
+    "ja": "Codexから適用完了後のスレッド設定が返されませんでした"
+  },
+  "native.configured_settings_mismatch": {
+    "en": "Codex completed the settings update, but these effective values differ:\n{detail}",
+    "ko": "Codex가 설정 적용을 완료했지만 다음 실제 값이 요청과 다릅니다:\n{detail}",
+    "zh": "Codex 已完成设置更新，但以下实际值与请求不同：\n{detail}",
+    "ja": "Codexの設定更新は完了しましたが、次の実効値が要求と異なります:\n{detail}"
+  },
+  "native.configured_settings_mismatch_detail": {
+    "en": "{field}: requested {requested}; actual {actual}",
+    "ko": "{field}: 요청 {requested}; 실제 {actual}",
+    "zh": "{field}：请求值 {requested}；实际值 {actual}",
+    "ja": "{field}: 要求値 {requested}、実際の値 {actual}"
+  },
+  "native.configured_settings_value_missing": {
+    "en": "<absent>",
+    "ko": "<필드 없음>",
+    "zh": "<字段不存在>",
+    "ja": "<フィールドなし>"
+  },
+  "native.configured_settings_instructions_omitted": {
+    "en": "<instructions omitted: {characters} characters>",
+    "ko": "<지시문 본문 생략: {characters}자>",
+    "zh": "<指令正文已省略：{characters} 个字符>",
+    "ja": "<指示本文を省略: {characters}文字>"
   },
   "native.configured_settings_connection_changed": {
     "en": "Codex connection changed while confirming configured thread settings",

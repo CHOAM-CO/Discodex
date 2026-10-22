@@ -256,7 +256,7 @@ async fn native_responses_stay_bound_to_their_pending_request_ids() {
 #[tokio::test]
 async fn matching_thread_setting_readback_confirms_without_queueing_update() {
     let calls = std::cell::RefCell::new(Vec::new());
-    let outcome = readback_then_queue_thread_setting_update(
+    let outcome = readback_then_apply_thread_setting_update(
         |method, _| {
             calls.borrow_mut().push(method);
             future::ready(Ok(json!({
@@ -270,6 +270,7 @@ async fn matching_thread_setting_readback_confirms_without_queueing_update() {
         &json!("high"),
         true,
         || true,
+        Language::English,
     )
     .await
     .unwrap();
@@ -282,15 +283,15 @@ async fn matching_thread_setting_readback_confirms_without_queueing_update() {
 }
 
 #[tokio::test]
-async fn mismatching_thread_setting_readback_queues_but_does_not_confirm() {
+async fn mismatching_thread_setting_readback_uses_completed_update_snapshot() {
     let calls = std::cell::RefCell::new(Vec::new());
-    let outcome = readback_then_queue_thread_setting_update(
+    let outcome = readback_then_apply_thread_setting_update(
         |method, _| {
             calls.borrow_mut().push(method);
             future::ready(Ok(if method == "thread/read" {
                 json!({"id":"thread-current","effort":"medium"})
             } else {
-                json!({})
+                json!({"threadId":"thread-current","threadSettings":{"effort":"high"}})
             }))
         },
         "thread-current",
@@ -299,18 +300,22 @@ async fn mismatching_thread_setting_readback_queues_but_does_not_confirm() {
         &json!("high"),
         true,
         || true,
+        Language::English,
     )
     .await
     .unwrap();
 
-    assert!(matches!(outcome, ThreadSettingReadbackOutcome::Queued));
+    assert!(matches!(
+        outcome,
+        ThreadSettingReadbackOutcome::Confirmed(_)
+    ));
     assert_eq!(*calls.borrow(), ["thread/read", "thread/settings/update"]);
 }
 
 #[tokio::test]
 async fn superseded_thread_setting_readback_does_not_queue_update() {
     let calls = std::cell::RefCell::new(Vec::new());
-    let outcome = readback_then_queue_thread_setting_update(
+    let outcome = readback_then_apply_thread_setting_update(
         |method, _| {
             calls.borrow_mut().push(method);
             future::ready(Ok(json!({
@@ -324,6 +329,7 @@ async fn superseded_thread_setting_readback_does_not_queue_update() {
         &json!("high"),
         true,
         || false,
+        Language::English,
     )
     .await
     .unwrap();
@@ -335,13 +341,13 @@ async fn superseded_thread_setting_readback_does_not_queue_update() {
 #[tokio::test]
 async fn prior_pending_supersession_disables_readback_shortcut() {
     let calls = std::cell::RefCell::new(Vec::new());
-    let outcome = readback_then_queue_thread_setting_update(
+    let outcome = readback_then_apply_thread_setting_update(
         |method, _| {
             calls.borrow_mut().push(method);
             future::ready(Ok(if method == "thread/read" {
                 json!({"id":"thread-current","effort":"high"})
             } else {
-                json!({})
+                json!({"threadId":"thread-current","threadSettings":{"effort":"high"}})
             }))
         },
         "thread-current",
@@ -350,17 +356,20 @@ async fn prior_pending_supersession_disables_readback_shortcut() {
         &json!("high"),
         false,
         || true,
+        Language::English,
     )
     .await
     .unwrap();
 
-    assert!(matches!(outcome, ThreadSettingReadbackOutcome::Queued));
+    assert!(matches!(
+        outcome,
+        ThreadSettingReadbackOutcome::Confirmed(_)
+    ));
     assert_eq!(*calls.borrow(), ["thread/read", "thread/settings/update"]);
 }
 
 #[tokio::test]
 async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snapshot() {
-    let (sender, mut events) = broadcast::channel(8);
     let requested = json!({"threadId":"thread-new","effort":"high","serviceTier":null});
     let calls = std::cell::RefCell::new(Vec::new());
     let stale_start_snapshot =
@@ -369,36 +378,13 @@ async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snap
     apply_and_merge_configured_thread_settings(
         |method, params| {
             calls.borrow_mut().push((method.to_owned(), params));
-            match method {
-                "thread/settings/update" => {
-                    sender.send(json!({"method":"error","params":{"error":{"code":-32000,"message":"unrelated request failed"}}})).unwrap();
-                    sender.send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-other",
-                        "_discodex_connection_generation":4,
-                        "threadSettings":{"effort":"high","serviceTier":null}
-                    }})).unwrap();
-                    sender.send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":3,
-                        "threadSettings":{"effort":"high","serviceTier":null}
-                    }})).unwrap();
-                    std::future::ready(Ok(json!({})))
-                }
-                "thread/read" => {
-                    sender.send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":4,
-                        "threadSettings":{"reasoningEffort":"high","serviceTier":null,"model":"example-model"}
-                    }})).unwrap();
-                    std::future::ready(Ok(json!({
-                        "id":"thread-new","effort":"medium","serviceTier":"standard",
-                        "_discodex_connection_generation":4
-                    })))
-                }
-                _ => panic!("unexpected native request {method}"),
-            }
+            assert_eq!(method, "thread/settings/update");
+            std::future::ready(Ok(json!({
+                "threadId":"thread-new",
+                "_discodex_connection_generation":4,
+                "threadSettings":{"reasoningEffort":"high","serviceTier":null,"model":"example-model"}
+            })))
         },
-        &mut events,
         "thread-new",
         4,
         requested.clone(),
@@ -413,33 +399,23 @@ async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snap
     assert_eq!(cache["model"], "example-model");
     assert_eq!(
         *calls.borrow(),
-        vec![
-            ("thread/settings/update".to_owned(), requested),
-            (
-                "thread/read".to_owned(),
-                json!({"threadId":"thread-new","includeTurns":false})
-            )
-        ]
+        vec![("thread/settings/update".to_owned(), requested)]
     );
 }
 
 #[tokio::test]
-async fn new_thread_settings_noop_is_confirmed_by_readback_without_notification() {
-    let (_sender, mut events) = broadcast::channel(4);
+async fn new_thread_settings_noop_is_confirmed_by_completed_snapshot_without_notification() {
     let calls = std::cell::RefCell::new(Vec::new());
     let applied = apply_configured_thread_settings(
         |method, params| {
             calls.borrow_mut().push((method.to_owned(), params));
-            std::future::ready(Ok(match method {
-                "thread/settings/update" => json!({}),
-                "thread/read" => json!({
-                    "id":"thread-new","effort":"high",
-                    "_discodex_connection_generation":2
-                }),
-                _ => panic!("unexpected native request {method}"),
-            }))
+            assert_eq!(method, "thread/settings/update");
+            std::future::ready(Ok(json!({
+                "threadId":"thread-new",
+                "threadSettings":{"effort":"high"},
+                "_discodex_connection_generation":2
+            })))
         },
-        &mut events,
         "thread-new",
         2,
         json!({"threadId":"thread-new","effort":"high"}),
@@ -449,72 +425,13 @@ async fn new_thread_settings_noop_is_confirmed_by_readback_without_notification(
     .unwrap();
 
     assert_eq!(applied["effort"], "high");
-    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.borrow().len(), 1);
 }
 
 #[tokio::test]
-async fn new_thread_settings_ignores_unrelated_same_thread_update_until_requested_value_applies() {
-    let (sender, mut events) = broadcast::channel(4);
-    let mut cache = thread_state_summary(&json!({
-        "id":"thread-new","effort":"medium","serviceTier":"standard"
-    }));
-    apply_and_merge_configured_thread_settings(
-        |method, _| {
-            if method == "thread/settings/update" {
-                sender
-                    .send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":2
-                    }}))
-                    .unwrap();
-                sender
-                    .send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":2,
-                        "threadSettings":{"effort":"medium"}
-                    }}))
-                    .unwrap();
-                std::future::ready(Ok(json!({})))
-            } else {
-                sender
-                    .send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":2,
-                        "threadSettings":{"effort":"medium"}
-                    }}))
-                    .unwrap();
-                sender
-                    .send(json!({"method":"thread/settings/updated","params":{
-                        "threadId":"thread-new",
-                        "_discodex_connection_generation":2,
-                        "threadSettings":{"effort":"high"}
-                    }}))
-                    .unwrap();
-                std::future::ready(Ok(json!({
-                    "id":"thread-new","effort":"medium",
-                    "_discodex_connection_generation":2
-                })))
-            }
-        },
-        &mut events,
-        "thread-new",
-        2,
-        json!({"threadId":"thread-new","effort":"high"}),
-        &mut cache,
-        Language::English,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(cache["effort"], "high");
-}
-
-#[tokio::test]
-async fn new_thread_settings_queue_failure_preserves_native_error() {
-    let (_sender, mut events) = broadcast::channel(4);
+async fn new_thread_settings_update_failure_preserves_native_error() {
     let error = apply_configured_thread_settings(
         |_, _| std::future::ready(Err(anyhow!("native rejected configured settings"))),
-        &mut events,
         "thread-new",
         2,
         json!({"threadId":"thread-new","effort":"high"}),
@@ -528,26 +445,14 @@ async fn new_thread_settings_queue_failure_preserves_native_error() {
 
 #[tokio::test]
 async fn new_thread_settings_connection_close_is_not_reported_as_applied() {
-    let (sender, mut events) = broadcast::channel(4);
     let old_cache = json!({"id":"thread-new","effort":"medium"});
     let mut cache = thread_state_summary(&old_cache);
     let error = apply_and_merge_configured_thread_settings(
-        |method, _| {
-            if method == "thread/settings/update" {
-                sender
-                    .send(json!({"method":"discodex/connection-closed","params":{
-                        "_discodex_connection_generation":2
-                    }}))
-                    .unwrap();
-                std::future::ready(Ok(json!({})))
-            } else {
-                std::future::ready(Ok(json!({
-                    "id":"thread-new","effort":"medium",
-                    "_discodex_connection_generation":2
-                })))
-            }
+        |_, _| {
+            std::future::ready(Err(anyhow!(
+                "Codex app-server connection ended before response"
+            )))
         },
-        &mut events,
         "thread-new",
         2,
         json!({"threadId":"thread-new","effort":"high"}),
@@ -557,11 +462,7 @@ async fn new_thread_settings_connection_close_is_not_reported_as_applied() {
     .await
     .unwrap_err();
 
-    assert!(
-        error
-            .to_string()
-            .contains("connection closed before configured settings were confirmed")
-    );
+    assert!(format!("{error:#}").contains("Codex app-server connection ended before response"));
     assert_eq!(cache["effort"], "medium");
 }
 

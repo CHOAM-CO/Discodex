@@ -96,7 +96,7 @@ fn decode_pending_response(
     };
     if matches!(
         method,
-        "turn/start" | "thread/start" | "thread/read" | "thread/resume"
+        "turn/start" | "thread/start" | "thread/read" | "thread/resume" | "thread/settings/update"
     ) && let Ok(result) = response.as_mut()
     {
         if method == "turn/start" {
@@ -612,6 +612,7 @@ fn setting_value<'a>(settings: &'a Value, field: &str) -> Option<&'a Value> {
     }
 }
 
+#[cfg(test)]
 fn confirmed_thread_setting_event(
     event: &Value,
     key: &ThreadSettingKey,
@@ -790,7 +791,84 @@ fn configured_thread_settings_match(snapshot: &Value, update: &Value) -> bool {
     update
         .iter()
         .filter(|(key, _)| key.as_str() != "threadId")
-        .all(|(key, expected)| setting_value(&summary, key) == Some(expected))
+        .all(|(key, expected)| {
+            let Some(actual) = setting_value(&summary, key) else {
+                return false;
+            };
+            if key == "collaborationMode"
+                && expected
+                    .pointer("/settings/developer_instructions")
+                    .is_some_and(Value::is_null)
+            {
+                // Public null requests the selected mode's built-in instructions;
+                // Core reports the normalized instructions rather than that null.
+                let mut expected = expected.clone();
+                let mut actual = actual.clone();
+                for mode in [&mut expected, &mut actual] {
+                    if let Some(settings) = mode.get_mut("settings").and_then(Value::as_object_mut)
+                    {
+                        settings.remove("developer_instructions");
+                    }
+                }
+                actual == expected
+            } else {
+                actual == expected
+            }
+        })
+}
+
+fn configured_thread_settings_mismatch(
+    snapshot: &Value,
+    update: &Value,
+    language: Language,
+) -> anyhow::Error {
+    let summary = thread_state_summary(snapshot);
+    let details = update
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(field, _)| field.as_str() != "threadId")
+        .filter_map(|(field, expected)| {
+            let mut requested = json!({});
+            requested[field] = expected.clone();
+            if configured_thread_settings_match(&summary, &requested) {
+                return None;
+            }
+            let display = |value: Option<&Value>| {
+                let Some(value) = value else {
+                    return language
+                        .message(MessageKey::NativeConfiguredSettingsValueMissing)
+                        .to_owned();
+                };
+                let mut value = value.clone();
+                if field == "collaborationMode"
+                    && let Some(instructions) =
+                        value.pointer_mut("/settings/developer_instructions")
+                    && let Some(text) = instructions.as_str()
+                {
+                    *instructions = json!(
+                        language
+                            .message(MessageKey::NativeConfiguredSettingsInstructionsOmitted)
+                            .replace("{characters}", &text.chars().count().to_string())
+                    );
+                }
+                value.to_string()
+            };
+            Some(
+                language
+                    .message(MessageKey::NativeConfiguredSettingsMismatchDetail)
+                    .replace("{field}", field)
+                    .replace("{requested}", &display(Some(expected)))
+                    .replace("{actual}", &display(setting_value(&summary, field))),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    anyhow!(
+        language
+            .message(MessageKey::NativeConfiguredSettingsMismatch)
+            .replace("{detail}", &details)
+    )
 }
 
 fn persist_model_selection_for_target<T>(
@@ -816,7 +894,6 @@ fn persist_model_selection_for_target<T>(
 
 async fn apply_configured_thread_settings<R, F>(
     mut request: R,
-    events: &mut broadcast::Receiver<Value>,
     thread_id: &str,
     generation: u64,
     settings: Value,
@@ -826,27 +903,16 @@ where
     R: FnMut(&'static str, Value) -> F,
     F: std::future::Future<Output = Result<Value>>,
 {
-    request("thread/settings/update", settings.clone())
+    let response = request("thread/settings/update", settings.clone())
         .await
-        .context(language.message(MessageKey::NativeConfiguredSettingsQueueContext))?;
-
-    // A newly started thread can already have the requested values even when
-    // the queued update is a no-op and emits no settings notification. Read the
-    // native state after the ACK; if it is not applied yet, keep waiting for
-    // the event subscribed before the update was sent.
-    let readback = request(
-        "thread/read",
-        json!({"threadId":thread_id,"includeTurns":false}),
-    )
-    .await
-    .context(language.message(MessageKey::NativeConfiguredSettingsReadbackContext))?;
-    if response_thread_id(&readback).ok().as_deref() != Some(thread_id) {
+        .context(language.message(MessageKey::NativeConfiguredSettingsUpdateContext))?;
+    if response.get("threadId").and_then(Value::as_str) != Some(thread_id) {
         bail!(
             "{}",
             language.message(MessageKey::NativeConfiguredSettingsWrongThread)
         );
     }
-    if readback
+    if response
         .get("_discodex_connection_generation")
         .and_then(Value::as_u64)
         != Some(generation)
@@ -856,49 +922,22 @@ where
             language.message(MessageKey::NativeConfiguredSettingsConnectionChanged)
         );
     }
-    let readback_summary = thread_state_summary(&readback);
-    if configured_thread_settings_match(&readback_summary, &settings) {
-        return Ok(readback_summary);
+    let snapshot = response
+        .get("threadSettings")
+        .filter(|value| value.is_object())
+        .context(language.message(MessageKey::NativeConfiguredSettingsSnapshotMissing))?;
+    let mut summary = thread_state_summary(snapshot);
+    if !configured_thread_settings_match(&summary, &settings) {
+        return Err(configured_thread_settings_mismatch(
+            &summary, &settings, language,
+        ));
     }
-
-    loop {
-        let event = events
-            .recv()
-            .await
-            .context(language.message(MessageKey::NativeConfiguredSettingsEventStreamClosed))?;
-        let method = event.get("method").and_then(Value::as_str);
-        let event_generation = event
-            .pointer("/params/_discodex_connection_generation")
-            .and_then(Value::as_u64);
-        if method == Some("discodex/connection-closed") && event_generation == Some(generation) {
-            bail!(
-                "{}",
-                language.message(MessageKey::NativeConfiguredSettingsConnectionClosed)
-            );
-        }
-        if method != Some("thread/settings/updated")
-            || event_generation != Some(generation)
-            || event.pointer("/params/threadId").and_then(Value::as_str) != Some(thread_id)
-        {
-            continue;
-        }
-        let Some(settings_snapshot) = event.pointer("/params/threadSettings") else {
-            continue;
-        };
-        let summary = thread_state_summary(&json!({"thread": settings_snapshot}));
-        if !configured_thread_settings_match(&summary, &settings) {
-            // Notifications carry no request ID. A same-thread update may
-            // belong to another settings operation, so only an exact value
-            // match can confirm this request; mismatches are not attributable.
-            continue;
-        }
-        return Ok(summary);
-    }
+    summary["id"] = response["threadId"].clone();
+    Ok(summary)
 }
 
 async fn apply_and_merge_configured_thread_settings<R, F>(
     request: R,
-    events: &mut broadcast::Receiver<Value>,
     thread_id: &str,
     generation: u64,
     settings: Value,
@@ -909,10 +948,9 @@ where
     R: FnMut(&'static str, Value) -> F,
     F: std::future::Future<Output = Result<Value>>,
 {
-    let confirmed = apply_configured_thread_settings(
-        request, events, thread_id, generation, settings, language,
-    )
-    .await?;
+    let confirmed =
+        apply_configured_thread_settings(request, thread_id, generation, settings, language)
+            .await?;
     merge_thread_state(cached_summary, &confirmed);
     Ok(())
 }
@@ -921,10 +959,9 @@ where
 enum ThreadSettingReadbackOutcome {
     Confirmed(Value),
     Superseded,
-    Queued,
 }
 
-async fn readback_then_queue_thread_setting_update<R, F, C>(
+async fn readback_then_apply_thread_setting_update<R, F, C>(
     mut request: R,
     thread_id: &str,
     params: Value,
@@ -932,6 +969,7 @@ async fn readback_then_queue_thread_setting_update<R, F, C>(
     expected: &Value,
     can_confirm: bool,
     is_current: C,
+    language: Language,
 ) -> Result<ThreadSettingReadbackOutcome>
 where
     R: FnMut(&'static str, Value) -> F,
@@ -954,10 +992,29 @@ where
     if can_confirm && setting_value(&summary, field) == Some(expected) {
         return Ok(ThreadSettingReadbackOutcome::Confirmed(summary));
     }
-    request("thread/settings/update", params)
+    let response = request("thread/settings/update", params)
         .await
-        .context("queue thread settings update")?;
-    Ok(ThreadSettingReadbackOutcome::Queued)
+        .context(language.message(MessageKey::NativeConfiguredSettingsUpdateContext))?;
+    if response.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+        bail!(
+            "{}",
+            language.message(MessageKey::NativeConfiguredSettingsWrongThread)
+        );
+    }
+    let settings = response
+        .get("threadSettings")
+        .filter(|value| value.is_object())
+        .context(language.message(MessageKey::NativeConfiguredSettingsSnapshotMissing))?;
+    let mut summary = thread_state_summary(settings);
+    if setting_value(&summary, field) != Some(expected) {
+        let mut requested = json!({});
+        requested[field] = expected.clone();
+        return Err(configured_thread_settings_mismatch(
+            &summary, &requested, language,
+        ));
+    }
+    summary["id"] = response["threadId"].clone();
+    Ok(ThreadSettingReadbackOutcome::Confirmed(summary))
 }
 
 fn apply_memory_config(command: &mut Command, enabled: Option<bool>) {
@@ -1741,10 +1798,8 @@ impl Native {
             && !configured_thread_settings_match(&started_summary, &settings)
         {
             let generation = self.current_generation();
-            let mut events = self.subscribe();
             apply_and_merge_configured_thread_settings(
                 |method, params| self.request_raw(method, params),
-                &mut events,
                 &thread_id,
                 generation,
                 settings,
@@ -1891,15 +1946,15 @@ impl Native {
         };
         if fresh_start {
             let mut settings = json!({"threadId":new_thread_id});
-            for field in [
-                "effort",
-                "serviceTier",
-                "approvalPolicy",
-                "approvalsReviewer",
-            ] {
+            for field in ["serviceTier", "approvalPolicy", "approvalsReviewer"] {
                 if let Some(value) = old.get(field) {
                     settings[field] = value.clone();
                 }
+            }
+            // Public effort:null preserves the new thread's effort; it is not
+            // a request to clear it. Service tier null above explicitly clears.
+            if let Some(effort) = old.get("effort").filter(|value| !value.is_null()) {
+                settings["effort"] = effort.clone();
             }
             if let Some(mode) = old.get("collaborationMode").filter(|mode| mode.is_object()) {
                 let mut mode = mode.clone();
@@ -1911,10 +1966,8 @@ impl Native {
             } else if let Some(policy) = old.get("sandboxPolicy").or_else(|| old.get("sandbox")) {
                 settings["sandboxPolicy"] = policy.clone();
             }
-            let mut events = self.subscribe();
             let applied = apply_and_merge_configured_thread_settings(
                 |method, params| self.request_raw(method, params),
-                &mut events,
                 &new_thread_id,
                 self.current_generation(),
                 settings,
@@ -2040,9 +2093,9 @@ impl Native {
         self.request_raw(method, params).await
     }
 
-    /// Queue a per-thread setting update and distinguish the RPC acknowledgement
-    /// from the later settings-applied notification. A ticket remains current only
-    /// until a newer request for the same thread and field supersedes it.
+    /// Apply a per-thread setting update and confirm its completed RPC snapshot.
+    /// A ticket remains current only until a newer request for the same thread
+    /// and field supersedes it.
     pub async fn request_thread_setting_update(
         &self,
         thread_id: &str,
@@ -2059,7 +2112,6 @@ impl Native {
             thread_id: thread_id.to_owned(),
             field: field.to_owned(),
         };
-        let mut events = self.subscribe();
         let (revision, status_rx, superseded_pending, current_flag) = {
             let mut pending = self
                 .inner
@@ -2107,14 +2159,31 @@ impl Native {
             (revision, status_rx, superseded, current_flag)
         };
 
-        let readback_outcome = readback_then_queue_thread_setting_update(
-            |method, params| self.request(method, params),
+        let readback_outcome = readback_then_apply_thread_setting_update(
+            |method, params| async move {
+                let response = self.request(method, params).await?;
+                if response
+                    .get("_discodex_connection_generation")
+                    .and_then(Value::as_u64)
+                    != Some(generation)
+                {
+                    bail!(
+                        "{}",
+                        self.inner
+                            .config
+                            .language
+                            .message(MessageKey::NativeConfiguredSettingsConnectionChanged)
+                    );
+                }
+                Ok(response)
+            },
             thread_id,
             params,
             field,
             &expected,
             !superseded_pending,
             || self.thread_setting_is_current(&key, revision),
+            self.inner.config.language,
         )
         .await;
         let readback_outcome = match readback_outcome {
@@ -2138,107 +2207,26 @@ impl Native {
                     revision,
                     ThreadSettingUpdateStatus::Applied(summary.clone()),
                 );
-                return Ok(ThreadSettingUpdate::Confirmed {
+                Ok(ThreadSettingUpdate::Confirmed {
                     snapshot: summary,
                     revision: ThreadSettingRevision {
                         key,
                         current: current_flag,
                         inner: Arc::downgrade(&self.inner),
                     },
-                });
+                })
             }
             ThreadSettingReadbackOutcome::Superseded
             | ThreadSettingReadbackOutcome::Confirmed(_) => {
-                return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+                Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
                     key,
                     revision,
                     inner: Arc::downgrade(&self.inner),
                     status: status_rx,
                     current: current_flag.clone(),
-                }));
+                }))
             }
-            ThreadSettingReadbackOutcome::Queued => {}
         }
-        let native = self.clone();
-        let watch_key = key.clone();
-        let mut watcher_status = status_rx.clone();
-        tokio::spawn(async move {
-            loop {
-                if !native.thread_setting_is_current(&watch_key, revision) {
-                    break;
-                }
-                tokio::select! {
-                    changed = watcher_status.changed() => {
-                        if changed.is_err()
-                            || !matches!(&*watcher_status.borrow(), ThreadSettingUpdateStatus::Pending)
-                        {
-                            break;
-                        }
-                    }
-                    received = events.recv() => match received {
-                    Ok(event) => {
-                        let method = event.get("method").and_then(Value::as_str);
-                        let event_generation = event
-                            .pointer("/params/_discodex_connection_generation")
-                            .and_then(Value::as_u64);
-                        if method == Some("discodex/connection-closed")
-                            && event_generation == Some(watch_key.generation)
-                        {
-                            native.finish_thread_setting(
-                                &watch_key,
-                                revision,
-                                ThreadSettingUpdateStatus::Failed(
-                                    "native connection closed before settings were confirmed"
-                                        .to_owned(),
-                                ),
-                            );
-                            break;
-                        }
-                        if method == Some("thread/settings/updated")
-                            && event_generation == Some(watch_key.generation)
-                            && let Some(summary) =
-                                confirmed_thread_setting_event(&event, &watch_key, &expected)
-                        {
-                            native.finish_thread_setting(
-                                &watch_key,
-                                revision,
-                                ThreadSettingUpdateStatus::Applied(summary),
-                            );
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(count)) => {
-                        native.finish_thread_setting(
-                            &watch_key,
-                            revision,
-                            ThreadSettingUpdateStatus::Failed(format!(
-                                "native event stream lagged by {count} messages before settings were confirmed"
-                            )),
-                        );
-                        break;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        native.finish_thread_setting(
-                            &watch_key,
-                            revision,
-                            ThreadSettingUpdateStatus::Failed(
-                                "native event stream closed before settings were confirmed"
-                                    .to_owned(),
-                            ),
-                        );
-                        break;
-                    }
-                    }
-                }
-            }
-        });
-        Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
-            key,
-            revision,
-            inner: Arc::downgrade(&self.inner),
-            status: status_rx,
-            current: current_flag,
-        }))
     }
 
     fn thread_setting_is_current(&self, key: &ThreadSettingKey, revision: u64) -> bool {
