@@ -614,6 +614,19 @@ async fn run(
     // stdin-close alone can leave MCP subprocesses alive. Always reap the owned
     // process tree after the terminal result or cancellation.
     let cleanup = session.terminate().await.map(|_| ());
+    let diagnostics = session.take_diagnostics().await;
+    if !diagnostics.trim().is_empty() {
+        let message = language
+            .message(crate::i18n::MessageKey::NativeExternalCliDiagnostics)
+            .replace("{detail}", diagnostics.trim_end());
+        super::publish_event(
+            &native.inner,
+            json!({"method":"warning","params":{
+                "threadId":thread_id,"turnId":turn_id,"runId":run_id,
+                "_discodex_connection_generation":binding.generation,"message":message
+            }}),
+        );
+    }
     combine_turn_and_cleanup(outcome, cleanup, native.inner.config.language)?;
     Ok(())
 }

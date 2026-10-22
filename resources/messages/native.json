@@ -95,6 +95,12 @@
     "zh": "确认设置前原生事件流已关闭",
     "ja": "設定の確認前にネイティブイベントストリームが終了しました"
   },
+  "native.external_cli_diagnostics": {
+    "en": "Antigravity CLI diagnostics:\n{detail}",
+    "ko": "Antigravity CLI 진단:\n{detail}",
+    "zh": "Antigravity CLI 诊断：\n{detail}",
+    "ja": "Antigravity CLI の診断:\n{detail}"
+  },
   "native.configured_settings_connection_closed": {
     "en": "Native connection closed before configured settings were confirmed",
     "ko": "설정 확인 전에 네이티브 연결이 종료되었습니다",

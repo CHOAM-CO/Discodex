@@ -3486,6 +3486,21 @@ async fn handle_native_event(
             checks.approval_result_posted(&params, approval_post_error.as_deref());
         }
     }
+    // Operational warnings may originate from a child thread. Display their
+    // diagnostic without applying it to the primary conversation's turn state.
+    if method == "warning" {
+        if let Some(message) = params.get("message").and_then(serde_json::Value::as_str) {
+            let message = sanitize_discord_error(&state.config, message);
+            warn!(thread_id = ?params.get("threadId"), turn_id = ?params.get("turnId"), run_id = ?params.get("runId"), generation = ?params.get("_discodex_connection_generation"), %message, "native warning notification");
+            if let Err(error) =
+                send_failure_notice(http, ChannelId::new(state.config.home_channel_id), &message)
+                    .await
+            {
+                error!(error = %sanitize_discord_error_chain(&state.config, &error), %message, thread_id = ?params.get("threadId"), turn_id = ?params.get("turnId"), run_id = ?params.get("runId"), channel_id = state.config.home_channel_id, "failed to publish native warning notification");
+            }
+        }
+        return;
+    }
     if method != "serverRequest/resolved"
         && crate::task_plan::event_thread_is_foreign(&params, &state.native.thread_id())
     {

@@ -944,7 +944,7 @@ impl Session {
             let _ = self.stop_readers().await;
             return Some(Err(error).context("stop AGY children after stdout closed"));
         }
-        if let Err(error) = self.stop_readers().await {
+        if let Err(error) = self.drain_exited_readers().await {
             return Some(Err(error).context("stop AGY output readers after stdout closed"));
         }
         let stderr = self.stderr_output.lock().await.clone();
@@ -955,6 +955,21 @@ impl Session {
             status.code(),
             &stderr
         ))))
+    }
+
+    /// Collect CLI diagnostics after the owned output readers have stopped.
+    pub async fn take_diagnostics(&mut self) -> String {
+        std::mem::take(&mut *self.stderr_output.lock().await)
+    }
+
+    async fn drain_exited_readers(&mut self) -> Result<()> {
+        let stderr = match self.stderr_reader.take() {
+            Some(reader) => reader.await.context("join AGY stderr reader"),
+            None => Ok(()),
+        };
+        let readers = self.stop_readers().await;
+        stderr?;
+        readers
     }
 
     async fn stop_readers(&mut self) -> Result<()> {
@@ -973,7 +988,11 @@ impl Session {
         self.stdin.take();
         let status = self.child.wait().await.context("wait for AGY process");
         let cleanup = self.owned_children.terminate();
-        let readers = self.stop_readers().await;
+        let readers = if status.is_ok() && cleanup.is_ok() {
+            self.drain_exited_readers().await
+        } else {
+            self.stop_readers().await
+        };
         let status = status?;
         cleanup?;
         readers?;
@@ -989,7 +1008,11 @@ impl Session {
             .wait()
             .await
             .context("wait for terminated AGY process");
-        let readers = self.stop_readers().await;
+        let readers = if status.is_ok() && cleanup.is_ok() {
+            self.drain_exited_readers().await
+        } else {
+            self.stop_readers().await
+        };
         let status = status?;
         cleanup?;
         readers?;
