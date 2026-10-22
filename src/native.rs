@@ -795,7 +795,11 @@ fn configured_thread_settings_match(snapshot: &Value, update: &Value) -> bool {
             let Some(actual) = setting_value(&summary, key) else {
                 return false;
             };
-            if key == "collaborationMode"
+            if key == "serviceTier" && expected.is_null() {
+                // Core maps an explicit tier clear to its standard-routing
+                // sentinel; an absent or null tier still permits model defaults.
+                actual.as_str() == Some("default")
+            } else if key == "collaborationMode"
                 && expected
                     .pointer("/settings/developer_instructions")
                     .is_some_and(Value::is_null)
@@ -986,10 +990,12 @@ where
         bail!("thread/read returned a different thread than requested");
     }
     let summary = thread_state_summary(&snapshot);
+    let mut requested = json!({});
+    requested[field] = expected.clone();
     if !is_current() {
         return Ok(ThreadSettingReadbackOutcome::Superseded);
     }
-    if can_confirm && setting_value(&summary, field) == Some(expected) {
+    if can_confirm && configured_thread_settings_match(&summary, &requested) {
         return Ok(ThreadSettingReadbackOutcome::Confirmed(summary));
     }
     let response = request("thread/settings/update", params)
@@ -1006,9 +1012,7 @@ where
         .filter(|value| value.is_object())
         .context(language.message(MessageKey::NativeConfiguredSettingsSnapshotMissing))?;
     let mut summary = thread_state_summary(settings);
-    if setting_value(&summary, field) != Some(expected) {
-        let mut requested = json!({});
-        requested[field] = expected.clone();
+    if !configured_thread_settings_match(&summary, &requested) {
         return Err(configured_thread_settings_mismatch(
             &summary, &requested, language,
         ));

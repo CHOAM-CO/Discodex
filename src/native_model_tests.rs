@@ -382,7 +382,7 @@ async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snap
             std::future::ready(Ok(json!({
                 "threadId":"thread-new",
                 "_discodex_connection_generation":4,
-                "threadSettings":{"reasoningEffort":"high","serviceTier":null,"model":"example-model"}
+                "threadSettings":{"reasoningEffort":"high","serviceTier":"default","model":"example-model"}
             })))
         },
         "thread-new",
@@ -395,7 +395,7 @@ async fn new_thread_settings_cache_uses_matching_applied_snapshot_not_start_snap
     .unwrap();
 
     assert_eq!(cache["effort"], "high");
-    assert_eq!(cache["serviceTier"], Value::Null);
+    assert_eq!(cache["serviceTier"], "default");
     assert_eq!(cache["model"], "example-model");
     assert_eq!(
         *calls.borrow(),
