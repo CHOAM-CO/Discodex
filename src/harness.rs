@@ -223,7 +223,11 @@ fn mcp_tool_specs(specs: &[Value]) -> Vec<Value> {
                 "name": exposed_name,
                 "description": spec.get("description").cloned().unwrap_or_else(|| json!("")),
                 "inputSchema": input_schema,
-                "_meta": {"discodex/nativeNamespace": namespace}
+                "_meta": {
+                    "discodex/nativeNamespace": namespace,
+                    "discodex/nativeName": name,
+                    "discodex/nativeCustom": custom
+                }
             }))
         })
         .collect()
@@ -285,22 +289,29 @@ fn is_ordinary_execution_overlap(namespace: Option<&str>, name: &str) -> bool {
     )
 }
 
-fn native_call_envelope(binding: &NativeBinding, params: &Value) -> Result<Value> {
+fn native_call_envelope(
+    binding: &NativeBinding,
+    params: &Value,
+    native_specs: &[Value],
+) -> Result<Value> {
     let exposed_name = params
         .get("name")
         .and_then(Value::as_str)
         .context("missing native tool name")?;
-    let (namespace, name, custom) = if let Some(name) = exposed_name.strip_prefix("custom__") {
-        (None, name, true)
-    } else if let Some((namespace, rest)) = exposed_name.split_once("__") {
-        if let Some(name) = rest.strip_prefix("custom__") {
-            (Some(namespace), name, true)
-        } else {
-            (Some(namespace), rest, false)
-        }
-    } else {
-        (None, exposed_name, false)
-    };
+    // MCP names are presentation identifiers. Native names may themselves
+    // contain `__`, so preserve identity from the actual catalog, never split it.
+    let spec = mcp_tool_specs(native_specs)
+        .into_iter()
+        .find(|spec| spec.get("name").and_then(Value::as_str) == Some(exposed_name))
+        .with_context(|| {
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::HarnessNativeToolNotListed)
+                .replace("{name}", exposed_name)
+        })?;
+    let metadata = &spec["_meta"];
+    let namespace = &metadata["discodex/nativeNamespace"];
+    let name = &metadata["discodex/nativeName"];
+    let custom = metadata["discodex/nativeCustom"] == true;
     let arguments = params
         .get("arguments")
         .cloned()
@@ -462,12 +473,22 @@ async fn reply_native(endpoint: &Path, binding: &NativeBinding, request: Value) 
                     invoke_native(endpoint, binding, name, arguments).await
                 }
             } else {
-                match native_call_envelope(binding, &params) {
-                    Ok(envelope) => {
-                        invoke_native(endpoint, binding, "thread/tool/call", envelope).await
-                    }
-                    Err(error) => Err(error),
+                async {
+                    let catalog = invoke_native(
+                        endpoint,
+                        binding,
+                        "thread/tool/list",
+                        json!({"threadId":binding.thread_id,"turnId":binding.turn_id,"runId":binding.run_id}),
+                    )
+                    .await?;
+                    let specs = catalog.get("tools").and_then(Value::as_array).context(
+                        crate::i18n::Language::English
+                            .message(crate::i18n::MessageKey::HarnessNativeCatalogMissingTools),
+                    )?;
+                    let envelope = native_call_envelope(binding, &params, specs)?;
+                    invoke_native(endpoint, binding, "thread/tool/call", envelope).await
                 }
+                .await
             };
             native_tool_result(id, result)
         }
@@ -746,13 +767,21 @@ mod tests {
         let envelope = native_call_envelope(
             &binding,
             &json!({"name":"codex__send_message_to_thread","arguments":{"threadId":"target"}}),
+            &[json!({"type":"namespace","name":"codex","tools":[{"type":"function","name":"send_message_to_thread","parameters":{"type":"object"}}]})],
         )
         .unwrap();
         assert_eq!(envelope["threadId"], "trusted-thread");
         assert_eq!(envelope["namespace"], "codex");
         assert_eq!(envelope["name"], "send_message_to_thread");
         assert_eq!(envelope["arguments"]["threadId"], "target");
-        assert!(native_call_envelope(&binding, &json!({"name":"read","arguments":[]})).is_err());
+        assert!(
+            native_call_envelope(
+                &binding,
+                &json!({"name":"read","arguments":[]}),
+                &[json!({"type":"function","name":"read","parameters":{"type":"object"}})],
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -764,7 +793,11 @@ mod tests {
             "turnId":"model-supplied-turn", "arguments":arguments
         });
         for (parent, id) in [("parent-a", json!(7)), ("parent-b", json!("7"))] {
-            let envelope = native_call_envelope(&native_binding(parent), &request).unwrap();
+            let envelope = native_call_envelope(
+                &native_binding(parent),
+                &request,
+                &[json!({"type":"namespace","name":"agent","tools":[{"type":"function","name":"send_message","parameters":{"type":"object"}}]})],
+            ).unwrap();
             assert_eq!(envelope["threadId"], parent);
             assert_eq!(envelope["turnId"], format!("{parent}-turn"));
             assert_eq!(envelope["runId"], format!("{parent}-run"));
@@ -801,7 +834,11 @@ mod tests {
             "name":"agent",
             "tools":[{"type":"custom","name":"run","description":"run code","format":{"type":"text","syntax":"plain","definition":"Program text"}}]
         });
-        let tools = mcp_tool_specs(&[spec]);
+        let specs = [
+            spec,
+            json!({"type":"custom","name":"run","format":{"type":"text","syntax":"plain","definition":"Program text"}}),
+        ];
+        let tools = mcp_tool_specs(&specs);
         assert_eq!(tools[0]["name"], "agent__custom__run");
         assert_eq!(
             tools[0]["inputSchema"]["properties"]["input"]["type"],
@@ -810,6 +847,7 @@ mod tests {
         let envelope = native_call_envelope(
             &native_binding("thread"),
             &json!({"name":"agent__custom__run","arguments":{"input":"print(1)"}}),
+            &specs,
         )
         .unwrap();
         assert_eq!(envelope["namespace"], "agent");
@@ -818,6 +856,7 @@ mod tests {
         let unnamespaced = native_call_envelope(
             &native_binding("thread"),
             &json!({"name":"custom__run","arguments":{"input":"print(2)"}}),
+            &specs,
         )
         .unwrap();
         assert!(unnamespaced["namespace"].is_null());

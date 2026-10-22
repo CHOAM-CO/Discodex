@@ -1,0 +1,14 @@
+{
+  "harness.native_tool_not_listed": {
+    "en": "Native tool is absent from the current catalog: {name}",
+    "ko": "현재 카탈로그에 네이티브 도구가 없습니다: {name}",
+    "zh": "当前目录中没有此原生工具：{name}",
+    "ja": "現在のカタログにネイティブツールがありません: {name}"
+  },
+  "harness.native_catalog_missing_tools": {
+    "en": "Native tool catalog response has no tools array.",
+    "ko": "네이티브 도구 카탈로그 응답에 tools 배열이 없습니다.",
+    "zh": "原生工具目录响应中没有 tools 数组。",
+    "ja": "ネイティブツールカタログの応答に tools 配列がありません。"
+  }
+}
