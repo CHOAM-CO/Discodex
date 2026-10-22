@@ -3042,8 +3042,8 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
             .context("native turn state was not observable after reconnect")?;
         apply_turn_state_observation(
             &mut current,
-            &mut state.active_turns.lock().await,
-            &mut state.turn_observation_orders.lock().await,
+            &mut *state.active_turns.lock().await,
+            &mut *state.turn_observation_orders.lock().await,
             thread_id,
             &state.native.thread_id(),
             state.native.current_generation(),
