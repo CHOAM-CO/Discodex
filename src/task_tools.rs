@@ -65,8 +65,8 @@ fn definitions_with_language(language: crate::i18n::Language) -> Vec<Value> {
         (
             "read_thread",
             crate::i18n::MessageKey::TaskToolsReadThreadDescription,
-            json!({"threadId":id,"cursor":{"type":"string"},"turnLimit":{"type":"integer","minimum":1},"includeOutputs":{"type":"boolean"},"maxOutputCharsPerItem":{"type":"integer","minimum":0}}),
-            vec!["threadId"],
+            json!({"threadId":id,"scope":{"type":"string","enum":["turns","voice"]},"cursor":{"type":"string"},"turnLimit":{"type":"integer","minimum":1},"timelineLimit":{"type":"integer","minimum":1},"includeOutputs":{"type":"boolean"},"maxOutputCharsPerItem":{"type":"integer","minimum":0}}),
+            vec![],
         ),
         (
             "wait_threads",
@@ -117,11 +117,21 @@ struct List {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Read {
-    thread_id: String,
+    thread_id: Option<String>,
+    #[serde(default)]
+    scope: ReadScope,
     cursor: Option<String>,
     turn_limit: Option<u32>,
+    timeline_limit: Option<u32>,
     include_outputs: Option<bool>,
     max_output_chars_per_item: Option<usize>,
+}
+#[derive(Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+enum ReadScope {
+    #[default]
+    Turns,
+    Voice,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -274,22 +284,50 @@ pub(crate) async fn execute(c: ToolContext, name: &str, a: Value) -> Result<Valu
         }
         "read_thread" => {
             let x: Read = args(a)?;
+            let thread_id = x.thread_id.unwrap_or_else(|| c.thread_id.clone());
             let turn_limit = x.turn_limit.unwrap_or(1);
             let output_chars = x.max_output_chars_per_item.unwrap_or(usize::MAX);
             if turn_limit == 0 {
                 bail!("turnLimit must be at least 1")
             }
+            if x.timeline_limit == Some(0) {
+                bail!("timelineLimit must be at least 1")
+            }
             let thread_response = rpc(
                 &c,
                 "thread/read",
-                json!({"threadId":x.thread_id,"includeTurns":false}),
+                json!({"threadId":thread_id,"includeTurns":false}),
             )
             .await?;
             let thread = thread_response
                 .get("thread")
                 .cloned()
                 .unwrap_or(thread_response.clone());
-            let page = rpc(&c, "thread/turns/list", json!({"threadId":x.thread_id,"cursor":x.cursor,"limit":turn_limit,"sortDirection":"desc","itemsView":"full"})).await;
+            let output_enabled = x.include_outputs == Some(true);
+            if x.scope == ReadScope::Voice {
+                let mut params = json!({"threadId":thread_id,"cursor":x.cursor});
+                if let Some(limit) = x.timeline_limit {
+                    params["limit"] = json!(limit);
+                }
+                let page = rpc(&c, "thread/timeline/list", params).await?;
+                let next_cursor = page.get("nextCursor").cloned().filter(|v| !v.is_null());
+                let mut timeline = page
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                for entry in &mut timeline {
+                    if entry.get("type").and_then(Value::as_str) == Some("item")
+                        && let Some(item) = entry.get_mut("item")
+                    {
+                        *item = timeline_item_summary(item.clone(), output_enabled, output_chars);
+                    }
+                }
+                return Ok(
+                    json!({"schemaVersion":1,"scope":"voice","thread":thread_summary(&thread),"page":{"scope":"voice","order":"oldest_first","direction":"backward","limit":x.timeline_limit,"hasMore":next_cursor.is_some(),"nextCursor":next_cursor},"activeRealtimeSessionAtPageStart":page.get("activeRealtimeSessionAtPageStart"),"timeline":timeline}),
+                );
+            }
+            let page = rpc(&c, "thread/turns/list", json!({"threadId":thread_id,"cursor":x.cursor,"limit":turn_limit,"sortDirection":"desc","itemsView":"full"})).await;
             let (turns, next_cursor) = match page {
                 Ok(page) => (
                     page.get("data")
@@ -302,7 +340,7 @@ pub(crate) async fn execute(c: ToolContext, name: &str, a: Value) -> Result<Valu
                     let legacy = rpc(
                         &c,
                         "thread/read",
-                        json!({"threadId":x.thread_id,"includeTurns":true}),
+                        json!({"threadId":thread_id,"includeTurns":true}),
                     )
                     .await?;
                     let old = legacy
@@ -332,9 +370,8 @@ pub(crate) async fn execute(c: ToolContext, name: &str, a: Value) -> Result<Valu
                 }
                 Err(error) => return Err(error),
             };
-            let output_enabled = x.include_outputs == Some(true);
             Ok(
-                json!({"schemaVersion":1,"thread":thread_summary(&thread),"page":{"order":"newest_first","limit":turn_limit,"hasMore":next_cursor.is_some(),"nextCursor":next_cursor},"turns":turns.iter().map(|turn|turn_summary(turn,output_enabled,output_chars)).collect::<Vec<_>>() }),
+                json!({"schemaVersion":1,"thread":thread_summary(&thread),"page":{"scope":"turns","order":"newest_first","limit":turn_limit,"hasMore":next_cursor.is_some(),"nextCursor":next_cursor},"turns":turns.iter().map(|turn|turn_summary(turn,output_enabled,output_chars)).collect::<Vec<_>>() }),
             )
         }
         "create_thread" => {
@@ -757,74 +794,243 @@ fn turn_summary(turn: &Value, include_outputs: bool, output_chars: usize) -> Val
     items.reverse();
     let items = items
         .into_iter()
-        .map(|mut item| {
-            let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
-            match kind {
-                "functionCallOutput" => {
-                    if include_outputs {
-                        let text = value_text(item.get("output").unwrap_or(&Value::Null))
-                            .unwrap_or("[non-text output]");
-                        item["output"] = output_summary(text, output_chars);
-                    } else {
-                        item.as_object_mut().unwrap().remove("output");
-                    }
-                }
-                "reasoning" => {
-                    if include_outputs {
-                        if let Some(content) = item.get("content").and_then(Value::as_array) {
-                            item["content"] = json!(
-                                content
-                                    .iter()
-                                    .filter_map(value_text)
-                                    .map(|s| output_summary(s, output_chars))
-                                    .collect::<Vec<_>>()
-                            );
-                        }
-                    } else {
-                        item.as_object_mut().unwrap().remove("content");
-                    }
-                }
-                "commandExecution" => {
-                    let output = item
-                        .get("aggregatedOutput")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned);
-                    item.as_object_mut().unwrap().remove("aggregatedOutput");
-                    if include_outputs {
-                        if let Some(output) = output {
-                            item["output"] = output_summary(&output, output_chars);
-                        }
-                    }
-                }
-                "fileChange" => {
-                    if let Some(changes) = item.get_mut("changes").and_then(Value::as_array_mut) {
-                        for change in changes {
-                            let diff = change
-                                .get("diff")
-                                .and_then(Value::as_str)
-                                .map(str::to_owned);
-                            if include_outputs {
-                                if let Some(diff) = diff {
-                                    change["diff"] = output_summary(&diff, output_chars);
-                                }
-                            } else {
-                                change.as_object_mut().unwrap().remove("diff");
-                            }
-                        }
-                    }
-                }
-                "imageGeneration" => {
-                    if !include_outputs {
-                        item.as_object_mut().unwrap().remove("result");
-                        item.as_object_mut().unwrap().remove("image");
-                    }
-                }
-                _ => {}
-            }
-            item
-        })
+        .map(|item| item_summary(item, include_outputs, output_chars))
         .collect::<Vec<_>>();
     json!({"id":turn.get("id"),"status":turn.get("status"),"error":turn.get("error"),"startedAt":turn.get("startedAt"),"completedAt":turn.get("completedAt"),"durationMs":turn.get("durationMs"),"items":items})
+}
+
+fn item_summary(mut item: Value, include_outputs: bool, output_chars: usize) -> Value {
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+    match kind {
+        "functionCallOutput" => {
+            if include_outputs {
+                if let Some(text) = item.get("output").and_then(Value::as_str) {
+                    item["output"] = output_summary(text, output_chars);
+                }
+            } else {
+                item.as_object_mut().unwrap().remove("output");
+            }
+        }
+        "reasoning" => {
+            if include_outputs {
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    item["content"] = json!(
+                        content
+                            .iter()
+                            .map(|value| match value_text(value) {
+                                Some(text) => output_summary(text, output_chars),
+                                None => value.clone(),
+                            })
+                            .collect::<Vec<_>>()
+                    );
+                }
+            } else {
+                item.as_object_mut().unwrap().remove("content");
+            }
+        }
+        "commandExecution" => {
+            let output = item
+                .get("aggregatedOutput")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            item.as_object_mut().unwrap().remove("aggregatedOutput");
+            if include_outputs {
+                if let Some(output) = output {
+                    item["output"] = output_summary(&output, output_chars);
+                }
+            }
+        }
+        "fileChange" => {
+            if let Some(changes) = item.get_mut("changes").and_then(Value::as_array_mut) {
+                for change in changes {
+                    let diff = change
+                        .get("diff")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    if include_outputs {
+                        if let Some(diff) = diff {
+                            change["diff"] = output_summary(&diff, output_chars);
+                        }
+                    } else {
+                        change.as_object_mut().unwrap().remove("diff");
+                    }
+                }
+            }
+        }
+        "imageGeneration" => {
+            if !include_outputs {
+                item.as_object_mut().unwrap().remove("result");
+                item.as_object_mut().unwrap().remove("image");
+            }
+        }
+        "mcpToolCall" => {
+            let mut remaining = output_chars;
+            let typed_external = item
+                .pointer("/externalExecutor/received")
+                .is_some_and(Value::is_object);
+            if include_outputs {
+                if output_chars != usize::MAX
+                    && let Some(result) = item.get_mut("result")
+                {
+                    if let Some(content) = result.get_mut("content") {
+                        limit_content_text(content, &mut remaining);
+                    }
+                    if let Some(structured) = result.get_mut("structuredContent") {
+                        if typed_external {
+                            project_external_received(structured, true, &mut remaining);
+                        } else {
+                            limit_output_text(structured, &mut remaining);
+                        }
+                    }
+                }
+            } else {
+                item.as_object_mut().unwrap().remove("result");
+            }
+            if let Some(received) = item.pointer_mut("/externalExecutor/received") {
+                project_external_received(received, include_outputs, &mut remaining);
+            }
+        }
+        "dynamicToolCall" => {
+            if include_outputs {
+                if output_chars != usize::MAX
+                    && let Some(content) = item.get_mut("contentItems")
+                {
+                    let mut remaining = output_chars;
+                    limit_content_text(content, &mut remaining);
+                }
+            } else {
+                item.as_object_mut().unwrap().remove("contentItems");
+            }
+        }
+        _ => {}
+    }
+    item
+}
+
+/// An explicit character budget covers all textual copies of an item's output.
+/// Preserve the complete wire value when no limit was requested.
+fn limit_output_text(value: &mut Value, remaining: &mut usize) {
+    if *remaining == usize::MAX {
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            let count = text.chars().count();
+            let visible = count.min(*remaining);
+            *remaining = (*remaining).saturating_sub(count);
+            if visible < count {
+                *value = output_summary(text, visible);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                limit_output_text(value, remaining);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                limit_output_text(value, remaining);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// MCP and dynamic content can also contain media and source references.
+fn limit_content_text(value: &mut Value, remaining: &mut usize) {
+    match value {
+        Value::Array(values) => {
+            for value in values {
+                limit_content_text(value, remaining);
+            }
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                if key == "text" {
+                    limit_output_text(value, remaining);
+                } else {
+                    limit_content_text(value, remaining);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn project_external_received(received: &mut Value, include_outputs: bool, remaining: &mut usize) {
+    let Some(received) = received.as_object_mut() else {
+        return;
+    };
+    if include_outputs {
+        if let Some(output) = received.get_mut("output") {
+            limit_output_text(output, remaining);
+        }
+    } else {
+        received.remove("output");
+    }
+    if !include_outputs && received.get("source").is_some_and(Value::is_string) {
+        received.remove("source");
+    } else if let Some(source) = received.get_mut("source") {
+        if source.is_string() {
+            limit_output_text(source, remaining);
+        } else {
+            project_source_outputs(source, include_outputs, remaining);
+        }
+    }
+}
+
+/// Keep the raw event's call IDs, status, arguments, and errors while selecting
+/// the actual output copies nested in it (for example, tool_info.output).
+fn project_source_outputs(source: &mut Value, include_outputs: bool, remaining: &mut usize) {
+    match source {
+        Value::Array(values) => {
+            for value in values {
+                project_source_outputs(value, include_outputs, remaining);
+            }
+        }
+        Value::Object(values) => {
+            if !include_outputs {
+                values.remove("output");
+            }
+            for (key, value) in values {
+                if key == "output" {
+                    limit_output_text(value, remaining);
+                } else if !matches!(key.as_str(), "parameters" | "arguments") {
+                    project_source_outputs(value, include_outputs, remaining);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn timeline_item_summary(mut item: Value, include_outputs: bool, output_chars: usize) -> Value {
+    let kind = item.get("type").and_then(Value::as_str).unwrap_or("");
+    if !matches!(
+        kind,
+        "functionCallOutput"
+            | "commandExecution"
+            | "fileChange"
+            | "imageGeneration"
+            | "mcpToolCall"
+            | "dynamicToolCall"
+    ) {
+        return item;
+    }
+    if include_outputs && output_chars == usize::MAX {
+        return item;
+    }
+    if kind == "commandExecution" {
+        if include_outputs {
+            if let Some(text) = item.get("aggregatedOutput").and_then(Value::as_str) {
+                item["aggregatedOutput"] = output_summary(text, output_chars);
+            }
+        } else {
+            item.as_object_mut().unwrap().remove("aggregatedOutput");
+        }
+        return item;
+    }
+    item_summary(item, include_outputs, output_chars)
 }
 
 #[cfg(test)]

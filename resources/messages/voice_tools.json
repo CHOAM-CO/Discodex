@@ -173,6 +173,12 @@
     "zh": "Discord 工具 IPC 响应 ID {id} 与请求 ID 1 不匹配",
     "ja": "Discord ツール IPC 応答 ID {id} がリクエスト ID 1 と一致しません"
   },
+  "voice_tools.caller_thread_missing": {
+    "en": "Voice inbox tool call is missing its caller thread metadata",
+    "ko": "음성 수신함 도구 호출에 호출자 스레드 메타데이터가 없습니다",
+    "zh": "语音收件箱工具调用缺少调用方会话元数据",
+    "ja": "音声受信トレイのツール呼び出しに呼び出し元スレッドのメタデータがありません"
+  },
   "voice_tools.ipc_no_result": {
     "en": "Discord tool IPC response has no result",
     "ko": "Discord 도구 IPC 응답에 결과가 없습니다",

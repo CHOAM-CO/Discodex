@@ -1,11 +1,48 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::model_catalog::ModelSelection;
+
+// All state writers share this short read/modify/write critical section.
+static NATIVE_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AgyThreadState {
+    pub conversation_id: Option<String>,
+    pub attempted_tail_order: Option<u64>,
+    pub current_run: Option<AgyRunAttempt>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyContextReference {
+    pub item_id: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub order: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AgyContextRange {
+    pub first: AgyContextReference,
+    pub last: AgyContextReference,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AgyRunAttempt {
+    pub binding: crate::agy_mcp::NativeRunBinding,
+    pub context_range: Option<AgyContextRange>,
+    pub outcome: String,
+    pub terminal_status: Option<String>,
+    pub exit_status: Option<String>,
+    pub diagnostic: Option<String>,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct NativeState {
@@ -16,6 +53,8 @@ pub struct NativeState {
     pub pending_new_thread: bool,
     #[serde(default)]
     pub(crate) model_selection: Option<ModelSelection>,
+    #[serde(default)]
+    pub agy_threads: BTreeMap<String, AgyThreadState>,
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +70,13 @@ impl StateStore {
     }
 
     pub fn load(&self) -> Result<NativeState> {
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        self.load_unlocked()
+    }
+
+    fn load_unlocked(&self) -> Result<NativeState> {
         match fs::read(&self.path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .with_context(|| format!("parse native state {}", self.path.display())),
@@ -42,7 +88,10 @@ impl StateStore {
     }
 
     pub fn save_thread_id(&self, thread_id: &str) -> Result<()> {
-        let mut state = self.load()?;
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
         if let Some(previous) = state.thread_id.as_ref() {
             if previous != thread_id && !state.previous_thread_ids.contains(previous) {
                 state.previous_thread_ids.push(previous.clone());
@@ -54,7 +103,10 @@ impl StateStore {
     }
 
     pub(crate) fn save_model_selection(&self, selection: &ModelSelection) -> Result<()> {
-        let mut state = self.load()?;
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
         state.model_selection = Some(selection.clone());
         self.save(&state)
     }
@@ -64,7 +116,10 @@ impl StateStore {
         thread_id: &str,
         selection: &ModelSelection,
     ) -> Result<()> {
-        let mut state = self.load()?;
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
         if let Some(previous) = state.thread_id.as_ref() {
             if previous != thread_id && !state.previous_thread_ids.contains(previous) {
                 state.previous_thread_ids.push(previous.clone());
@@ -76,10 +131,59 @@ impl StateStore {
         self.save(&state)
     }
 
-    pub fn mark_pending_new_thread(&self) -> Result<()> {
-        let mut state = self.load()?;
+    pub(crate) fn save_pending_model_selection(
+        &self,
+        previous_thread_id: &str,
+        selection: &ModelSelection,
+    ) -> Result<()> {
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
+        if !state
+            .previous_thread_ids
+            .iter()
+            .any(|id| id == previous_thread_id)
+        {
+            state
+                .previous_thread_ids
+                .push(previous_thread_id.to_owned());
+        }
+        state.model_selection = Some(selection.clone());
         state.pending_new_thread = true;
         self.save(&state)
+    }
+
+    pub fn mark_pending_new_thread(&self) -> Result<()> {
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
+        state.pending_new_thread = true;
+        self.save(&state)
+    }
+
+    pub(crate) fn agy_thread(&self, thread_id: &str) -> Result<AgyThreadState> {
+        Ok(self
+            .load()?
+            .agy_threads
+            .get(thread_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub(crate) fn update_agy_thread<T>(
+        &self,
+        thread_id: &str,
+        update: impl FnOnce(&mut AgyThreadState) -> Result<T>,
+    ) -> Result<T> {
+        let _guard = NATIVE_STATE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native state lock poisoned"))?;
+        let mut state = self.load_unlocked()?;
+        let result = update(state.agy_threads.entry(thread_id.to_owned()).or_default())?;
+        self.save(&state)?;
+        Ok(result)
     }
 
     fn save(&self, state: &NativeState) -> Result<()> {
@@ -94,6 +198,15 @@ impl StateStore {
             .with_context(|| format!("create temporary native state in {}", parent.display()))?;
         temp.write_all(&bytes)
             .with_context(|| format!("write temporary native state in {}", parent.display()))?;
+        match fs::metadata(&self.path) {
+            Ok(metadata) => temp.as_file().set_permissions(metadata.permissions())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect native state {}", self.path.display()));
+            }
+        }
+        temp.as_file().sync_all()?;
         temp.persist(&self.path)
             .map_err(|error| error.error)
             .with_context(|| format!("replace native state {}", self.path.display()))?;

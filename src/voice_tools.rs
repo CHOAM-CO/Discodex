@@ -126,11 +126,13 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
+                let metadata = params.get("_meta").cloned();
                 if name == "voice_leave" {
                     match parse_leave_summary(&args, language) {
-                        Ok(_) => {
-                            tool_result(id, invoke_parent(endpoint, name, args, language).await)?
-                        }
+                        Ok(_) => tool_result(
+                            id,
+                            invoke_parent(endpoint, name, args, metadata, language).await,
+                        )?,
                         Err(error) => {
                             json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":error.to_string()}})
                         }
@@ -139,7 +141,10 @@ pub async fn run(endpoint: &Path, language: crate::i18n::Language) -> Result<()>
                     if !args.is_object() {
                         json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":language.message(MessageKey::VoiceToolsArgumentsObject)}})
                     } else {
-                        tool_result(id, invoke_parent(endpoint, name, args, language).await)?
+                        tool_result(
+                            id,
+                            invoke_parent(endpoint, name, args, metadata, language).await,
+                        )?
                     }
                 } else {
                     json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":language.message(MessageKey::VoiceToolsUnknownTool).replace("{name}", name)}})
@@ -234,6 +239,7 @@ async fn invoke_parent(
     endpoint: &Path,
     method: &str,
     args: Value,
+    metadata: Option<Value>,
     language: Language,
 ) -> std::result::Result<Value, Value> {
     let mut stream = UnixStream::connect(endpoint).await.map_err(|error| {
@@ -244,7 +250,10 @@ async fn invoke_parent(
                 .replace("{error}", &format!("{error:#}")),
         )
     })?;
-    let request = json!({"jsonrpc":"2.0","id":1,"method":method,"params":args});
+    let mut request = json!({"jsonrpc":"2.0","id":1,"method":method,"params":args});
+    if let Some(metadata) = metadata {
+        request["_meta"] = metadata;
+    }
     let mut bytes = serde_json::to_vec(&request).map_err(|error| {
         ipc_error(
             language

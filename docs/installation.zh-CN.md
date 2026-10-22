@@ -59,13 +59,13 @@ Discord token 通过安全输入提供。安装器会检查 Discord 访问和 na
 
 ## 受管理的运行时与 Codex 数据
 
-Discodex 1.0 使用 `third_party/codex` 固定的预编译 Codex 分支，不再选择已安装桌面应用或 CLI 的 core。沿用官方包布局，包含 `bin/codex`、`bin/codex-code-mode-host`、`rg`，以及平台需要的 Linux `bwrap`、Windows command-runner 和 sandbox-setup helper。Windows 可执行文件带 `.exe` 后缀。
+Discodex 使用 `third_party/codex` 固定的预编译 Codex 分支，不再选择已安装桌面应用或 CLI 的 core。沿用官方包布局，包含 `bin/codex`、`bin/codex-code-mode-host`、`rg`，以及平台需要的 Linux `bwrap`、Windows command-runner 和 sandbox-setup helper。Windows 可执行文件带 `.exe` 后缀。
 
 新安装可共享已有 Codex 数据目录，沿用登录、记忆、配置和会话历史；检测到现有目录时推荐此选项。也可在 Discodex 配置数据下创建独立目录。重装和更新保留当前目录。功能偏好由 Discodex 保存并传给其子进程或原生会话设置，不覆盖共享 `config.toml`。不同客户端可以使用共享目录中的不同会话，不应同时操作同一个会话。
 
 每个版本提供原有 `discodex-<target>[.exe]`、`discodex-runtime-<target>.tar.gz` 和 `discodex-runtime-<target>.json`。清单只包含 worker 版本、准确分支提交、平台、归档校验和及包内相对路径校验和，不包含用户配置、账户、凭据、主机地址或本地安装路径。更新先准备版本化运行时，再切换拥有的 worker、配置和所有权记录。运行时准备失败时，响应可能已中断；已安装文件保持不变，也不自动恢复响应。更新不复制或删除原生数据目录。替换或重启失败时按下文所述顺序尝试恢复；清理时保留未登记的用户文件。
 
-本指南描述 1.0 源码。下载版本以公开 Release 标签为准；平台构建与用户验证结果另行报告。
+本指南描述当前源码的行为。下载版本以公开 Release 标签为准；平台构建与用户验证结果另行报告。
 
 配置项目包含默认的 `.agents/skills/discodex/` 技能。简短的 `SKILL.md` 使用配置语言，指向同一构建的四语言安装与设计文档，让智能体按需读取设置、更新或诊断所需的参考内容。安装、更新激活和新的原生 app-server 连接准备阶段会同步这些帮助文件。已有的用户同名技能保持不变；受管理技能中被用户修改的文件逐个保留。帮助同步失败时仅报告警告，不阻止机器人连接。基本提示词和共享 `CODEX_HOME` 保持不变。
 
@@ -115,7 +115,7 @@ model = "example-model"
 model_provider = "demo"
 ```
 
-当前 catalog 和已注册 profile 会提供模型选项。选择模型时，会在同一个持久 thread 中切换 provider 并保留历史；实际的 provider 或 executor 切换使用原生分支的历史保留转换。同一 provider 内的更改可立即应用，跨提供商或执行器的更改需要在当前回复或语音结束后重新选择，不会排入队列。能力和推理强度选项遵循原生元数据；兼容目录所用的默认值不代表已验证提供商的实际能力。请参阅 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据 schema](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
+从当前原生目录和注册的提供商/模型 profile 读取选项与能力元数据。Codex 内切换提供商通过原生转换延续历史；Codex↔AGY 切换创建新工作会话，并保留旧历史引用。通话中切换时，通话保留原会话，后续输入使用新 primary。参考 [Codex provider 配置指南](https://developers.openai.com/codex/config-advanced/)和[官方模型元数据](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。
 
 主模型和默认子模型的选择同时保存执行器、提供商与模型；子会话可使用其他已注册提供商而不切换父会话。`[model_providers.<id>.capabilities]` 下的 `encrypted_content` 和 `agent_messages` 是独立的可选布尔值。省略时沿用原生默认分类：OpenAI 与 Azure Responses 默认支持加密历史重放，只有原生 OpenAI 分类默认支持 `AgentMessage`。显式值应符合提供商的实际协议支持。即使 `encrypted_content = true`，不支持原生 agent-message 格式时，其不透明正文也会在普通 assistant 消息中标明不可用。原始历史保持不变；详见[历史兼容性](design.zh-CN.md#提供商切换与加密历史)。
 
@@ -123,15 +123,21 @@ model_provider = "demo"
 
 `/discodex settings` 将**批准策略**与**权限配置**分开。配置默认值是 `on-request`；`never` 只在用户明确选择时使用。页面区分保存的策略与当前会话的实际值。活动会话通过原生设置 API 更新，开始或恢复会话时也传入所选策略。Windows 管理员权限及模型自身安全行为与此策略独立。 审批选择按配置文件保存在各自的 `native-features.json` 中，不覆盖共享 Codex 配置。
 
-主设置只显示一次**默认子智能体模型**；**高级设置**包含详细功能和 **Antigravity**。原生进程功能开关在 worker 重启后生效；Antigravity 设置在下次模型选择或 AGY 会话启动时生效。保存的子模型默认值在下次创建或恢复线程时读取，包括 worker 重启后的恢复。当前线程在恢复前保持有效设置，现有子会话也保留各自配置。
+设置主页只显示一次**默认子智能体模型**，并提供独立的 **Antigravity** 入口。**高级设置**包含原生详细功能开关。原生进程功能会说明是否需重启 worker，AGY 偏好在下次 AGY 执行时生效。保存的子默认值在线程创建或恢复时读取，已有子会话保留自身设置。
 
-Antigravity 默认关闭。可在安装时选择，或在 Discord 的**高级设置 → Antigravity**中启用。安装程序下载并验证官方预编译 CLI，放入 Discodex 配置专属位置，不复用或覆盖外部 AGY 程序。选择**共享现有设置**或**独立设置**；后者通过原生 `--gemini_dir` 和 `--app_data_dir` 使用配置内的设置目录。两者仍使用 AGY 原生操作系统账户密钥环，因此独立设置不代表账户隔离。
+Antigravity 默认关闭。安装器和**设置 → Antigravity**验证官方预编译 CLI 并安装到配置专属位置，不复用或覆盖外部 AGY。可将个人偏好作为只读基准导入。Discodex 的覆盖值、MCP 配置和 `mcp(discodex_tasks/*)` 允许规则始终放在专属文件中，保留个人设置与无关 MCP 条目。操作系统密钥环沿用 AGY 行为；卸载移除托管程序，不退出 AGY 账户。
 
-准备过程检查登录状态，需要时启动 AGY 原生交互登录。Discord 展示 CLI 的实际提示和浏览器登录链接，并提供选项按钮和所需授权码输入。浏览器授权由用户完成。可用**取消**或**退出**停止准备；安装器准备过程中使用 Ctrl+C 或 Ctrl+D，选项阶段可输入 `q`。取消不会退出 AGY 账户或撤销已完成的授权。只有登录和模型列表验证成功后才启用 AGY。补充的准确模型 ID 可每行输入一个。设置在下一次模型选择或执行时生效，无需重启 worker；订阅凭据不通过 SDK 传递。
+准备时检查账户和目录，需要时启动官方交互登录，将实际提示、浏览器链接和所需授权码输入连接到 Discord 或安装器。浏览器授权由用户完成。取消或退出会停止所属准备进程，不撤销已完成的授权。直接使用订阅 CLI，不使用 SDK 或私有认证端点。
 
-启用后，Discodex 从已安装 CLI 的 `agy models` 读取准确模型 ID 和名称，从 `agy --help` 读取推理强度选项，不发送模型提示。两处模型列表显示发现结果，手动填写的 ID 用于补充。CLI 帮助列出的是参数选项，不是已验证的各模型能力元数据。不会按模型名称猜测 ID 或映射强度。列表读取失败会显示在设置中。明确指定的不受支持强度会原样传给 CLI，并可能返回错误，不会自动替换为其他值。
+Antigravity 设置主页提供启用与准备、现有偏好选择、刷新模型列表、原生工具/产物/终端策略，以及 allow/ask/deny 规则编辑。**允许所有权限**是传递官方 auto-approve flag 的独立明确选择，打开页面不会自动启用。原生策略写入专属 settings JSON，下次 AGY 执行时生效。每页都有退出，子页另有返回。
 
-AGY 文字任务使用其重叠的内置工具，额外的 Discord 和任务工具通过项目 MCP 连接，并保留其他 MCP 条目。子智能体生命周期由 Codex 分支管理。每次响应启动新的 AGY CLI，重新输入原生对话和可见工具结果。原生历史与记忆留在 Codex，不恢复 AGY 私有推理或隐藏状态。即使由 AGY 执行任务，语音仍通过所选 Codex 目录的账户连接 Codex Realtime；仅有 AGY 登录无法认证语音连接。也不保证能关闭 AGY 的全部内置团队功能；不会用测试强制模型选择某个工具。
+AGY 模型目录缓存 24 小时，可在**设置 → Antigravity → 更新模型列表**中刷新。基础模型 ID 与 `--effort` 分开传递。支持的等级来自发现的模型元数据；所选等级不受支持时，会降为不高于所选值的最高支持等级，并在设置中显示实际值。未知模型 ID 保持原样，CLI 错误会直接显示。即使 AGY 原生强度降低，Codex `ultra` 的编排指令仍保留。
+
+每次 AGY 执行启动 CLI 进程，但使用保存的准确对话 ID 恢复，仅发送新接纳的输入和待传递转录。Codex 与 AGY 之间切换会创建新的工作会话，保留用于显式查询旧历史的引用。子智能体默认从新上下文开始；受支持的 Codex 子会话仍可显式 fork，不支持的 AGY fork 会返回实际错误。子生命周期通过 MCP 由 Codex 管理。
+
+无论主执行器是什么，语音都使用所选 Codex 账户的 OpenAI Realtime 连接。委派结果返回当前通话；最后一次委派后的发言在通话结束时保存，不额外生成回复，并随下一次普通请求传递。通话中切换 primary 会话不会改变当前通话的工作会话。Codex 与 Discodex 失败会保留原始消息、代码和状态。
+
+仅登录 AGY 无法认证 OpenAI 语音连接。
 
 ## 更新
 

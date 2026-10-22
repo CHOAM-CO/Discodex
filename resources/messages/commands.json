@@ -2116,5 +2116,11 @@
     "ko": "해당 음성을 더 이상 사용할 수 없습니다.",
     "zh": "该语音已不可用。",
     "ja": "その音声は利用できなくなりました。"
+  },
+  "commands.model_switch_targets": {
+    "en": "The current voice call keeps its work session `{voice_thread}`. New ordinary input and the next call use `{primary_thread}`; ordinary messages received during this call retain the existing inbox behavior.",
+    "ko": "현재 음성 통화의 작업 세션은 `{voice_thread}`로 유지합니다. 새 일반 입력과 다음 통화는 `{primary_thread}`를 사용하며, 통화 중 일반 메시지는 기존 받은편지함 방식으로 처리합니다.",
+    "zh": "当前语音通话继续使用工作会话 `{voice_thread}`。新的普通输入和下一次通话使用 `{primary_thread}`；通话期间收到的普通消息仍按现有收件箱方式处理。",
+    "ja": "現在の音声通話は作業セッション `{voice_thread}`を維持します。新しい通常入力と次の通話には `{primary_thread}`を使用し、通話中の通常メッセージは既存の受信トレイ方式で処理します。"
   }
 }

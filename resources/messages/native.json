@@ -118,5 +118,41 @@
     "ko": "설정 확인 전에 네이티브 연결이 종료되었습니다",
     "zh": "确认设置前原生连接已关闭",
     "ja": "設定の確認前にネイティブ接続が閉じられました"
+  },
+  "native.explanation_style": {
+    "en": "State who acts, under what conditions, and what happens. Explain results directly and support them with the relevant evidence. Describe failures and information that still needs checking where they affect the request. Avoid repeated reminders about approval status, unnecessary warnings or disclaimers, and unrequested comparisons. Keep the conversation natural while following the existing tool, permission, and project rules.",
+    "ko": "행동 주체·대상·조건·결과를 명시하고 결과와 근거를 직접 설명하세요. 실패와 확인이 필요한 정보는 요청에 영향을 주는 위치에서 구체적으로 알리세요. 승인 상태를 반복해서 환기하거나 불필요한 경고·면책·요청하지 않은 대조 설명을 덧붙이지 마세요. 기존 도구·권한·프로젝트 규칙을 따르면서 자연스럽게 대화하세요.",
+    "zh": "明确说明行动主体、对象、条件和结果，并直接给出相关依据。在影响请求的地方具体说明失败和仍需核实的信息。不要反复提醒审批状态，不要添加不必要的警告、免责声明或用户未要求的对比说明。遵循现有工具、权限和项目规则，自然地交流。",
+    "ja": "行動の主体・対象・条件・結果を明示し、結果と根拠を直接説明してください。失敗や確認が必要な情報は、依頼に影響する箇所で具体的に伝えてください。承認状態の繰り返し、不必要な警告や免責、求められていない対比説明を付け加えないでください。既存のツール・権限・プロジェクトの規則に従いながら、自然に会話してください。"
+  },
+  "native.model_transition_request": {
+    "en": "apply the selected model and harness",
+    "ko": "선택한 모델과 하네스 적용",
+    "zh": "应用所选模型和执行框架",
+    "ja": "選択したモデルとハーネスを適用"
+  },
+  "native.state_write_failure": {
+    "en": "Could not save the conversation reference: {detail}",
+    "ko": "대화 참조를 저장하지 못했습니다: {detail}",
+    "zh": "无法保存会话引用：{detail}",
+    "ja": "会話の参照を保存できませんでした: {detail}"
+  },
+  "native.model_transition_cleanup_failure": {
+    "en": "Could not detach the replacement conversation: {detail}",
+    "ko": "대체 대화의 연결을 해제하지 못했습니다: {detail}",
+    "zh": "无法断开替代会话：{detail}",
+    "ja": "置き換え先の会話を切断できませんでした: {detail}"
+  },
+  "native.model_transition_commit": {
+    "en": "Could not save the selected model transition",
+    "ko": "선택한 모델 전환을 저장하지 못했습니다",
+    "zh": "无法保存所选模型切换",
+    "ja": "選択したモデルへの切り替えを保存できませんでした"
+  },
+  "native.retained_thread_restore": {
+    "en": "Restore the retained conversation subscription",
+    "ko": "유지 중인 대화 구독 복원",
+    "zh": "恢复保留的会话订阅",
+    "ja": "維持中の会話の購読を復元"
   }
 }

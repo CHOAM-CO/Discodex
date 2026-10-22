@@ -17,7 +17,11 @@ pub(crate) fn voice_join_policy(language: crate::i18n::Language) -> &'static str
 pub(crate) fn agent_identity_instructions(name: &str, language: crate::i18n::Language) -> String {
     let profile = serde_json::json!({"name": name});
     let body = language.message(crate::i18n::MessageKey::NativeAgentIdentityInstructions);
-    body.replace("{profile}", &profile.to_string())
+    let style = language.message(crate::i18n::MessageKey::NativeExplanationStyle);
+    format!(
+        "{}\n\n{style}",
+        body.replace("{profile}", &profile.to_string())
+    )
 }
 
 /// Policy for ending only the active voice call when the user asks to leave.

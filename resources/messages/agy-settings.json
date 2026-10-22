@@ -76,5 +76,23 @@
     "ko": "AGY 설정의 상위 항목은 JSON 객체여야 합니다.",
     "zh": "AGY 设置的父项必须是 JSON 对象。",
     "ja": "AGY 設定の親項目は JSON オブジェクトである必要があります。"
+  },
+  "agy_settings.hooks_object": {
+    "en": "AGY settings.hooks must be a JSON object.",
+    "ko": "AGY settings.hooks는 JSON 객체여야 합니다.",
+    "zh": "AGY settings.hooks 必须是 JSON 对象。",
+    "ja": "AGY settings.hooks は JSON オブジェクトである必要があります。"
+  },
+  "agy_settings.hook_conflict": {
+    "en": "A personal AGY hook already uses the Discodex managed hook name; its configuration was preserved.",
+    "ko": "개인 AGY hook이 Discodex 관리 hook 이름을 이미 사용하고 있어 기존 설정을 보존했습니다.",
+    "zh": "个人 AGY hook 已使用 Discodex 管理 hook 的名称；已保留其配置。",
+    "ja": "個人用 AGY hook が Discodex 管理 hook の名前を使用しているため、既存の設定を保持しました。"
+  },
+  "agy_settings.hook_executable": {
+    "en": "The Discodex executable path cannot be represented in the AGY hook command.",
+    "ko": "Discodex 실행 파일 경로를 AGY hook 명령으로 표현할 수 없습니다.",
+    "zh": "无法在 AGY hook 命令中表示 Discodex 可执行文件路径。",
+    "ja": "Discodex の実行ファイルのパスを AGY hook コマンドで表現できません。"
   }
 }

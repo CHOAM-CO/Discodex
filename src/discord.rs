@@ -495,6 +495,8 @@ pub(crate) struct VoiceInboxEntry {
     pub call_id: Option<String>,
     #[serde(default)]
     pub read_in_flight: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_native_thread_id: Option<String>,
     #[serde(default)]
     pub attachment_download_in_flight: bool,
     #[serde(default)]
@@ -719,7 +721,6 @@ impl EventHandler for Handler {
                     &state,
                     &msg,
                     &input,
-                    &thread_id,
                     call_id,
                     &content,
                     &message_attachments,
@@ -786,9 +787,7 @@ impl EventHandler for Handler {
                         }
                     }
                 }
-                if let Err(error) =
-                    submit_next_queued_input(&state, &state.native.thread_id()).await
-                {
+                if let Err(error) = drain_queued_and_retained_threads(&state).await {
                     report_discord_failure(
                         &ctx.http,
                         &state.config,
@@ -1092,37 +1091,75 @@ pub async fn run(
     let input_mode = load_input_mode(&input_mode_path)?.unwrap_or(config.input_mode);
     let message_access_path = config.state_dir.join("message-access.json");
     let message_access = crate::message_access::MessageAccess::load(&message_access_path, &config)?;
+    let async_questions = crate::async_questions::AsyncQuestionStore::load(
+        config.state_dir.join("async-questions.json"),
+    )?;
     let mut queued_inputs = load_queue(&config.state_dir.join("discord-inputs.json"))?;
     let changed_queue = recover_submitting_inputs(&mut queued_inputs);
     let mut changed_queue = changed_queue;
-    let mut startup_voice_recovery_error = None;
-    if queued_inputs.iter().any(|item| {
-        item.voice_inbox
-            .as_ref()
-            .is_some_and(|entry| entry.read_in_flight || entry.attachment_download_in_flight)
-    }) {
-        let thread_id = native.thread_id();
-        match native
-            .request(
-                "thread/read",
-                serde_json::json!({"threadId":thread_id,"includeTurns":true}),
-            )
-            .await
-        {
+    let mut recovery_errors = Vec::new();
+    let primary_thread = native.thread_id();
+    let recovery_threads = queued_inputs
+        .iter()
+        .flat_map(|item| {
+            let execution =
+                (item.delivery != QueueDelivery::Accepted).then(|| item.native_thread_id.clone());
+            let reading = item
+                .voice_inbox
+                .as_ref()
+                .filter(|entry| entry.read_in_flight)
+                .and_then(|entry| entry.read_native_thread_id.clone());
+            execution.into_iter().chain(reading)
+        })
+        .chain(
+            async_questions
+                .requests
+                .iter()
+                .filter(|request| async_questions.has_open_for_thread(&request.thread_id))
+                .map(|request| request.thread_id.clone()),
+        )
+        .collect::<HashSet<_>>();
+    for thread_id in recovery_threads {
+        if thread_id != primary_thread {
+            match native
+                .request("thread/resume", serde_json::json!({"threadId":thread_id}))
+                .await
+            {
+                Ok(_) => native.retain_thread(&thread_id)?,
+                Err(error) => recovery_errors.push(sanitize_discord_error_chain(&config, &error)),
+            }
+        }
+    }
+    let lookup_threads = queued_inputs
+        .iter()
+        .filter_map(|item| {
+            item.voice_inbox
+                .as_ref()
+                .filter(|entry| entry.read_in_flight || entry.attachment_download_in_flight)
+                .map(|entry| {
+                    entry
+                        .read_native_thread_id
+                        .clone()
+                        .unwrap_or_else(|| item.native_thread_id.clone())
+                })
+        })
+        .collect::<HashSet<_>>();
+    for thread_id in lookup_threads {
+        match native.request(
+            "thread/read", serde_json::json!({"threadId":thread_id,"includeTurns":true}),
+        ).await {
             Ok(history) if complete_thread_history_matches(&history, &thread_id) => {
                 changed_queue |= reconcile_voice_inbox_from_history(&mut queued_inputs, &history);
             }
-            Ok(_) => {
-                startup_voice_recovery_error = Some(
-                    "Native thread history was incomplete or belonged to a different conversation; unread voice inbox messages were preserved".to_owned(),
-                );
-            }
-            Err(error) => {
-                startup_voice_recovery_error = Some(sanitize_discord_error_chain(&config, &error));
-            }
+            Ok(_) => recovery_errors.push(
+                "Native thread history was incomplete or belonged to a different conversation; unread voice inbox messages were preserved".to_owned(),
+            ),
+            Err(error) => recovery_errors.push(sanitize_discord_error_chain(&config, &error)),
         }
         changed_queue |= clear_voice_inbox_runtime_flags(&mut queued_inputs, &thread_id);
     }
+    let startup_voice_recovery_error =
+        (!recovery_errors.is_empty()).then(|| recovery_errors.join("\n"));
     let queue_path = config.state_dir.join("discord-inputs.json");
     if changed_queue {
         save_queue(&queue_path, &queued_inputs)?;
@@ -1160,9 +1197,7 @@ pub async fn run(
         settings_menus: Mutex::new(HashMap::new()),
         agy_setup: crate::discord_agy_setup::Controller::default(),
         plugin_menus: Mutex::new(HashMap::new()),
-        async_questions: Mutex::new(crate::async_questions::AsyncQuestionStore::load(
-            config.state_dir.join("async-questions.json"),
-        )?),
+        async_questions: Mutex::new(async_questions),
         settings_change_lock: Mutex::new(()),
         settings_operations: crate::settings_operation::SettingsOperations::new(config.language),
     });
@@ -1184,14 +1219,20 @@ pub async fn run(
         Arc::new(serenity::http::Http::new(&token)),
     ));
     let tool_state = Arc::downgrade(&state);
-    native.set_discord_tool_handler(Arc::new(move |name, arguments| {
+    native.set_discord_tool_handler(Arc::new(move |name, arguments, caller_thread| {
         let state = tool_state.upgrade();
         let tools = discord_tools.clone();
         Box::pin(async move {
             let state =
                 state.ok_or_else(|| anyhow::anyhow!("Discord bridge is no longer available"))?;
             if name == "discord_read_voice_inbox" {
-                return read_voice_inbox(&state, &arguments).await;
+                let caller_thread = caller_thread.context(
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::VoiceToolsCallerThreadMissing),
+                )?;
+                return read_voice_inbox(&state, &arguments, &caller_thread).await;
             }
             if name == "voice_join" {
                 let _activity = state.updates.try_activity().ok_or_else(|| {
@@ -1274,7 +1315,7 @@ pub async fn run(
             tokio::select! {
                 _ = &mut event_stop_rx => break,
                 _ = event_state.voice.input_gate.ready.notified() => {
-                    if let Err(error) = submit_next_queued_input(&event_state, &event_state.native.thread_id()).await {
+                    if let Err(error) = drain_queued_and_retained_threads(&event_state).await {
                         let detail = sanitize_discord_error_chain(&event_state.config, &error);
                         warn!(%detail, "failed to dispatch queued input after voice ended");
                         report_discord_failure(&event_http, &event_state.config, ChannelId::new(event_state.config.home_channel_id), &detail).await;
@@ -1362,7 +1403,7 @@ pub(crate) async fn submit_async_answer(
     target: ReplyTarget,
     expected_thread_id: &str,
 ) -> anyhow::Result<()> {
-    if state.native.thread_id() != expected_thread_id {
+    if !bridge_owns_thread(state, expected_thread_id).await? {
         bail!("The question belongs to a different conversation");
     }
     {
@@ -1603,7 +1644,6 @@ async fn enqueue_voice_inbox(
     state: &BridgeState,
     msg: &Message,
     input: &str,
-    thread_id: &str,
     call_id: uuid::Uuid,
     preview_body: &str,
     message_attachments: &[serenity::all::Attachment],
@@ -1639,6 +1679,8 @@ async fn enqueue_voice_inbox(
         .and_then(|member| member.nick.clone())
         .or_else(|| msg.author.global_name.clone())
         .unwrap_or_else(|| msg.author.name.clone());
+    let phase = state.voice.input_gate.state.lock().await;
+    let thread_id = state.native.thread_id();
     let mut queue = state.queued_inputs.lock().await;
     let mut staged = queue.clone();
     if let Some(existing) = staged.iter().find(|item| item.message_id == msg.id.get()) {
@@ -1653,7 +1695,7 @@ async fn enqueue_voice_inbox(
         attachments: Vec::new(),
         channel_id: msg.channel_id.get(),
         message_id: msg.id.get(),
-        native_thread_id: thread_id.to_owned(),
+        native_thread_id: thread_id,
         delivery: QueueDelivery::Queued,
         submission_generation: state.native.current_generation(),
         voice_inbox: Some(VoiceInboxEntry {
@@ -1663,6 +1705,7 @@ async fn enqueue_voice_inbox(
             preview: truncate_voice_preview(preview_body, 80),
             call_id: Some(call_id.to_string()),
             read_in_flight: false,
+            read_native_thread_id: None,
             attachment_download_in_flight: false,
             pending_attachments,
             read: false,
@@ -1671,6 +1714,7 @@ async fn enqueue_voice_inbox(
     save_queue(&state.queue_path, &staged)?;
     *queue = staged;
     drop(queue);
+    drop(phase);
     match download_pending_voice_attachments(state, msg.id.get()).await {
         Ok(pending) => Ok(pending),
         Err(error) => {
@@ -1929,6 +1973,7 @@ async fn notify_voice_inbox(
 async fn read_voice_inbox(
     state: &BridgeState,
     args: &serde_json::Value,
+    caller_thread: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let call_id = args
         .get("call_id")
@@ -1951,12 +1996,11 @@ async fn read_voice_inbox(
         bail!("message_ids must contain unique message IDs");
     }
     let phase = state.voice.input_gate.state.lock().await;
-    let active_thread = match &*phase {
+    match &*phase {
         crate::voice_input::VoiceInputPhase::Active {
             call_id: active_call,
-            thread_id,
             ..
-        } if *active_call == call_id && thread_id == &state.native.thread_id() => thread_id.clone(),
+        } if *active_call == call_id => {}
         _ => bail!("voice inbox lookup is available only during the matching active call"),
     };
     let mut queue = state.queued_inputs.lock().await;
@@ -1965,7 +2009,7 @@ async fn read_voice_inbox(
     for id in &ids {
         let item = staged
             .iter_mut()
-            .find(|item| item.message_id == *id && item.native_thread_id == active_thread)
+            .find(|item| item.message_id == *id)
             .context("one or more requested inbox messages are unavailable")?;
         let entry = item
             .voice_inbox
@@ -1978,6 +2022,7 @@ async fn read_voice_inbox(
             bail!("one or more requested inbox messages are no longer unread for this call");
         }
         entry.read_in_flight = true;
+        entry.read_native_thread_id = Some(caller_thread.to_owned());
         selected.push(item.clone());
     }
     save_queue(&state.queue_path, &staged)?;
@@ -2040,6 +2085,7 @@ fn apply_voice_inbox_read_result(
             if let Some(entry) = &mut item.voice_inbox {
                 if entry.call_id.as_deref() == Some(call_id.as_str()) && entry.read_in_flight {
                     entry.read_in_flight = false;
+                    entry.read_native_thread_id = None;
                     if acknowledged_ids.contains(&item.message_id) {
                         entry.read = true;
                         item.delivery = QueueDelivery::Accepted;
@@ -2273,10 +2319,17 @@ fn complete_thread_history_matches(history: &serde_json::Value, thread_id: &str)
 fn clear_voice_inbox_runtime_flags(queue: &mut VecDeque<QueuedInput>, thread_id: &str) -> bool {
     let mut changed = false;
     for item in queue.iter_mut() {
-        if item.native_thread_id == thread_id {
+        if item
+            .voice_inbox
+            .as_ref()
+            .and_then(|entry| entry.read_native_thread_id.as_deref())
+            .unwrap_or(item.native_thread_id.as_str())
+            == thread_id
+        {
             if let Some(entry) = &mut item.voice_inbox {
                 if entry.read_in_flight || entry.attachment_download_in_flight {
                     entry.read_in_flight = false;
+                    entry.read_native_thread_id = None;
                     entry.attachment_download_in_flight = false;
                     changed = true;
                 }
@@ -2300,19 +2353,22 @@ async fn release_voice_inbox_reservations(
     Ok(())
 }
 
-async fn reconcile_voice_inbox_at_idle(state: &BridgeState, thread_id: &str) -> anyhow::Result<()> {
-    if thread_id != state.native.thread_id() {
-        return Ok(());
-    }
+async fn reconcile_voice_inbox_at_idle(
+    state: &BridgeState,
+    thread_id: &str,
+) -> anyhow::Result<bool> {
     let has_inflight = state.queued_inputs.lock().await.iter().any(|item| {
-        item.native_thread_id == thread_id
-            && item
-                .voice_inbox
-                .as_ref()
-                .is_some_and(|entry| entry.read_in_flight)
+        item.voice_inbox.as_ref().is_some_and(|entry| {
+            entry.read_in_flight
+                && entry
+                    .read_native_thread_id
+                    .as_deref()
+                    .unwrap_or(item.native_thread_id.as_str())
+                    == thread_id
+        })
     });
     if !has_inflight {
-        return Ok(());
+        return Ok(false);
     }
     let history_result = state
         .native
@@ -2341,10 +2397,17 @@ async fn reconcile_voice_inbox_at_idle(state: &BridgeState, thread_id: &str) -> 
     // terminal record. Any still-reserved IDs were not successfully read.
     let mut released = false;
     for item in &mut staged {
-        if item.native_thread_id == thread_id {
+        if item
+            .voice_inbox
+            .as_ref()
+            .and_then(|entry| entry.read_native_thread_id.as_deref())
+            .unwrap_or(item.native_thread_id.as_str())
+            == thread_id
+        {
             if let Some(entry) = &mut item.voice_inbox {
                 if entry.read_in_flight {
                     entry.read_in_flight = false;
+                    entry.read_native_thread_id = None;
                     released = true;
                 }
             }
@@ -2354,7 +2417,7 @@ async fn reconcile_voice_inbox_at_idle(state: &BridgeState, thread_id: &str) -> 
         save_queue(&state.queue_path, &staged)?;
         *queue = staged;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn submit_voice_input(
@@ -2456,24 +2519,30 @@ async fn submit_input_for_thread(
     voice_attachment: Option<VoiceAttachmentAdmission>,
     expected_thread_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    if expected_thread_id.is_some_and(|id| id != state.native.thread_id()) {
+    if let Some(thread_id) = expected_thread_id
+        && !bridge_owns_thread(state, thread_id).await?
+    {
         bail!("The question belongs to a different conversation");
     }
+    let phase = state.voice.input_gate.state.lock().await;
+    let thread_id = voice_attachment
+        .as_ref()
+        .map(|admission| admission.thread_id.clone())
+        .or_else(|| expected_thread_id.map(str::to_owned))
+        .unwrap_or_else(|| state.native.thread_id());
     if state.updates.applying() {
         return record_input(
             state,
             input,
             attachments,
             &target,
-            &state.native.thread_id(),
+            &thread_id,
             QueueDelivery::Queued,
         )
         .await;
     }
     // Hold admission through the native write. Voice start/stop uses this same
     // mutex, so a captured voice attachment cannot cross a realtime transition.
-    let phase = state.voice.input_gate.state.lock().await;
-    let thread_id = state.native.thread_id();
     if let Some(admission) = voice_attachment.as_ref()
         && !voice_attachment_admission_matches(
             &phase,
@@ -2522,53 +2591,12 @@ async fn submit_input_for_thread(
     // Serialize observation and admission with terminal events and thread replacement.
     // The reader resolves recovery RPCs independently of Discord event handling.
     let mut active = state.current_turn.lock().await;
-    if expected_thread_id.is_some_and(|id| id != state.native.thread_id()) {
+    if let Some(thread_id) = expected_thread_id
+        && !bridge_owns_thread(state, thread_id).await?
+    {
         bail!("The question belongs to a different conversation");
     }
     let recovery = state.native.prepare_turn_input().await?;
-    if let Some(admission) = voice_attachment.as_ref()
-        && !voice_attachment_admission_matches(
-            &phase,
-            admission,
-            target.channel_id.get(),
-            &state.native.thread_id(),
-        )
-    {
-        bail!(
-            "{}",
-            state
-                .config
-                .language
-                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
-        );
-    }
-    if recovery.is_some() {
-        // Another caller may have reconnected before this guard was acquired.
-        // Read actual state instead of replaying its cached active-turn snapshot.
-        let snapshot = read_recovery_turn_snapshot(&state.native).await?;
-        {
-            let active_turn = snapshot_active_turn(snapshot.get("thread").unwrap_or(&snapshot))
-                .ok_or_else(|| {
-                    anyhow::anyhow!("native turn state was not observable after reconnect")
-                })?;
-            let thread_id = state.native.thread_id();
-            let mut active_turns = state.active_turns.lock().await;
-            let mut orders = state.turn_observation_orders.lock().await;
-            if !apply_turn_state_observation(
-                &mut active,
-                &mut active_turns,
-                &mut orders,
-                &thread_id,
-                &thread_id,
-                state.native.current_generation(),
-                &active_turn,
-                &snapshot,
-            ) {
-                bail!("native recovery turn observation was obsolete");
-            }
-        }
-    }
-    let thread_id = state.native.thread_id();
     if let Some(admission) = voice_attachment.as_ref()
         && !voice_attachment_admission_matches(
             &phase,
@@ -2585,7 +2613,53 @@ async fn submit_input_for_thread(
                 .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
         );
     }
-    if let Some(turn_id) = active.clone() {
+    if recovery.is_some() {
+        // Another caller may have reconnected before this guard was acquired.
+        // Read actual state instead of replaying its cached active-turn snapshot.
+        let snapshot = read_thread_turn_snapshot(&state.native, &thread_id).await?;
+        {
+            let active_turn = snapshot_active_turn(snapshot.get("thread").unwrap_or(&snapshot))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("native turn state was not observable after reconnect")
+                })?;
+            let mut active_turns = state.active_turns.lock().await;
+            let mut orders = state.turn_observation_orders.lock().await;
+            if !apply_turn_state_observation(
+                &mut active,
+                &mut active_turns,
+                &mut orders,
+                &thread_id,
+                &state.native.thread_id(),
+                state.native.current_generation(),
+                &active_turn,
+                &snapshot,
+            ) {
+                bail!("native recovery turn observation was obsolete");
+            }
+        }
+    }
+    if let Some(admission) = voice_attachment.as_ref()
+        && !voice_attachment_admission_matches(
+            &phase,
+            admission,
+            target.channel_id.get(),
+            &thread_id,
+        )
+    {
+        bail!(
+            "{}",
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
+        );
+    }
+    let target_turn = if thread_id == state.native.thread_id() {
+        active.clone()
+    } else {
+        state.active_turns.lock().await.get(&thread_id).cloned()
+    };
+    if let Some(turn_id) = target_turn {
         if voice_attachment.is_some() || *state.input_mode.read().await == InputMode::Steering {
             record_input(
                 state,
@@ -2622,17 +2696,14 @@ async fn submit_input_for_thread(
                 {
                     mark_input_rejected(state, target.message_id.get()).await?;
                     let mut recovered_current = state.current_turn.lock().await;
-                    if state.native.thread_id() != thread_id {
-                        return Err(error);
-                    }
-                    let actual = read_recovery_turn_snapshot(&state.native).await?;
+                    let actual = read_thread_turn_snapshot(&state.native, &thread_id).await?;
                     let actual_turn = snapshot_active_turn(actual.get("thread").unwrap_or(&actual));
                     let Some(actual_turn) = actual_turn else {
                         return Err(anyhow::anyhow!(
                             "native turn state was not observable after turn mismatch"
                         ));
                     };
-                    let actual_thread_id = state.native.thread_id();
+                    let actual_thread_id = thread_id.clone();
                     {
                         let mut active_turns = state.active_turns.lock().await;
                         let mut orders = state.turn_observation_orders.lock().await;
@@ -2641,7 +2712,7 @@ async fn submit_input_for_thread(
                             &mut active_turns,
                             &mut orders,
                             &actual_thread_id,
-                            &thread_id,
+                            &state.native.thread_id(),
                             state.native.current_generation(),
                             &actual_turn,
                             &actual,
@@ -2933,6 +3004,9 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
     if state.updates.applying() {
         return Ok(());
     }
+    if !state.voice.input_gate.state.lock().await.allow_ordinary() {
+        return Ok(());
+    }
     let retry_message = {
         let queue = state.queued_inputs.lock().await;
         queue
@@ -2954,6 +3028,29 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
     }
     let phase = state.voice.input_gate.state.lock().await;
     let mut current = state.current_turn.lock().await;
+    let recovery = state.native.prepare_turn_input().await?;
+    if recovery.is_some()
+        || state
+            .turn_observation_orders
+            .lock()
+            .await
+            .get(thread_id)
+            .is_none_or(|(generation, _)| *generation != state.native.current_generation())
+    {
+        let snapshot = read_thread_turn_snapshot(&state.native, thread_id).await?;
+        let observed = snapshot_active_turn(snapshot.get("thread").unwrap_or(&snapshot))
+            .context("native turn state was not observable after reconnect")?;
+        apply_turn_state_observation(
+            &mut current,
+            &mut state.active_turns.lock().await,
+            &mut state.turn_observation_orders.lock().await,
+            thread_id,
+            &state.native.thread_id(),
+            state.native.current_generation(),
+            &observed,
+            &snapshot,
+        );
+    }
     if (thread_id == state.native.thread_id() && current.is_some())
         || state.active_turns.lock().await.contains_key(thread_id)
     {
@@ -3002,6 +3099,72 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
         }
     }
     Ok(())
+}
+
+async fn bridge_owns_thread(state: &BridgeState, thread_id: &str) -> anyhow::Result<bool> {
+    Ok(thread_id == state.native.thread_id()
+        || state.voice.owns_native_thread(thread_id).await?
+        || state
+            .native
+            .retained_thread_ids()?
+            .iter()
+            .any(|id| id == thread_id))
+}
+
+async fn drain_queued_and_retained_threads(state: &BridgeState) -> anyhow::Result<()> {
+    let mut threads = state.native.retained_thread_ids()?;
+    let primary = state.native.thread_id();
+    if !threads.contains(&primary) {
+        threads.push(primary);
+    }
+    let mut errors = Vec::new();
+    for thread_id in &threads {
+        if let Err(error) = submit_next_queued_input(state, thread_id).await {
+            errors.push(format!("{error:#}"));
+            continue;
+        }
+        if !state.active_turns.lock().await.contains_key(thread_id) {
+            match reconcile_voice_inbox_at_idle(state, thread_id).await {
+                Ok(true) => {
+                    if let Err(error) = submit_next_queued_input(state, thread_id).await {
+                        errors.push(format!("{error:#}"));
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => errors.push(format!("{error:#}")),
+            }
+        }
+    }
+    let _phase = state.voice.input_gate.state.lock().await;
+    let _current = state.current_turn.lock().await;
+    for thread_id in threads {
+        if thread_id == state.native.thread_id()
+            || state.voice.owns_native_thread(&thread_id).await?
+            || state.active_turns.lock().await.contains_key(&thread_id)
+            || state
+                .async_questions
+                .lock()
+                .await
+                .has_open_for_thread(&thread_id)
+            || state.queued_inputs.lock().await.iter().any(|item| {
+                (item.native_thread_id == thread_id && item.delivery != QueueDelivery::Accepted)
+                    || item.voice_inbox.as_ref().is_some_and(|entry| {
+                        entry.read_in_flight
+                            && entry.read_native_thread_id.as_deref() == Some(thread_id.as_str())
+                    })
+            })
+        {
+            continue;
+        }
+        if let Err(error) = state.native.release_retained_thread(&thread_id).await {
+            errors.push(format!("{error:#}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(errors.join("\n"))
+    }
 }
 
 fn claim_queued_input_when_idle(
@@ -3378,7 +3541,7 @@ async fn publish_task_plan_update(
 
     let plan =
         crate::task_plan::TaskPlan::from_params(params).context("parse native turn plan update")?;
-    if plan.thread_id != state.native.thread_id() {
+    if !bridge_owns_thread(state, &plan.thread_id).await? {
         return Ok(());
     }
     let generation = params
@@ -3501,9 +3664,33 @@ async fn handle_native_event(
         }
         return;
     }
-    if method != "serverRequest/resolved"
-        && crate::task_plan::event_thread_is_foreign(&params, &state.native.thread_id())
-    {
+    let foreign = crate::task_plan::event_thread_is_foreign(&params, &state.native.thread_id());
+    let owned = if foreign {
+        match bridge_owns_thread(
+            state,
+            params
+                .get("threadId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        )
+        .await
+        {
+            Ok(owned) => owned,
+            Err(error) => {
+                report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &sanitize_discord_error_chain(&state.config, &error),
+                )
+                .await;
+                return;
+            }
+        }
+    } else {
+        true
+    };
+    if method != "serverRequest/resolved" && foreign && !owned {
         if matches!(method.as_str(), "turn/started" | "turn/completed") {
             let mut current = state.current_turn.lock().await;
             let mut active_turns = state.active_turns.lock().await;
@@ -3694,8 +3881,8 @@ async fn handle_native_event(
                     .or_else(|| params.pointer("/turn/status"))
                     .and_then(serde_json::Value::as_str);
                 let turn_completed = status == Some("completed");
-                if thread_id == state.native.thread_id() {
-                    if let Some(generation) = generation {
+                if let Some(generation) = generation {
+                    if generation == state.native.current_generation() {
                         let key = voice_inbox_turn_key(generation, thread_id, turn_id);
                         if let Err(error) =
                             finish_voice_inbox_turn(state, &key, turn_completed).await
@@ -3918,9 +4105,7 @@ async fn handle_native_event(
                 } else if let (Some(thread_id), Some(turn_id), Some(generation)) =
                     (thread_id, turn_id, generation)
                 {
-                    if thread_id == state.native.thread_id()
-                        && generation == state.native.current_generation()
-                    {
+                    if generation == state.native.current_generation() {
                         state
                             .voice_inbox_turn_outcomes
                             .lock()
@@ -4118,6 +4303,17 @@ async fn handle_native_event(
         }
         _ => {}
     }
+    if matches!(method.as_str(), "discodex/thread-state" | "turn/completed")
+        && let Err(error) = drain_queued_and_retained_threads(state).await
+    {
+        report_discord_failure(
+            http,
+            &state.config,
+            ChannelId::new(state.config.home_channel_id),
+            &sanitize_discord_error_chain(&state.config, &error),
+        )
+        .await;
+    }
 }
 
 async fn publish_async_item(
@@ -4220,7 +4416,15 @@ async fn apply_thread_snapshot(
     drop(current);
     if authoritative_idle {
         if let Err(error) = reconcile_voice_inbox_at_idle(state, thread_id).await {
-            warn!(error = %sanitize_discord_error_chain(&state.config, &error), "failed to reconcile voice inbox reads at idle observation");
+            let detail = sanitize_discord_error_chain(&state.config, &error);
+            warn!(%detail, "failed to reconcile voice inbox reads at idle observation");
+            report_discord_failure(
+                http,
+                &state.config,
+                ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
         }
         if let Err(error) = submit_next_queued_input(state, thread_id).await {
             let detail = sanitize_discord_error_chain(&state.config, &error);
@@ -4257,7 +4461,13 @@ pub(crate) fn snapshot_active_turn(thread: &serde_json::Value) -> Option<Option<
 pub(crate) async fn read_recovery_turn_snapshot(
     native: &Native,
 ) -> anyhow::Result<serde_json::Value> {
-    let thread_id = native.thread_id();
+    read_thread_turn_snapshot(native, &native.thread_id()).await
+}
+
+async fn read_thread_turn_snapshot(
+    native: &Native,
+    thread_id: &str,
+) -> anyhow::Result<serde_json::Value> {
     let metadata = native
         .request(
             "thread/read",
@@ -4267,7 +4477,7 @@ pub(crate) async fn read_recovery_turn_snapshot(
     if metadata
         .pointer("/thread/id")
         .and_then(serde_json::Value::as_str)
-        != Some(thread_id.as_str())
+        != Some(thread_id)
     {
         bail!("native recovery metadata returned an unexpected durable thread identity");
     }
@@ -4284,7 +4494,7 @@ pub(crate) async fn read_recovery_turn_snapshot(
     if history
         .pointer("/thread/id")
         .and_then(serde_json::Value::as_str)
-        != Some(thread_id.as_str())
+        != Some(thread_id)
     {
         bail!("native recovery history returned an unexpected durable thread identity");
     }
@@ -4723,6 +4933,7 @@ mod tests {
                 preview: "preview".to_owned(),
                 call_id: Some(call_id.to_string()),
                 read_in_flight,
+                read_native_thread_id: None,
                 attachment_download_in_flight: false,
                 pending_attachments: Vec::new(),
                 read,

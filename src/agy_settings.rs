@@ -106,6 +106,47 @@ fn ensure_mcp_allow(value: &mut Value, language: Language) -> Result<()> {
     Ok(())
 }
 
+fn ensure_managed_hook(settings: &mut Value, config: &Config) -> Result<()> {
+    let language = config.language;
+    let worker = config
+        .worker_path
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(std::env::current_exe)?;
+    let hooks = settings
+        .as_object_mut()
+        .context(language.message(MessageKey::AgySettingsRootObject))?
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .context(language.message(MessageKey::AgySettingsHooksObject))?;
+    if let Some(existing) = hooks.get(crate::agy_hook::MANAGED_HOOK) {
+        // Refresh only our reserved hook. A conflicting personal hook is preserved.
+        let owned = existing
+            .pointer("/PreInvocation/0/command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| command.contains(" agy-hook --event PreInvocation --language "))
+            && existing
+                .pointer("/PreToolUse/0/hooks/0/command")
+                .and_then(Value::as_str)
+                .is_some_and(|command| {
+                    command.contains(" agy-hook --event PreToolUse --language ")
+                });
+        anyhow::ensure!(
+            owned,
+            "{}",
+            language.message(MessageKey::AgySettingsHookConflict)
+        );
+    }
+    hooks.insert(crate::agy_hook::MANAGED_HOOK.to_owned(), json!({
+        "PreInvocation":[{"type":"command", "command":crate::agy_hook::command(&worker, "PreInvocation", language)?}],
+        "PreToolUse":[{"matcher":"^(invoke_subagent|define_subagent|send_message|manage_subagents)$", "hooks":[{
+            "type":"command", "command":crate::agy_hook::command(&worker, "PreToolUse", language)?
+        }]}]
+    }));
+    Ok(())
+}
+
 fn read_unlocked(config: &Config, share: bool) -> Result<Value> {
     let mut settings = if share {
         load(&personal_cli_path(config.language)?, config.language)?
@@ -117,6 +158,7 @@ fn read_unlocked(config: &Config, share: bool) -> Result<Value> {
         load(&overrides_path(config)?, config.language)?,
     );
     ensure_mcp_allow(&mut settings, config.language)?;
+    ensure_managed_hook(&mut settings, config)?;
     Ok(settings)
 }
 

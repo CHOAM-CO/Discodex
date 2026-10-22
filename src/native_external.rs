@@ -2,6 +2,7 @@
 //! this module only runs the selected CLI and forwards its actual events.
 use super::*;
 use crate::agy_mcp::NativeRunBinding;
+use crate::state::{AgyContextRange, AgyContextReference, AgyRunAttempt, StateStore};
 use base64::Engine;
 use std::io::Write;
 
@@ -22,6 +23,9 @@ pub(super) fn record_native_call(inner: &Inner, binding: &NativeRunBinding, rece
 }
 
 fn consume_recorded_call(receipts: &mut Vec<Value>, event: &Value) -> bool {
+    if !event.get("output").is_some() || event.get("error").is_some_and(|error| !error.is_null()) {
+        return false;
+    }
     let wrapped = event
         .get("arguments")
         .filter(|arguments| {
@@ -38,7 +42,9 @@ fn consume_recorded_call(receipts: &mut Vec<Value>, event: &Value) -> bool {
             };
             Some(json!({"name":name,"arguments":args}))
         });
-    let event = wrapped.as_ref().unwrap_or(event);
+    let Some(event) = wrapped.as_ref() else {
+        return false;
+    };
     let matching = receipts.iter().position(|receipt| {
         receipt.get("name") == event.get("name")
             && receipt.get("arguments") == event.get("arguments")
@@ -143,18 +149,61 @@ pub(super) fn spawn(inner: Arc<Inner>, request: Value, generation: u64) -> Resul
         let native = Native {
             inner: task_inner.clone(),
         };
-        let result = run(&native, &request["params"], &task_binding, receiver).await;
+        let mut result = run(&native, &request["params"], &task_binding, receiver).await;
+        let store = StateStore::new(&native.inner.config.state_dir);
+        // Keep this completed run's references locally until its response write
+        // finishes. A successor may replace the persisted slot after we remove
+        // the active binding, including while an old-generation write fails.
+        let completed_state = match store.agy_thread(&task_binding.thread_id) {
+            Ok(saved) => Some(saved),
+            Err(error) => {
+                result = combine_turn_and_cleanup(result, Err(error), native.inner.config.language);
+                None
+            }
+        };
         // Drop the active binding before completing the native request. The core
         // can immediately issue another request for queued input in the same turn.
         if let Ok(mut turns) = task_inner.external_turns.lock() {
             remove_run(&mut turns, &task_binding);
         }
         let response = run_response(result, native.inner.config.language);
-        if let Err(error) = native
+        let delivery = native
             .respond_for_generation(generation, request["id"].clone(), response)
-            .await
-        {
-            tracing::warn!(%error, "could not finish native external request");
+            .await;
+        let persisted = store.update_agy_thread(&task_binding.thread_id, |saved| {
+            if let Some(attempt) = saved
+                .current_run
+                .as_mut()
+                .filter(|attempt| attempt.binding == task_binding)
+            {
+                match &delivery {
+                    Ok(()) => saved.current_run = None,
+                    Err(error) => {
+                        let error = crate::diagnostics::sanitize_diagnostic(&format!("{error:#}"));
+                        let previous = attempt.diagnostic.take().unwrap_or_default();
+                        attempt.diagnostic = Some(if previous.is_empty() {
+                            error
+                        } else {
+                            format!("{previous}\n{error}")
+                        });
+                    }
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = &delivery {
+            tracing::warn!(
+                %error,
+                thread_id = %task_binding.thread_id,
+                turn_id = %task_binding.turn_id,
+                run_id = %task_binding.run_id,
+                generation = task_binding.generation,
+                recovery = %json!(completed_state),
+                "could not finish native external request"
+            );
+        }
+        if let Err(error) = persisted {
+            tracing::warn!(%error, "could not update external request notification state");
         }
     });
     if let Ok(mut turns) = inner.external_turns.lock()
@@ -373,10 +422,10 @@ fn prepare_prompt_with_stager(
     let mut input = params
         .get("input")
         .cloned()
-        .context("external request omitted history")?;
+        .context("external request omitted input")?;
     let items = input
         .as_array_mut()
-        .context("external history is not an array")?;
+        .context("external input is not an array")?;
     for item in items.iter_mut() {
         if item.get("type").and_then(Value::as_str) != Some("message") {
             continue;
@@ -396,107 +445,87 @@ fn prepare_prompt_with_stager(
             }
             let (suffix, bytes) = decode_inline_image(url)?;
             let path = stage_image(suffix, &bytes)?;
-            let image_label = language
+            let label = language
                 .message(crate::i18n::MessageKey::NativeExternalAttachedImageFile)
                 .replace("{path}", &path);
-            *content = json!({"type":"input_text", "text":image_label});
+            *content = json!({"type":"input_text", "text":label});
         }
     }
-    let latest_user_text = items
-        .iter()
-        .rev()
-        .find(|item| {
-            item.get("type").and_then(Value::as_str) == Some("message")
-                && item.get("role").and_then(Value::as_str) == Some("user")
+    let updates = params.get("contextUpdates").and_then(Value::as_array);
+    let has_updates = updates.is_some_and(|updates| !updates.is_empty());
+    if !has_updates
+        && items.len() == 1
+        && items[0].get("type").and_then(Value::as_str) == Some("message")
+        && items[0].get("role").and_then(Value::as_str) == Some("user")
+        && let Some(content) = items[0].get("content").and_then(Value::as_array)
+        && content.iter().all(|block| {
+            block.get("type").and_then(Value::as_str) == Some("input_text")
+                && block.get("text").is_some_and(Value::is_string)
         })
-        .and_then(|item| item.get("content").and_then(Value::as_array))
-        .map(|contents| {
-            contents
-                .iter()
-                .filter(|content| content.get("type").and_then(Value::as_str) == Some("input_text"))
-                .filter_map(|content| content.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
-    let mut prompt = format!(
+    {
+        return Ok(content
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"));
+    }
+    let mut parts = Vec::new();
+    if let Some(updates) = updates.filter(|updates| !updates.is_empty()) {
+        parts.push(format!(
+            "{}\n{}",
+            language.message(crate::i18n::MessageKey::NativeExternalContextUpdates),
+            serde_json::to_string(updates)?
+        ));
+    }
+    parts.push(format!(
         "{}\n{}",
-        language.message(crate::i18n::MessageKey::NativeExternalConversationHistory),
+        language.message(crate::i18n::MessageKey::NativeExternalNewInput),
         serde_json::to_string(&input)?
-    );
-    if let Some(text) = latest_user_text.filter(|text| !text.is_empty()) {
-        prompt.push_str("\n\n");
-        prompt.push_str(
-            &language
-                .message(crate::i18n::MessageKey::NativeExternalLatestUserMessage)
-                .replace("{text}", &text),
-        );
-    }
-    Ok(prompt)
+    ));
+    Ok(parts.join("\n\n"))
 }
 
-fn current_native_execution_guidance(params: &Value) -> Option<String> {
-    let input = params.get("input")?.as_array()?;
-    let mut latest = None;
-    for item in input {
-        if item.get("type").and_then(Value::as_str) != Some("message")
-            || item.get("role").and_then(Value::as_str) != Some("developer")
+fn run_instructions(
+    params: &Value,
+    state: &crate::state::NativeState,
+    language: crate::i18n::Language,
+) -> Result<String> {
+    let instructions = required_string(params, "instructions")?;
+    let references = json!({
+        "currentThreadId":required_string(params, "threadId")?,
+        "parentThreadId":params.get("parentThreadId").and_then(Value::as_str),
+        "previousThreadIds":state.previous_thread_ids,
+    });
+    Ok(format!(
+        "{instructions}\n\n{}",
+        language
+            .message(crate::i18n::MessageKey::NativeExternalThreadReferences)
+            .replace("{references}", &references.to_string())
+    ))
+}
+
+fn pending_context(params: &Value, thread_id: &str, frontier: Option<u64>) -> Result<Vec<Value>> {
+    let updates = match params.get("contextUpdates") {
+        None => return Ok(Vec::new()),
+        Some(updates) => updates
+            .as_array()
+            .context("external contextUpdates is not an array")?,
+    };
+    let mut selected = Vec::new();
+    for update in updates {
+        let reference: AgyContextReference = serde_json::from_value(update.clone())
+            .context("parse typed external context update reference")?;
+        if reference.thread_id == thread_id && frontier.is_none_or(|order| reference.order > order)
         {
-            continue;
-        }
-        let Some(contents) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for content in contents {
-            if content.get("type").and_then(Value::as_str) != Some("input_text") {
-                continue;
-            }
-            let Some(text) = content.get("text").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some((_, after_open)) = text.rsplit_once("<multi_agent_mode>") else {
-                continue;
-            };
-            let Some((guidance, _)) = after_open.split_once("</multi_agent_mode>") else {
-                continue;
-            };
-            let guidance = guidance.trim();
-            if !guidance.is_empty() {
-                latest = Some(guidance.to_owned());
-            }
+            anyhow::ensure!(
+                update.get("item").is_some(),
+                "external context update omitted item"
+            );
+            selected.push(update.clone());
         }
     }
-    latest
-}
-
-fn agent_system_instructions(params: &Value, language: crate::i18n::Language) -> String {
-    let base = params
-        .get("instructions")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let mode = current_native_execution_guidance(params);
-    match (base.is_empty(), mode) {
-        (false, Some(mode)) => {
-            format!(
-                "# {}\n{base}\n\n# {}\n{mode}",
-                language
-                    .message(crate::i18n::MessageKey::NativeExternalAgentBaseInstructionsHeader),
-                language
-                    .message(crate::i18n::MessageKey::NativeExternalAgentExecutionGuidanceHeader)
-            )
-        }
-        (false, None) => format!(
-            "# {}\n{base}",
-            language.message(crate::i18n::MessageKey::NativeExternalAgentBaseInstructionsHeader)
-        ),
-        (true, Some(mode)) => format!(
-            "# {}\n{mode}",
-            language.message(crate::i18n::MessageKey::NativeExternalAgentExecutionGuidanceHeader)
-        ),
-        (true, None) => language
-            .message(crate::i18n::MessageKey::NativeExternalAgentHistoryFallback)
-            .to_owned(),
-    }
+    selected.sort_by_key(|update| update.get("order").and_then(Value::as_u64));
+    Ok(selected)
 }
 
 fn agy_invocation(
@@ -527,16 +556,134 @@ fn completed_tool_event(event: &crate::agy::Event) -> Option<Value> {
     if state.as_deref() != Some("DONE") {
         return None;
     }
-    let info = tool_info.as_ref()?;
-    let output = info.get("output").or_else(|| info.get("error"))?;
     let name = tool_name
         .as_deref()
-        .or_else(|| info.get("name").and_then(Value::as_str))?;
-    Some(
-        json!({"type":"tool", "callId":format!("agy-{}-{}", conversation_id.as_deref().unwrap_or("turn"), step_index.unwrap_or_default()),
-        "name":name, "arguments":info.get("parameters").cloned().unwrap_or_else(|| json!({})),
-        "output":output}),
-    )
+        .or_else(|| tool_info.as_ref()?.get("name")?.as_str())?;
+    let info = tool_info.as_ref();
+    let call_id = info
+        .and_then(|info| info.get("call_id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "agy-{}-{}",
+                conversation_id.as_deref().unwrap_or("turn"),
+                step_index.unwrap_or_default()
+            )
+        });
+    let mut event = json!({"type":"tool", "callId":call_id, "name":name,
+        "arguments":info.and_then(|info| info.get("parameters")).cloned().unwrap_or_else(|| json!({}))});
+    for key in ["output", "error"] {
+        if let Some(value) = info.and_then(|info| info.get(key)) {
+            event[key] = value.clone();
+        }
+    }
+    if let Some(state) = state {
+        event["status"] = json!(state);
+    }
+    Some(event)
+}
+
+fn publish_diagnostic(inner: &Inner, binding: &NativeRunBinding, message: String) -> Result<()> {
+    let event = json!({"method":"warning","params":{
+        "threadId":binding.thread_id,"turnId":binding.turn_id,"runId":binding.run_id,
+        "_discodex_connection_generation":inner.connection_generation.load(Ordering::Acquire),"message":message
+    }});
+    // Preserve the event in the existing bridge buffer before clearing recovery
+    // state. Discord delivery and its bounded retries consume this same buffer.
+    inner
+        .bridge_events
+        .lock()
+        .map_err(|_| anyhow!("native bridge event buffer lock poisoned"))?
+        .publish(event.clone());
+    if inner.live_events.load(Ordering::Acquire) {
+        let _ = inner.events.send(event);
+    } else {
+        inner
+            .startup_events
+            .lock()
+            .map_err(|_| anyhow!("native startup event lock poisoned"))?
+            .push(event);
+    }
+    Ok(())
+}
+
+pub(super) fn recover_pending(inner: &Inner) -> Result<()> {
+    let store = StateStore::new(&inner.config.state_dir);
+    let state = store.load()?;
+    for (thread_id, saved) in state.agy_threads {
+        let Some(attempt) = saved.current_run.as_ref() else {
+            continue;
+        };
+        let active = inner
+            .external_turns
+            .lock()
+            .map_err(|_| anyhow!("external turn lock poisoned"))?
+            .get(&thread_id)
+            .is_some_and(|active| active.binding == attempt.binding);
+        if active {
+            continue;
+        }
+        recover_attempt(inner, &store, &saved, attempt, false)?;
+    }
+    Ok(())
+}
+
+fn recover_attempt(
+    inner: &Inner,
+    store: &StateStore,
+    saved: &crate::state::AgyThreadState,
+    attempt: &AgyRunAttempt,
+    completed_successor: bool,
+) -> Result<()> {
+    if !completed_successor {
+        let detail = json!({"threadId":attempt.binding.thread_id,"conversationId":saved.conversation_id,
+            "turnId":attempt.binding.turn_id,"runId":attempt.binding.run_id,
+            "generation":attempt.binding.generation,"contextRange":attempt.context_range,"outcome":attempt.outcome,
+            "terminalStatus":attempt.terminal_status,"exitStatus":attempt.exit_status,"error":attempt.diagnostic});
+        let message = inner
+            .config
+            .language
+            .message(crate::i18n::MessageKey::NativeExternalRecoveredAttempt)
+            .replace("{detail}", &detail.to_string());
+        tracing::warn!(%message, "recovering previous AGY run diagnostic");
+        // If buffering fails, leave the old attempt intact and return the real
+        // error; the new run must not silently overwrite its recovery references.
+        publish_diagnostic(inner, &attempt.binding, message)?;
+    }
+    store.update_agy_thread(&attempt.binding.thread_id, |saved| {
+        if saved
+            .current_run
+            .as_ref()
+            .is_some_and(|current| current.binding == attempt.binding)
+        {
+            saved.current_run = None;
+        }
+        Ok(())
+    })
+}
+
+fn recover_before_successor(
+    inner: &Inner,
+    store: &StateStore,
+    binding: &NativeRunBinding,
+) -> Result<()> {
+    let saved = store.agy_thread(&binding.thread_id)?;
+    let Some(attempt) = saved.current_run.as_ref() else {
+        return Ok(());
+    };
+    if attempt.binding == *binding {
+        return Ok(());
+    }
+    // spawn admitted this binding only after the previous one became inactive.
+    // In the same connection, a serialized successor also proves that core has
+    // received the preceding completion. Do not report its confirmed terminal
+    // result and process exit as an uncertain interruption during a write race.
+    let completed_successor = attempt.binding.generation == binding.generation
+        && matches!(attempt.outcome.as_str(), "success" | "failed")
+        && attempt.terminal_status.is_some()
+        && attempt.exit_status.is_some();
+    recover_attempt(inner, store, &saved, attempt, completed_successor)
 }
 
 async fn run(
@@ -562,11 +709,33 @@ async fn run(
         .context("choose whether to share existing AGY settings in Discodex settings")?;
     crate::agy_settings::prepare(&native.inner.config, share)?;
     crate::agy_mcp::remove_workspace_registration(cwd)?;
-    let prompt = prepare_prompt(params, language)?;
-    let agent =
-        crate::agy::TemporaryAgent::create(cwd, &agent_system_instructions(params, language))?;
-    let lookup = native.cached_agy_catalog().await;
-    let catalog = match lookup {
+    let store = StateStore::new(&native.inner.config.state_dir);
+    recover_before_successor(&native.inner, &store, binding)?;
+    let state = store.load()?;
+    let saved = state
+        .agy_threads
+        .get(thread_id)
+        .cloned()
+        .unwrap_or_default();
+    let updates = pending_context(params, thread_id, saved.attempted_tail_order)?;
+    let references = updates
+        .iter()
+        .cloned()
+        .map(serde_json::from_value::<AgyContextReference>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let context_range = references
+        .first()
+        .zip(references.last())
+        .map(|(first, last)| AgyContextRange {
+            first: first.clone(),
+            last: last.clone(),
+        });
+    let mut prompt_params = params.clone();
+    prompt_params["contextUpdates"] = json!(updates);
+    let prompt = prepare_prompt(&prompt_params, language)?;
+    let instructions =
+        crate::agy_hook::stage_instructions(binding, &run_instructions(params, &state, language)?)?;
+    let catalog = match native.cached_agy_catalog().await {
         Ok(lookup) => {
             if let Some(warning) = lookup.warning {
                 tracing::warn!(%warning, "AGY model catalog unavailable or stale for external turn");
@@ -584,91 +753,190 @@ async fn run(
         binding: binding.clone(),
     };
     let runtime = crate::agy::Runtime::for_preferences(&native.inner.config, &preferences)?;
-    let mut session = crate::agy::Session::spawn_with_agent_context(
+    let mapping_store = store.clone();
+    let mapping_thread = thread_id.to_owned();
+    let mut session = crate::agy::Session::spawn_with_run_context(
         &runtime,
         cwd,
         Some(&invocation.model),
         invocation.effort.as_deref(),
-        Some(&context),
-        agent,
+        &context,
+        saved.conversation_id.as_deref(),
+        instructions,
+        Box::new(move |conversation_id| {
+            mapping_store
+                .update_agy_thread(&mapping_thread, |saved| {
+                    saved.conversation_id = Some(conversation_id.to_owned());
+                    Ok(())
+                })
+                .context(language.message(crate::i18n::MessageKey::AgyProtocolInitIdPersist))
+        }),
     )
     .await?;
+    let mut terminal_observed = false;
+    let mut terminal_status: Option<String> = None;
+    let mut public_output = false;
     let outcome = async {
         if *canceled.borrow() { bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)); }
-        session.send_text(&prompt.text).await?;
+        // Advance only the attempted frontier, before the first write can partly
+        // reach AGY. Later success never confirms an older uncertain range.
+        store.update_agy_thread(thread_id, |saved| {
+            if let Some(order) = references.iter().map(|reference| reference.order).max() {
+                saved.attempted_tail_order = Some(saved.attempted_tail_order.map_or(order, |frontier| frontier.max(order)));
+            }
+            saved.current_run = Some(AgyRunAttempt {
+                binding:binding.clone(), context_range:context_range.clone(), outcome:"attempted".to_owned(),
+                terminal_status:None, exit_status:None, diagnostic:None,
+            });
+            Ok(())
+        })?;
+        tokio::select! {
+            _ = canceled.changed() => bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)),
+            result = session.send_text(&prompt.text) => result?,
+        }
         let mut streamed = String::new();
         loop {
             let event = tokio::select! {
                 _ = canceled.changed() => bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted)),
-                event = session.next_event() => match event {
-                    Some(Ok(event)) => event,
-                    Some(Err(error)) => return Err(error),
-                    None => {
-                        bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalCliExitedEarly));
-                    }
-                },
+                event = session.next_event() => event.context(language.message(crate::i18n::MessageKey::NativeExternalCliExitedEarly))??,
             };
-            if let Some(event) = completed_tool_event(&event)
-                && !is_native_call_echo(&native.inner, binding, &event) {
-                native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":event})).await?;
+            if let Some(mut tool) = completed_tool_event(&event) {
+                if let crate::agy::Event::ToolStep { raw, .. } = &event { tool["source"] = raw.clone(); }
+                if !is_native_call_echo(&native.inner, binding, &tool) {
+                    native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":tool})).await?;
+                }
+            } else if let crate::agy::Event::ToolStep { conversation_id, step_index, state, .. } = &event
+                && state.as_deref() == Some("DONE") {
+                let detail = json!({"conversationId":conversation_id,"stepIndex":step_index,"state":state});
+                publish_diagnostic(&native.inner, binding, language.message(crate::i18n::MessageKey::NativeExternalUnnamedTool)
+                    .replace("{detail}", &detail.to_string()))?;
             }
             if let Some(text) = event.text_delta().filter(|text| !text.is_empty()) {
+                public_output = true;
                 streamed.push_str(text);
                 native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
             }
             match event {
-                crate::agy::Event::Result { status, response, error, .. } => {
-                    tracing::info!(status = status.as_deref(), response_bytes = response.as_deref().map(str::len), error_present = error.is_some(), "AGY turn completed");
+                crate::agy::Event::Init { conversation_id:Some(conversation_id), .. } => {
+                    store.update_agy_thread(thread_id, |saved| { saved.conversation_id = Some(conversation_id); Ok(()) })?;
+                }
+                crate::agy::Event::Init { conversation_id:None, .. } => {
+                    bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalInitIdMissing));
+                }
+                crate::agy::Event::Result { conversation_id, status, response, error, result } => {
+                    terminal_observed = true;
+                    terminal_status = status.clone();
+                    if let Some(conversation_id) = conversation_id {
+                        store.update_agy_thread(thread_id, |saved| { saved.conversation_id = Some(conversation_id); Ok(()) })?;
+                    }
+                    tracing::info!(status = status.as_deref(), response_bytes = response.as_deref().map(str::len), error_present = result.get("error").is_some(), "AGY turn completed");
                     if let Some(text) = terminal_response_fallback(&streamed, response.as_deref()) {
+                        public_output = true;
                         native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
                     }
-                    return terminal_result(
-                        status.as_deref(),
-                        error.as_deref(),
-                        native.inner.config.language,
-                    );
+                    let detail = error.or_else(|| result.get("error").map(Value::to_string));
+                    return terminal_result(status.as_deref(), detail.as_deref(), language);
                 }
                 _ => {}
             }
         }
     }.await;
-    // The documented successful shutdown is stdin-close followed by process
-    // exit. Cancellation/failure stops the owned tree; successful runs still
-    // reap remaining children, but only after the CLI has exited and flushed
-    // its diagnostics. Do not discard a nonzero CLI exit after a JSON result.
+    // ERROR is a terminal result too. Close stdin and collect its real exit and
+    // stderr; only cancellation or protocol/connection failure terminates it.
+    let mut exit_status = None;
     let cleanup = async {
-        if outcome.is_err() {
-            return session.terminate().await.map(|_| ());
-        }
-        let status = tokio::select! {
-            result = session.finish() => result?,
-            _ = canceled.changed() => {
-                session.terminate().await?;
-                bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted));
+        let status = if terminal_observed {
+            tokio::select! {
+                result = session.finish() => result?,
+                _ = canceled.changed() => {
+                    let status = session.terminate().await?;
+                    exit_status = Some(status.to_string());
+                    bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted));
+                }
             }
+        } else {
+            session.terminate().await?
         };
-        if !status.success() {
-            bail!("{}", language
-                .message(crate::i18n::MessageKey::NativeExternalCliExitFailure)
+        exit_status = Some(status.to_string());
+        if terminal_observed && !status.success() {
+            bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalCliExitFailure)
                 .replace("{status}", &status.to_string()));
         }
         Ok(())
     }.await;
+    if exit_status.is_none() {
+        exit_status = session
+            .observed_exit_status()
+            .map(|status| status.to_string());
+    }
     let diagnostics = session.take_diagnostics().await;
+    let mut result = combine_turn_and_cleanup(outcome, cleanup, language);
     if !diagnostics.trim().is_empty() {
         let message = language
             .message(crate::i18n::MessageKey::NativeExternalCliDiagnostics)
             .replace("{detail}", diagnostics.trim_end());
-        super::publish_event(
+        if let Err(error) = publish_diagnostic(&native.inner, binding, message.clone()) {
+            result = combine_turn_and_cleanup(result, Err(error), language);
+        }
+        if result.is_err() {
+            result = result.context(message);
+        }
+    }
+    if !public_output {
+        let detail =
+            json!({"status":terminal_status,"exitStatus":exit_status,"publicOutput":false});
+        if let Err(error) = publish_diagnostic(
             &native.inner,
-            json!({"method":"warning","params":{
-                "threadId":thread_id,"turnId":turn_id,"runId":run_id,
-                "_discodex_connection_generation":binding.generation,"message":message
-            }}),
+            binding,
+            language
+                .message(crate::i18n::MessageKey::NativeExternalNoPublicOutput)
+                .replace("{detail}", &detail.to_string()),
+        ) {
+            result = combine_turn_and_cleanup(result, Err(error), language);
+        }
+    }
+    let diagnostic = result
+        .as_ref()
+        .err()
+        .map(|error| crate::diagnostics::sanitize_diagnostic(&format!("{error:#}")));
+    let persisted = store.update_agy_thread(thread_id, |saved| {
+        if let Some(attempt) = saved
+            .current_run
+            .as_mut()
+            .filter(|attempt| attempt.binding == *binding)
+        {
+            attempt.outcome = if result.is_ok() {
+                "success"
+            } else if terminal_observed {
+                "failed"
+            } else {
+                "uncertain"
+            }
+            .to_owned();
+            attempt.terminal_status = terminal_status;
+            attempt.exit_status = exit_status;
+            attempt.diagnostic = diagnostic;
+        }
+        Ok(())
+    });
+    result = combine_turn_and_cleanup(result, persisted, language);
+    if result.is_err() {
+        let conversation_id = match store.agy_thread(thread_id) {
+            Ok(saved) => saved.conversation_id,
+            Err(error) => {
+                result = combine_turn_and_cleanup(result, Err(error), language);
+                None
+            }
+        };
+        let refs = json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,
+            "conversationId":conversation_id,"contextRange":context_range});
+        result = result.context(
+            language
+                .message(crate::i18n::MessageKey::NativeExternalAttemptReferences)
+                .replace("{references}", &refs.to_string()),
         );
     }
-    combine_turn_and_cleanup(outcome, cleanup, native.inner.config.language)?;
-    Ok(())
+    result
 }
 
 #[cfg(test)]
@@ -1083,110 +1351,6 @@ mod tests {
     }
 
     #[test]
-    fn only_exact_observed_native_call_echoes_are_consumed_once() {
-        let mut receipts = vec![json!({"name":"agent__spawn","arguments":{"message":"task"}})];
-        assert!(!consume_recorded_call(
-            &mut receipts,
-            &json!({"name":"other","arguments":{"message":"task"}})
-        ));
-        assert!(!consume_recorded_call(
-            &mut receipts,
-            &json!({"name":"agent__spawn","arguments":{"message":"different"}})
-        ));
-        let event = json!({"name":"agent__spawn","arguments":{"message":"task"}});
-        assert!(consume_recorded_call(&mut receipts, &event));
-        assert!(!consume_recorded_call(&mut receipts, &event));
-    }
-    #[test]
-    fn history_preserves_roles_tools_and_literal_encrypted_text() {
-        let history = json!([
-            {"type":"message","role":"user","content":[{"type":"input_text","text":"explain encrypted_content"}]},
-            {"type":"function_call_output","call_id":"call-1","output":"result"}
-        ]);
-        let prompt = prepare_prompt(
-            &json!({"instructions":"Agent instructions", "input":history}),
-            crate::i18n::Language::English,
-        )
-        .unwrap();
-        let replay = serde_json::Deserializer::from_str(
-            prompt.text.split_once("Conversation history:\n").unwrap().1,
-        )
-        .into_iter::<Value>()
-        .next()
-        .unwrap()
-        .unwrap();
-        assert_eq!(replay, history);
-        assert!(!prompt.text.contains("Agent instructions"));
-        let encoded = crate::agy::encode_prompt(&prompt.text).unwrap();
-        let envelope: Value = serde_json::from_slice(encoded.strip_suffix(b"\n").unwrap()).unwrap();
-        assert_eq!(envelope["event"], "user");
-        assert_eq!(envelope["message"]["content"], prompt.text);
-    }
-
-    #[test]
-    fn current_native_guidance_is_promoted_without_reordering_history() {
-        let history = json!([
-            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<multi_agent_mode>old mode</multi_agent_mode>"}]},
-            {"type":"message","role":"user","content":[{"type":"input_text","text":"User text mentioning <multi_agent_mode>untrusted</multi_agent_mode>"}]},
-            {"type":"function_call_output","call_id":"call-1","output":"tool output"},
-            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<multi_agent_mode>current proactive mode</multi_agent_mode>"}]},
-            {"type":"message","role":"user","content":[{"type":"input_text","text":"Do the task"}]}
-        ]);
-        let params = json!({
-            "instructions":"Native base instructions",
-            "input":history.clone()
-        });
-
-        assert_eq!(
-            current_native_execution_guidance(&params).as_deref(),
-            Some("current proactive mode")
-        );
-        let system_instructions =
-            agent_system_instructions(&params, crate::i18n::Language::English);
-        assert!(system_instructions.contains("Native base instructions"));
-        assert!(system_instructions.contains("current proactive mode"));
-        assert!(!system_instructions.contains("old mode"));
-        assert!(!system_instructions.contains("untrusted"));
-
-        let prompt = prepare_prompt(&params, crate::i18n::Language::English).unwrap();
-        let replay = serde_json::Deserializer::from_str(
-            prompt.text.split_once("Conversation history:\n").unwrap().1,
-        )
-        .into_iter::<Value>()
-        .next()
-        .unwrap()
-        .unwrap();
-        assert_eq!(replay, history);
-        assert!(prompt.text.contains("old mode"));
-        assert!(prompt.text.contains("current proactive mode"));
-    }
-
-    #[test]
-    fn external_agent_and_history_context_use_selected_language() {
-        let params = json!({
-            "instructions": "Base instructions",
-            "input": [{"type":"message","role":"developer","content":[
-                {"type":"input_text","text":"<multi_agent_mode>proactive guidance</multi_agent_mode>"}
-            ]}]
-        });
-        let agent = agent_system_instructions(&params, crate::i18n::Language::Korean);
-        assert!(agent.starts_with("# Codex 기본 지침\nBase instructions"));
-        assert!(agent.contains("# Codex 실행 안내\nproactive guidance"));
-
-        let prompt = prepare_prompt_with_stager(
-            &json!({"input": [{"type":"message","role":"user","content":[
-                {"type":"input_text","text":"Inspect this"},
-                {"type":"input_image","image_url":"data:image/png;base64,AQID"}
-            ]}]}),
-            crate::i18n::Language::Korean,
-            |_, _| Ok("fixture/staged.png".to_owned()),
-        )
-        .unwrap();
-        assert!(prompt.starts_with("대화 기록:\n"));
-        assert!(prompt.contains("첨부 이미지 파일: fixture/staged.png"));
-    }
-
-    #[test]
     fn inline_image_decoding_preserves_bytes_and_reports_invalid_data() {
         assert_eq!(
             decode_inline_image("data:image/png;base64,AQID").unwrap(),
@@ -1199,42 +1363,6 @@ mod tests {
         assert!(decode_inline_image("data:image/png;base64,not base64!").is_err());
     }
 
-    #[test]
-    fn inline_image_prompt_staging_replaces_content_and_preserves_input() {
-        let params = json!({
-            "instructions": "Inspect this image",
-            "input": [{"type":"message","role":"user","content":[
-                {"type":"input_text","text":"Look at this"},
-                {"type":"input_image","image_url":"data:image/png;base64,AQID"}
-            ]}]
-        });
-        let original = params.clone();
-        let mut staged = Vec::new();
-        let prompt =
-            prepare_prompt_with_stager(&params, crate::i18n::Language::English, |suffix, bytes| {
-                staged.push((suffix.to_owned(), bytes.to_vec()));
-                Ok("example/staged-image.png".to_owned())
-            })
-            .unwrap();
-
-        assert_eq!(staged, vec![(".png".to_owned(), vec![1, 2, 3])]);
-        assert_eq!(params, original);
-        assert_eq!(
-            prompt,
-            format!(
-                "Conversation history:\n{}\n\nLatest user message in this conversation:\nLook at this\nAttached image file: example/staged-image.png\n\nContinue this request using the complete ordered context above, including subsequent developer instructions and tool results. Earlier requests are conversation history, not new tasks to restart.",
-                serde_json::to_string(&json!([{
-                    "type":"message",
-                    "role":"user",
-                    "content":[
-                        {"type":"input_text","text":"Look at this"},
-                        {"type":"input_text","text":"Attached image file: example/staged-image.png"}
-                    ]
-                }]))
-                .unwrap()
-            )
-        );
-    }
     #[test]
     fn only_completed_external_tools_become_native_tool_history() {
         let event = |state| {
@@ -1252,7 +1380,8 @@ mod tests {
                 "callId":"agy-example-4",
                 "name":"read_file",
                 "arguments":{"path":"example.txt"},
-                "output":"contents"
+                "output":"contents",
+                "status":"DONE"
             })
         );
     }

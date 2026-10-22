@@ -69,6 +69,7 @@ impl VoiceInputPhase {
 pub(crate) struct VoiceInputGate {
     pub state: Mutex<VoiceInputPhase>,
     pub ready: Notify,
+    call_thread: std::sync::Mutex<Option<String>>,
 }
 
 impl Default for VoiceInputGate {
@@ -82,7 +83,35 @@ impl VoiceInputGate {
         Self {
             state: Mutex::new(VoiceInputPhase::Idle),
             ready: Notify::new(),
+            call_thread: std::sync::Mutex::new(None),
         }
+    }
+
+    pub(crate) fn set_call_thread(&self, thread_id: String) -> anyhow::Result<()> {
+        *self
+            .call_thread
+            .lock()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))? = Some(thread_id);
+        Ok(())
+    }
+
+    pub(crate) fn call_thread_id(&self) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .call_thread
+            .lock()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            .clone())
+    }
+
+    pub(crate) fn clear_call_thread(&self, thread_id: &str) -> anyhow::Result<()> {
+        let mut current = self
+            .call_thread
+            .lock()
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if current.as_deref() == Some(thread_id) {
+            *current = None;
+        }
+        Ok(())
     }
 
     pub(crate) async fn set(&self, phase: VoiceInputPhase) {

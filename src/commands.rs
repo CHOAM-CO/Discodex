@@ -3498,7 +3498,7 @@ async fn apply_setting_choice(
 ) -> anyhow::Result<SettingChoiceOutcome> {
     // Match new-session admission order: input gate, settings, then active turn.
     // Keep incoming Discord input outside a provider detach/resume transition.
-    let input_phase = if kind == SettingsKind::Model {
+    let _input_phase = if kind == SettingsKind::Model {
         Some(state.voice.input_gate.state.lock().await)
     } else {
         None
@@ -3707,23 +3707,27 @@ async fn apply_setting_choice(
             if active_provider.is_none_or(|provider| {
                 model_change_requires_resume(active_executor, provider, &selection)
             }) {
-                let current_turn = state.current_turn.lock().await;
-                ensure_provider_switch_idle(
-                    input_phase
-                        .as_ref()
-                        .is_some_and(|phase| phase.allow_ordinary()),
-                    current_turn.is_some(),
-                    language,
-                )?;
+                let mut current_turn = state.current_turn.lock().await;
                 let snapshot = state.native.set_model_selection(&selection).await?;
-                return Ok(SettingChoiceOutcome::Applied(
-                    format_settings_update_result_with_language(
-                        &format!("{} — {}", selection.model, selection.provider),
-                        Some(&snapshot),
-                        None,
-                        language,
-                    ),
-                ));
+                *current_turn = None;
+                let mut message = format_settings_update_result_with_language(
+                    &format!("{} — {}", selection.model, selection.provider),
+                    Some(&snapshot),
+                    None,
+                    language,
+                );
+                if let Some(call_thread) = state.voice.input_gate.call_thread_id()? {
+                    let targets = language
+                        .message(MessageKey::CommandsModelSwitchTargets)
+                        .replace("{voice_thread}", &call_thread)
+                        .replace("{primary_thread}", &state.native.thread_id());
+                    message.push_str("\n\n");
+                    message.push_str(&targets);
+                }
+                drop(current_turn);
+                drop(_input_phase);
+                state.voice.input_gate.ready.notify_one();
+                return Ok(SettingChoiceOutcome::Applied(message));
             }
             let requested = format!("{} — {}", selection.model, selection.provider);
             let expected = Value::String(selection.model.clone());
@@ -5513,20 +5517,6 @@ fn model_selection_for_choice(
         provider: provider.to_owned(),
         model: requested.to_owned(),
     })
-}
-
-fn ensure_provider_switch_idle(
-    voice_idle: bool,
-    turn_active: bool,
-    language: crate::i18n::Language,
-) -> anyhow::Result<()> {
-    if !voice_idle || turn_active {
-        bail!(
-            "{}",
-            language.message(MessageKey::CommandsWaitForTheActiveResponseOrVoiceCallToFiA5ef13df)
-        );
-    }
-    Ok(())
 }
 
 fn catalog_model_choices(catalog: &Value) -> Vec<SettingsChoice> {
@@ -12747,9 +12737,6 @@ mod native_feature_settings_tests {
                     .provider,
                 "cloud"
             );
-            assert!(ensure_provider_switch_idle(true, false, language).is_ok());
-            assert!(ensure_provider_switch_idle(false, false, language).is_err());
-            assert!(ensure_provider_switch_idle(true, true, language).is_err());
         }
         assert_eq!(catalog_model_choices(&catalog).len(), 2);
         assert_eq!(subagent_model_choices(&catalog, Language::English).len(), 3);

@@ -2333,16 +2333,20 @@ impl VoiceBridge {
                 });
             }
         }
-        if matches!(
-            *self.input_gate.state.lock().await,
-            VoiceInputPhase::Blocked
-        ) {
-            bail!(
-                "{}",
-                language.message(MessageKey::VoicePreviousCallNotEnded)
-            );
-        }
-        self.input_gate.set(VoiceInputPhase::Starting).await;
+        let thread_id = {
+            let mut phase = self.input_gate.state.lock().await;
+            if matches!(*phase, VoiceInputPhase::Blocked) {
+                bail!(
+                    "{}",
+                    language.message(MessageKey::VoicePreviousCallNotEnded)
+                );
+            }
+            let thread_id = self.native.thread_id();
+            self.native.retain_thread(&thread_id)?;
+            self.input_gate.set_call_thread(thread_id.clone())?;
+            *phase = VoiceInputPhase::Starting;
+            thread_id
+        };
         let result = self.join_locked(guild_id, channel_id).await;
         let phase = match &result {
             Ok(()) => {
@@ -2361,13 +2365,21 @@ impl VoiceBridge {
                 // stop permits ordinary input to reach the persistent thread again.
                 match self
                     .native
-                    .request(
-                        "thread/realtime/stop",
-                        json!({"threadId": self.native.thread_id()}),
-                    )
+                    .request("thread/realtime/stop", json!({"threadId": thread_id}))
                     .await
                 {
-                    Ok(_) => VoiceInputPhase::Idle,
+                    Ok(_) => {
+                        if let Err(error) = self.input_gate.clear_call_thread(&thread_id) {
+                            crate::discord::report_discord_failure(
+                                &self.http,
+                                &self.config,
+                                ChannelId::new(self.config.home_channel_id),
+                                &error.to_string(),
+                            )
+                            .await;
+                        }
+                        VoiceInputPhase::Idle
+                    }
                     Err(error) => {
                         warn!(%error, "failed voice startup could not confirm native stop; input remains queued");
                         VoiceInputPhase::Blocked
@@ -2393,7 +2405,10 @@ impl VoiceBridge {
     async fn join_locked(&self, guild_id: GuildId, channel_id: ChannelId) -> Result<()> {
         let selected_voice = self.selected_voice()?;
         let language = self.config.language;
-        let thread_id = self.native.thread_id();
+        let thread_id = self
+            .input_gate
+            .call_thread_id()?
+            .unwrap_or_else(|| self.native.thread_id());
         let call_instance_id = Uuid::new_v4();
         let call_context =
             realtime_call_start_context(call_instance_id, &thread_id, self.config.language);
@@ -2620,15 +2635,23 @@ impl VoiceBridge {
             *self.input_gate.state.lock().await,
             VoiceInputPhase::Blocked
         );
+        let mut ownership_errors = Vec::new();
+        let call_thread = match self.input_gate.call_thread_id() {
+            Ok(thread_id) => thread_id,
+            Err(error) => {
+                ownership_errors.push(error);
+                None
+            }
+        };
         self.input_gate.set(VoiceInputPhase::Ending).await;
         let mut result = self.leave_locked(guild_id, summary).await;
-        if was_blocked && !result.native_realtime_stop.attempted {
+        if was_blocked
+            && !result.native_realtime_stop.attempted
+            && let Some(thread_id) = call_thread.as_deref()
+        {
             result.native_realtime_stop = match self
                 .native
-                .request(
-                    "thread/realtime/stop",
-                    json!({"threadId": self.native.thread_id()}),
-                )
+                .request("thread/realtime/stop", json!({"threadId": thread_id}))
                 .await
             {
                 Ok(_) => VoiceOperationResult::succeeded(),
@@ -2640,6 +2663,21 @@ impl VoiceBridge {
         }
         let stopped = result.native_realtime_stop.ok == Some(true)
             || (!was_blocked && !result.native_realtime_stop.attempted);
+        if stopped && let Some(thread_id) = call_thread.as_deref() {
+            if let Err(error) = self.input_gate.clear_call_thread(thread_id) {
+                ownership_errors.push(error);
+            }
+        }
+        for error in &ownership_errors {
+            crate::discord::report_discord_failure(
+                &self.http,
+                &self.config,
+                ChannelId::new(self.config.home_channel_id),
+                &error.to_string(),
+            )
+            .await;
+            result.status = "partial";
+        }
         self.input_gate
             .set(if stopped {
                 VoiceInputPhase::Idle
@@ -2812,6 +2850,18 @@ impl VoiceBridge {
 
     pub async fn is_active(&self, guild_id: GuildId) -> bool {
         self.active.lock().await.contains_key(&guild_id.get())
+    }
+
+    pub(crate) async fn owns_native_thread(&self, thread_id: &str) -> Result<bool> {
+        if self.input_gate.call_thread_id()?.as_deref() == Some(thread_id) {
+            return Ok(true);
+        }
+        Ok(self
+            .active
+            .lock()
+            .await
+            .values()
+            .any(|call| call.native_thread_id == thread_id))
     }
 
     pub(crate) fn native_transcript_destination_for_event(
@@ -4520,6 +4570,15 @@ async fn monitor_native_realtime_close(
             warn!(%reason, %peer_summary, %discord_summary, guild = guild_id.get(), "native realtime closed but voice cleanup was incomplete");
         } else {
             info!(%reason, guild = guild_id.get(), thread = %thread_id, "cleaned Discord voice resources after native realtime closed");
+        }
+        if let Err(error) = input_gate.clear_call_thread(&thread_id) {
+            crate::discord::report_discord_failure(
+                &http,
+                &config,
+                ChannelId::new(config.home_channel_id),
+                &error.to_string(),
+            )
+            .await;
         }
         input_gate.set(VoiceInputPhase::Idle).await;
         return;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -64,8 +64,12 @@ pub(crate) mod agy_catalog_cache;
 
 pub type VoiceLeaveHandler =
     Arc<dyn Fn(String) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
-pub type DiscordToolHandler =
-    Arc<dyn Fn(String, Value) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
+pub type DiscordToolHandler = Arc<
+    dyn Fn(String, Value, Option<String>) -> BoxFuture<'static, Result<Value>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 struct ServerRequestState {
     generation: u64,
@@ -386,6 +390,7 @@ struct Inner {
     next_observation_order: AtomicU64,
     thread_id: Mutex<String>,
     thread_state: Mutex<Value>,
+    retained_threads: Mutex<HashSet<String>>,
     applied_subagent_model: Mutex<Value>,
     external_turns: Mutex<HashMap<String, external::ActiveTurn>>,
     child: AsyncMutex<Option<Child>>,
@@ -599,6 +604,10 @@ fn setting_value<'a>(settings: &'a Value, field: &str) -> Option<&'a Value> {
         "effort" | "reasoningEffort" => settings
             .get("effort")
             .or_else(|| settings.get("reasoningEffort")),
+        "permissions" => settings.pointer("/activePermissionProfile/id"),
+        "sandboxPolicy" => settings
+            .get("sandboxPolicy")
+            .or_else(|| settings.get("sandbox")),
         other => settings.get(other),
     }
 }
@@ -1218,12 +1227,16 @@ impl Native {
             } else if let Some(thread_id) = saved.thread_id.as_ref() {
                 let mut params = json!({
                     "threadId": thread_id,
-                    "baseInstructions": crate::instructions::agent_base_instructions(&config.name, config.language)
+                    "baseInstructions": native.base_instructions_with_history()?
                 });
                 let approval_policy = native.read_native_feature_preferences()?.approval_policy;
                 params["approvalPolicy"] = approval_policy.clone();
-                let child_model = native.prepare_model_params(&mut params, saved.model_selection.as_ref()).await?;
-                let thread = native.request("thread/resume", params).await
+                let child_model = native
+                    .prepare_model_params(&mut params, saved.model_selection.as_ref())
+                    .await?;
+                let thread = native
+                    .request("thread/resume", params)
+                    .await
                     .with_context(|| format!("resume saved Codex thread {thread_id}"))?;
                 if let Some(selection) = saved.model_selection.as_ref() {
                     validate_model_selection_response(&thread, selection)?;
@@ -1255,7 +1268,9 @@ impl Native {
                     thread_state_summary(&thread);
                 // An already-loaded native thread can ignore resume overrides.
                 if thread_state_summary(&thread).get("approvalPolicy") != Some(&approval_policy) {
-                    native.set_approval_policy_and_confirm(approval_policy).await?;
+                    native
+                        .set_approval_policy_and_confirm(approval_policy)
+                        .await?;
                 }
             } else {
                 native.start_new_raw().await?;
@@ -1539,6 +1554,7 @@ impl Native {
             next_observation_order: AtomicU64::new(1),
             thread_id: Mutex::new(initial_thread_id),
             thread_state: Mutex::new(Value::Null),
+            retained_threads: Mutex::new(HashSet::new()),
             applied_subagent_model: Mutex::new(json!({})),
             external_turns: Mutex::new(HashMap::new()),
             child: AsyncMutex::new(Some(child)),
@@ -1584,7 +1600,7 @@ impl Native {
                 .await
                 .context("initialize Codex app-server client")?;
             native.notify("initialized", json!({})).await?;
-
+            external::recover_pending(&native.inner)?;
             Ok::<(), anyhow::Error>(())
         }
         .await;
@@ -1607,6 +1623,68 @@ impl Native {
         Ok(thread_id)
     }
 
+    pub(crate) fn retain_thread(&self, thread_id: &str) -> Result<()> {
+        self.inner
+            .retained_threads
+            .lock()
+            .map_err(|_| anyhow!("retained thread lock poisoned"))?
+            .insert(thread_id.to_owned());
+        Ok(())
+    }
+
+    pub(crate) fn retained_thread_ids(&self) -> Result<Vec<String>> {
+        Ok(self
+            .inner
+            .retained_threads
+            .lock()
+            .map_err(|_| anyhow!("retained thread lock poisoned"))?
+            .iter()
+            .cloned()
+            .collect())
+    }
+
+    /// The caller holds voice/input admission and has drained this thread's work.
+    pub(crate) async fn release_retained_thread(&self, thread_id: &str) -> Result<()> {
+        self.ensure_connected().await?;
+        if thread_id != self.thread_id() {
+            self.request_raw("thread/unsubscribe", json!({"threadId":thread_id}))
+                .await?;
+        }
+        self.inner
+            .retained_threads
+            .lock()
+            .map_err(|_| anyhow!("retained thread lock poisoned"))?
+            .remove(thread_id);
+        Ok(())
+    }
+
+    fn base_instructions_with_history(&self) -> Result<String> {
+        let saved = StateStore::new(&self.inner.config.state_dir).load()?;
+        let mut references = saved.previous_thread_ids;
+        if let Some(id) = saved.thread_id {
+            if !references.contains(&id) {
+                references.push(id);
+            }
+        }
+        let instructions = crate::instructions::agent_base_instructions(
+            &self.inner.config.name,
+            self.inner.config.language,
+        );
+        if references.is_empty() {
+            return Ok(instructions);
+        }
+        let history = self
+            .inner
+            .config
+            .language
+            .message(MessageKey::NativeExternalThreadReferences)
+            .replace(
+                "{references}",
+                &json!({"previousThreadIds":references}).to_string(),
+            );
+        Ok(format!("{instructions}\n\n{history}"))
+    }
+
     async fn start_new_raw(&self) -> Result<String> {
         let saved = StateStore::new(&self.inner.config.state_dir).load()?;
         self.start_new_raw_with(saved.model_selection.as_ref())
@@ -1617,7 +1695,7 @@ impl Native {
         let mut params = json!({
             "cwd": self.inner.config.project_dir,
             "ephemeral": false,
-            "baseInstructions": crate::instructions::agent_base_instructions(&self.inner.config.name, self.inner.config.language)
+            "baseInstructions": self.base_instructions_with_history()?
         });
         let approval_policy = self.read_native_feature_preferences()?.approval_policy;
         params["approvalPolicy"] = approval_policy.clone();
@@ -1726,42 +1804,6 @@ impl Native {
         if thread_id.is_empty() {
             bail!("there is no active Codex thread to change models on");
         }
-        if saved.thread_id.as_deref() != Some(thread_id.as_str()) {
-            let old = self.thread_state();
-            let old_child = self
-                .inner
-                .applied_subagent_model
-                .lock()
-                .map_err(|_| anyhow!("subagent model lock poisoned"))?
-                .clone();
-            let new_id = self.start_new_raw_with(Some(selection)).await?;
-            if let Err(error) = store.save_model_selection(selection) {
-                *self
-                    .inner
-                    .thread_id
-                    .lock()
-                    .map_err(|_| anyhow!("thread ID lock poisoned"))? = thread_id.clone();
-                *self
-                    .inner
-                    .thread_state
-                    .lock()
-                    .map_err(|_| anyhow!("thread state lock poisoned"))? = old;
-                self.remember_subagent_model(old_child)?;
-                let cleanup = self
-                    .request_raw("thread/unsubscribe", json!({"threadId":new_id}))
-                    .await;
-                return Err(error).context(format!("could not save the model selection; kept the previous empty conversation (replacement cleanup: {})", if cleanup.is_ok(){"done"}else{"failed"}));
-            }
-            // The old empty thread has no history. An unsubscribe cleanup error
-            // must not misreport a successfully applied and persisted selection.
-            if let Err(error) = self
-                .request_raw("thread/unsubscribe", json!({"threadId": thread_id}))
-                .await
-            {
-                tracing::warn!(%error,"could not detach previous empty thread after selecting model");
-            }
-            return Ok(self.thread_state());
-        }
         let old = self
             .inner
             .thread_state
@@ -1770,27 +1812,51 @@ impl Native {
             .clone();
         let mut params = json!({
             "threadId": thread_id,
-            "baseInstructions": crate::instructions::agent_base_instructions(
-                &self.inner.config.name,
-                self.inner.config.language
-            )
+            "baseInstructions": self.base_instructions_with_history()?
         });
         let child_model = self
             .prepare_model_params(&mut params, Some(selection))
             .await?;
-        // A loaded thread ignores executor/provider overrides on resume. Forking
-        // preserves its history while applying the requested configuration.
+        let previous_executor: ModelExecutor = old
+            .get("modelExecutor")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .context("read current model executor")?
+            .unwrap_or_default();
+        let fresh_start = previous_executor != selection.executor
+            || saved.thread_id.as_deref() != Some(thread_id.as_str());
         preserve_thread_fork_settings(&mut params, &old, self.inner.config.permissions.as_deref());
-
-        let response = self
-            .request_raw("thread/fork", params.clone())
-            .await
-            .context("fork the current Codex conversation with the selected model")?;
+        let method = if fresh_start {
+            params
+                .as_object_mut()
+                .context("model start parameters must be an object")?
+                .remove("threadId");
+            if params.get("cwd").is_none() {
+                params["cwd"] = json!(self.inner.config.project_dir);
+            }
+            params["ephemeral"] = json!(false);
+            if let Some(effort) = old.get("effort").filter(|value| !value.is_null()) {
+                merge_config_overrides(&mut params, &json!({"model_reasoning_effort":effort}));
+            }
+            if let Some(tier) = old.get("serviceTier") {
+                params["serviceTier"] = tier.clone();
+            }
+            "thread/start"
+        } else {
+            "thread/fork"
+        };
+        let response = self.request_raw(method, params.clone()).await.context(
+            self.inner
+                .config
+                .language
+                .message(MessageKey::NativeModelTransitionRequest),
+        )?;
         let new_thread_id = match (|| {
             validate_model_selection_response(&response, selection)?;
             let id = response_thread_id(&response)?;
             if id == thread_id {
-                bail!("Codex returned the existing thread ID for a history-preserving model fork");
+                bail!("Codex returned the existing thread ID for {method}");
             }
             if response
                 .pointer("/thread/ephemeral")
@@ -1816,7 +1882,61 @@ impl Native {
                 return Err(error);
             }
         };
-        let next_thread_state = thread_state_after_fork(&response, &old, &params);
+        let mut next_thread_state = if fresh_start {
+            thread_state_summary(&response)
+        } else {
+            thread_state_after_fork(&response, &old, &params)
+        };
+        if fresh_start {
+            let mut settings = json!({"threadId":new_thread_id});
+            for field in [
+                "effort",
+                "serviceTier",
+                "approvalPolicy",
+                "approvalsReviewer",
+            ] {
+                if let Some(value) = old.get(field) {
+                    settings[field] = value.clone();
+                }
+            }
+            if let Some(mode) = old.get("collaborationMode").filter(|mode| mode.is_object()) {
+                let mut mode = mode.clone();
+                mode["settings"]["model"] = json!(selection.model);
+                settings["collaborationMode"] = mode;
+            }
+            if let Some(profile) = old.pointer("/activePermissionProfile/id") {
+                settings["permissions"] = profile.clone();
+            } else if let Some(policy) = old.get("sandboxPolicy").or_else(|| old.get("sandbox")) {
+                settings["sandboxPolicy"] = policy.clone();
+            }
+            let mut events = self.subscribe();
+            let applied = apply_and_merge_configured_thread_settings(
+                |method, params| self.request_raw(method, params),
+                &mut events,
+                &new_thread_id,
+                self.current_generation(),
+                settings,
+                &mut next_thread_state,
+                self.inner.config.language,
+            )
+            .await
+            .and_then(|()| validate_model_selection_response(&next_thread_state, selection));
+            if let Err(error) = applied {
+                if let Err(cleanup) = self
+                    .request_raw("thread/unsubscribe", json!({"threadId":new_thread_id}))
+                    .await
+                {
+                    return Err(error).context(
+                        self.inner
+                            .config
+                            .language
+                            .message(MessageKey::NativeModelTransitionCleanupFailure)
+                            .replace("{detail}", &format!("{cleanup:#}")),
+                    );
+                }
+                return Err(error);
+            }
+        }
         let commit = (|| -> Result<()> {
             let mut active_thread = self
                 .inner
@@ -1837,7 +1957,12 @@ impl Native {
                 .lock()
                 .map_err(|_| anyhow!("subagent model lock poisoned"))?;
 
-            store.save_thread_and_model_selection(&new_thread_id, selection)?;
+            self.retain_thread(&thread_id)?;
+            if fresh_start {
+                store.save_pending_model_selection(&thread_id, selection)?;
+            } else {
+                store.save_thread_and_model_selection(&new_thread_id, selection)?;
+            }
             *active_thread = new_thread_id.clone();
             *active_state = next_thread_state.clone();
             *active_child_model = child_model;
@@ -1850,15 +1975,14 @@ impl Native {
             {
                 tracing::warn!(%cleanup_error, "could not detach uncommitted model fork");
             }
-            return Err(error).context("could not commit the selected model fork");
+            return Err(error).context(
+                self.inner
+                    .config
+                    .language
+                    .message(MessageKey::NativeModelTransitionCommit),
+            );
         }
 
-        if let Err(error) = self
-            .request_raw("thread/unsubscribe", json!({"threadId":thread_id}))
-            .await
-        {
-            tracing::warn!(%error, "could not detach previous thread after model fork");
-        }
         Ok(next_thread_state)
     }
 
@@ -2820,9 +2944,7 @@ impl Native {
             self.notify("initialized", json!({})).await?;
             let saved = StateStore::new(&self.inner.config.state_dir).load()?;
             let active_thread_id = self.thread_id();
-            if !active_thread_id.is_empty()
-                && saved.thread_id.as_deref() == Some(active_thread_id.as_str())
-            {
+            if !active_thread_id.is_empty() {
                 let mut params = json!({"threadId":active_thread_id});
                 if let Some(selection) = saved.model_selection.as_ref() {
                     apply_model_selection(&mut params, selection);
@@ -2850,12 +2972,25 @@ impl Native {
                     .map_err(|_| anyhow!("thread state lock poisoned"))?;
                 merge_thread_state(&mut state, &update);
             }
+            for thread_id in self.retained_thread_ids()? {
+                if thread_id != active_thread_id {
+                    self.request_raw("thread/resume", json!({"threadId":thread_id}))
+                        .await
+                        .context(
+                            self.inner
+                                .config
+                                .language
+                                .message(MessageKey::NativeRetainedThreadRestore),
+                        )?;
+                }
+            }
             Ok::<(), anyhow::Error>(())
         }
         .await;
         match ready {
             Ok(()) => {
                 self.inner.connection_state.store(2, Ordering::Release);
+                external::recover_pending(&self.inner)?;
                 Ok(())
             }
             Err(err) => {
@@ -3324,16 +3459,21 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
                     voice_rpc_error(id, -32602, "Discord tool parameters must be an object")
                 } else {
                     let result = async {
-                        if let Some(binding) = external::take_binding(&mut args)? {
+                        let caller = if let Some(binding) = external::take_binding(&mut args)? {
                             external::validate_binding(inner, &binding)?;
-                        }
+                            Some(binding.thread_id)
+                        } else if method == "discord_read_voice_inbox" {
+                            Some(crate::harness::caller_thread(&request)?)
+                        } else {
+                            None
+                        };
                         let handler = inner
                             .discord_tool_handler
                             .read()
                             .map_err(|_| anyhow!("Discord tool handler lock poisoned"))?
                             .clone()
                             .context("Discord tool handler is not attached")?;
-                        handler(method.to_owned(), args).await
+                        handler(method.to_owned(), args, caller).await
                     }
                     .await;
                     native_tool_rpc_response(id, result)
@@ -4085,6 +4225,14 @@ fn spawn_reader(
                         tracing::error!(
                             %error,
                             "could not persist native thread after Codex materialized user input"
+                        );
+                        publish_native_failure(
+                            &inner,
+                            &inner
+                                .config
+                                .language
+                                .message(MessageKey::NativeStateWriteFailure)
+                                .replace("{detail}", &format!("{error:#}")),
                         );
                     }
                 }

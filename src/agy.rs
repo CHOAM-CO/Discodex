@@ -6,8 +6,6 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
-    fs::{self, OpenOptions},
-    io::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -41,7 +39,7 @@ pub(crate) mod protocol {
     pub const OUTPUT_FORMAT_ARG: &str = "--output-format";
     pub const MODEL_ARG: &str = "--model";
     pub const EFFORT_ARG: &str = "--effort";
-    pub const AGENT_ARG: &str = "--agent";
+    pub const CONVERSATION_ARG: &str = "--conversation";
     pub const STREAM_JSON: &str = "stream-json";
     pub const MODEL_ROW_SEPARATOR: char = '\t';
     pub const EFFORT_CHOICES_OPEN: char = '(';
@@ -272,6 +270,8 @@ pub fn parse_event(value: Value) -> Result<Event> {
 /// The headless protocol accepts user text events only. Tool calls are executed
 /// by AGY itself (including configured MCP tools); it does not accept external
 /// control/tool-result events on stdin.
+pub(crate) type InitObserver = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+
 pub struct Session {
     child: Child,
     owned_children: OwnedChildren,
@@ -282,70 +282,14 @@ pub struct Session {
     stderr_reader: Option<JoinHandle<()>>,
     stderr_output: Arc<AsyncMutex<String>>,
     turn_in_flight: bool,
-    _agent: Option<TemporaryAgent>,
+    exit_status: Option<std::process::ExitStatus>,
+    _instructions: Option<tempfile::NamedTempFile>,
 }
 
 #[derive(Clone, Debug)]
 pub struct McpSessionContext {
     pub endpoint: PathBuf,
     pub binding: crate::agy_mcp::NativeRunBinding,
-}
-
-/// Per-run custom agent definition discovered through AGY's documented
-/// workspace `.agents/agents/<name>/agent.md` location. The session owns this
-/// value so the definition remains available until the CLI process exits.
-pub(crate) struct TemporaryAgent {
-    directory: tempfile::TempDir,
-    name: String,
-}
-
-impl TemporaryAgent {
-    pub(crate) fn create(workspace: &Path, instructions: &str) -> Result<Self> {
-        let agents_root = workspace.join(".agents");
-        let definitions_root = agents_root.join("agents");
-        for directory in [&agents_root, &definitions_root] {
-            fs::create_dir_all(directory)
-                .with_context(|| format!("create AGY agent directory {}", directory.display()))?;
-        }
-
-        let directory = match tempfile::Builder::new()
-            .prefix("discodex-run-")
-            .tempdir_in(&definitions_root)
-        {
-            Ok(directory) => directory,
-            Err(error) => return Err(error).context("create temporary AGY agent directory"),
-        };
-        let Some(name) = directory.path().file_name().and_then(|name| name.to_str()) else {
-            bail!("temporary AGY agent name is not UTF-8");
-        };
-        let name = name.to_owned();
-        let file_path = directory.path().join("agent.md");
-        let definition = temporary_agent_definition(&name, instructions);
-        let write_result = (|| -> Result<()> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&file_path)
-                .with_context(|| format!("create AGY agent definition {}", file_path.display()))?;
-            file.write_all(definition.as_bytes())?;
-            file.flush()?;
-            Ok(())
-        })();
-        if let Err(error) = write_result {
-            return Err(error);
-        }
-        Ok(Self { directory, name })
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-fn temporary_agent_definition(name: &str, instructions: &str) -> String {
-    format!(
-        "---\nname: {name}\ndescription: Per-run Codex execution guidance.\n---\n\n{instructions}"
-    )
 }
 
 #[cfg(unix)]
@@ -707,16 +651,17 @@ pub(crate) fn session_command(
     effort: Option<&str>,
     mcp_context: Option<&McpSessionContext>,
 ) -> Command {
-    session_command_with_agent(runtime, cwd, model, effort, mcp_context, None)
+    session_command_with_run(runtime, cwd, model, effort, mcp_context, None, None)
 }
 
-fn session_command_with_agent(
+fn session_command_with_run(
     runtime: &Runtime,
     cwd: &Path,
     model: Option<&str>,
     effort: Option<&str>,
     mcp_context: Option<&McpSessionContext>,
-    agent: Option<&str>,
+    conversation_id: Option<&str>,
+    instructions_path: Option<&Path>,
 ) -> Command {
     let mut command = runtime.command();
     command
@@ -731,7 +676,8 @@ fn session_command_with_agent(
         .kill_on_drop(true);
     command
         .env_remove(crate::agy_mcp::NATIVE_ENDPOINT_ENV)
-        .env_remove(crate::agy_mcp::NATIVE_RUN_ENV);
+        .env_remove(crate::agy_mcp::NATIVE_RUN_ENV)
+        .env_remove(crate::agy_hook::INSTRUCTIONS_ENV);
     #[cfg(unix)]
     command.process_group(0);
     if let Some(context) = mcp_context {
@@ -748,8 +694,11 @@ fn session_command_with_agent(
     if let Some(effort) = effort.and_then(agy_cli_effort) {
         command.arg(protocol::EFFORT_ARG).arg(effort);
     }
-    if let Some(agent) = agent.filter(|value| !value.trim().is_empty()) {
-        command.arg(protocol::AGENT_ARG).arg(agent);
+    if let Some(conversation_id) = conversation_id {
+        command.arg(protocol::CONVERSATION_ARG).arg(conversation_id);
+    }
+    if let Some(path) = instructions_path {
+        command.env(crate::agy_hook::INSTRUCTIONS_ENV, path);
     }
     command
 }
@@ -783,20 +732,32 @@ impl Session {
         effort: Option<&str>,
         mcp_context: Option<&McpSessionContext>,
     ) -> Result<Self> {
-        Self::spawn_internal(runtime, cwd, model, effort, mcp_context, None).await
+        Self::spawn_internal(runtime, cwd, model, effort, mcp_context, None, None, None).await
     }
 
-    /// Start AGY with a per-run custom agent whose definition is owned by the
-    /// returned session and removed when that session is dropped.
-    pub(crate) async fn spawn_with_agent_context(
+    /// Resume one exact AGY conversation and keep its invocation instructions
+    /// alive until the process has exited.
+    pub(crate) async fn spawn_with_run_context(
         runtime: &Runtime,
         cwd: &Path,
         model: Option<&str>,
         effort: Option<&str>,
-        mcp_context: Option<&McpSessionContext>,
-        agent: TemporaryAgent,
+        mcp_context: &McpSessionContext,
+        conversation_id: Option<&str>,
+        instructions: tempfile::NamedTempFile,
+        init_observer: InitObserver,
     ) -> Result<Self> {
-        Self::spawn_internal(runtime, cwd, model, effort, mcp_context, Some(agent)).await
+        Self::spawn_internal(
+            runtime,
+            cwd,
+            model,
+            effort,
+            Some(mcp_context),
+            conversation_id,
+            Some(instructions),
+            Some(init_observer),
+        )
+        .await
     }
 
     async fn spawn_internal(
@@ -805,15 +766,18 @@ impl Session {
         model: Option<&str>,
         effort: Option<&str>,
         mcp_context: Option<&McpSessionContext>,
-        agent: Option<TemporaryAgent>,
+        conversation_id: Option<&str>,
+        instructions: Option<tempfile::NamedTempFile>,
+        init_observer: Option<InitObserver>,
     ) -> Result<Self> {
-        let mut child = session_command_with_agent(
+        let mut child = session_command_with_run(
             runtime,
             cwd,
             model,
             effort,
             mcp_context,
-            agent.as_ref().map(TemporaryAgent::name),
+            conversation_id,
+            instructions.as_ref().map(|file| file.path()),
         )
         .spawn()
         .with_context(|| format!("start Antigravity CLI at {}", runtime.executable.display()))?;
@@ -847,6 +811,8 @@ impl Session {
         let (reader_cancel, _) = watch::channel(false);
         let mut stdout_cancel = reader_cancel.subscribe();
         let stdout_binding = mcp_context.map(|context| context.binding.clone());
+        let stderr_output = Arc::new(AsyncMutex::new(String::new()));
+        let init_diagnostics = stderr_output.clone();
         let stdout_reader = tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
@@ -862,6 +828,26 @@ impl Session {
                             .inspect(|value| log_event_shape(value, stdout_binding.as_ref()))
                             .and_then(parse_event)
                             .context("parse AGY stream-json event");
+                        if let (
+                            Some(observer),
+                            Ok(Event::Init {
+                                conversation_id: Some(id),
+                                ..
+                            }),
+                        ) = (&init_observer, &parsed)
+                        {
+                            // An init may arrive while stdin is still being written.
+                            // Persist its actual ID before queuing the event so a
+                            // partial write or adapter restart cannot lose it.
+                            if let Err(error) = observer(id) {
+                                init_diagnostics
+                                    .lock()
+                                    .await
+                                    .push_str(&format!("{error:#}\n"));
+                                let _ = sender.send(Err(error));
+                                return;
+                            }
+                        }
                         if sender.send(parsed).is_err() {
                             return;
                         }
@@ -874,7 +860,6 @@ impl Session {
                 }
             }
         });
-        let stderr_output = Arc::new(AsyncMutex::new(String::new()));
         let stderr_capture = stderr_output.clone();
         let mut stderr_cancel = reader_cancel.subscribe();
         let stderr_reader = tokio::spawn(async move {
@@ -913,7 +898,8 @@ impl Session {
             stderr_reader: Some(stderr_reader),
             stderr_output,
             turn_in_flight: false,
-            _agent: agent,
+            exit_status: None,
+            _instructions: instructions,
         })
     }
 
@@ -992,6 +978,7 @@ impl Session {
         if let Err(error) = self.drain_exited_readers().await {
             return Some(Err(error).context("stop AGY output readers after stdout closed"));
         }
+        self.exit_status = Some(status);
         let stderr = self.stderr_output.lock().await.clone();
         if !std::mem::replace(&mut self.turn_in_flight, false) {
             return None;
@@ -1000,6 +987,10 @@ impl Session {
             status.code(),
             &stderr
         ))))
+    }
+
+    pub(crate) fn observed_exit_status(&self) -> Option<std::process::ExitStatus> {
+        self.exit_status
     }
 
     /// Collect CLI diagnostics after the owned output readers have stopped.
@@ -1037,6 +1028,9 @@ impl Session {
     pub async fn finish(&mut self) -> Result<std::process::ExitStatus> {
         self.stdin.take();
         let status = self.child.wait().await.context("wait for AGY process");
+        if let Ok(status) = &status {
+            self.exit_status = Some(*status);
+        }
         let cleanup = self.owned_children.terminate();
         let readers = if status.is_ok() && cleanup.is_ok() {
             self.drain_exited_readers().await
@@ -1058,6 +1052,9 @@ impl Session {
             .wait()
             .await
             .context("wait for terminated AGY process");
+        if let Ok(status) = &status {
+            self.exit_status = Some(*status);
+        }
         let readers = if status.is_ok() && cleanup.is_ok() {
             self.drain_exited_readers().await
         } else {
@@ -1366,43 +1363,6 @@ mod tests {
     }
 
     #[test]
-    fn temporary_agent_definition_and_cli_selection_preserve_guidance_and_model() {
-        let name = "discodex-run-fixture";
-        let instructions = "Native base instructions\n\nproactive mode";
-        assert_eq!(
-            temporary_agent_definition(name, instructions),
-            "---\nname: discodex-run-fixture\ndescription: Per-run Codex execution guidance.\n---\n\nNative base instructions\n\nproactive mode"
-        );
-        let runtime = Runtime {
-            executable: "example-runtime/agy".into(),
-            arguments: vec!["--settings=example".to_owned()],
-            environment: HashMap::new(),
-        };
-        let command = session_command_with_agent(
-            &runtime,
-            Path::new("fixture-workspace"),
-            Some("example-argon-high"),
-            Some("ultra"),
-            None,
-            Some(name),
-        );
-        let args = command
-            .as_std()
-            .get_args()
-            .map(OsStr::to_owned)
-            .collect::<Vec<_>>();
-        assert!(
-            args.windows(2)
-                .any(|args| args == [OsStr::new("--agent"), OsStr::new(name)])
-        );
-        assert!(
-            args.windows(2)
-                .any(|args| args == [OsStr::new("--model"), OsStr::new("example-argon-high")])
-        );
-        assert!(!args.iter().any(|arg| arg == OsStr::new("--effort")));
-    }
-
-    #[test]
     fn unbound_session_command_removes_inherited_native_binding() {
         let runtime = Runtime {
             executable: "example-runtime/agy".into(),
@@ -1438,6 +1398,7 @@ mod tests {
                 BTreeMap::from([
                     (OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV), None,),
                     (OsStr::new(crate::agy_mcp::NATIVE_RUN_ENV), None),
+                    (OsStr::new(crate::agy_hook::INSTRUCTIONS_ENV), None),
                     (OsStr::new("HOME"), Some(OsStr::new("preserved home"))),
                 ])
             );

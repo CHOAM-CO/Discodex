@@ -272,6 +272,24 @@ impl AsyncQuestionStore {
         self.questions_with_delivery(QuestionDelivery::AwaitingConfirmation)
     }
 
+    pub(crate) fn has_open_for_thread(&self, thread_id: &str) -> bool {
+        self.requests.iter().any(|request| {
+            request.thread_id == thread_id
+                && request
+                    .questions
+                    .iter()
+                    .enumerate()
+                    .any(|(index, question)| {
+                        question.delivery != QuestionDelivery::Sent
+                            || (question.presentation_delivery.is_none()
+                                && question.reply_target.is_some())
+                            || self
+                                .active_submissions
+                                .contains(&native_item_id(&request.call_id, index))
+                    })
+        })
+    }
+
     fn recoverable_answers(&self) -> Vec<PendingQuestion> {
         let mut questions = self.ready();
         questions.extend(self.queued());
@@ -1177,12 +1195,13 @@ async fn sync_question_presentation(
 
 pub(crate) async fn recover(http: &Http, state: &crate::discord::BridgeState) -> Result<()> {
     let thread_id = state.native.thread_id();
+    let retained = state.native.retained_thread_ids()?;
     let path = state.config.state_dir.join("async-questions.json");
     let store = state.async_questions.lock().await;
     let ready = store.recoverable_answers();
     drop(store);
     for q in ready {
-        if q.thread_id != thread_id {
+        if q.thread_id != thread_id && !retained.contains(&q.thread_id) {
             continue;
         }
         let observation = if let Some(target) = &q.reply_target {
@@ -1282,7 +1301,12 @@ fn question_is_current(
                 .message(MessageKey::AsyncQuestionsAlreadyAnswered)
         );
     }
-    if question.thread_id != state.native.thread_id() {
+    if question.thread_id != state.native.thread_id()
+        && !state
+            .native
+            .retained_thread_ids()?
+            .contains(&question.thread_id)
+    {
         bail!(
             "{}",
             state
@@ -1430,6 +1454,8 @@ async fn submit_staged_answer(
         .map(|error| crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}")));
     store.reconcile_delivery_with_detail(&question.item_id, observation, failure_detail.clone());
     store.save(state.config.state_dir.join("async-questions.json"))?;
+    drop(store);
+    state.voice.input_gate.ready.notify_one();
     if matches!(
         observation,
         QueueObservation::Accepted | QueueObservation::Queued

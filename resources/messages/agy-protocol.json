@@ -4,5 +4,59 @@
     "ko": "AGY step_update text_delta는 문자열이어야 합니다. 실제 형식: {type}",
     "zh": "AGY step_update text_delta 必须是字符串，实际类型为 {type}",
     "ja": "AGY step_update text_delta は文字列である必要があります。実際の型: {type}"
+  },
+  "agy_protocol.hook_binding": {
+    "en": "Read the current AGY hook run binding.",
+    "ko": "현재 AGY hook 실행 연결 정보를 읽습니다.",
+    "zh": "读取当前 AGY hook 的运行绑定。",
+    "ja": "現在の AGY hook 実行の関連情報を読み取ります。"
+  },
+  "agy_protocol.hook_input": {
+    "en": "Read and parse the AGY hook input JSON.",
+    "ko": "AGY hook 입력 JSON을 읽고 해석합니다.",
+    "zh": "读取并解析 AGY hook 输入 JSON。",
+    "ja": "AGY hook 入力 JSON を読み取り解析します。"
+  },
+  "agy_protocol.hook_instructions": {
+    "en": "Read the instructions file owned by this AGY run.",
+    "ko": "현재 AGY 실행이 소유한 지침 파일을 읽습니다.",
+    "zh": "读取当前 AGY 运行拥有的指令文件。",
+    "ja": "現在の AGY 実行が所有する指示ファイルを読み取ります。"
+  },
+  "agy_protocol.hook_tool_name": {
+    "en": "AGY PreToolUse input omitted toolCall.name.",
+    "ko": "AGY PreToolUse 입력에 toolCall.name이 없습니다.",
+    "zh": "AGY PreToolUse 输入缺少 toolCall.name。",
+    "ja": "AGY PreToolUse 入力に toolCall.name がありません。"
+  },
+  "agy_protocol.native_delegation_denied": {
+    "en": "Use the Codex MCP agent management tools for this Discodex task.",
+    "ko": "이 Discodex 작업에서는 Codex MCP 에이전트 관리 도구를 사용하세요.",
+    "zh": "请使用 Codex MCP 代理管理工具处理此 Discodex 任务。",
+    "ja": "この Discodex タスクでは Codex MCP のエージェント管理ツールを使用してください。"
+  },
+  "agy_protocol.hook_option_required": {
+    "en": "agy-hook requires {option}.",
+    "ko": "agy-hook에 {option}이 필요합니다.",
+    "zh": "agy-hook 需要 {option}。",
+    "ja": "agy-hook には {option} が必要です。"
+  },
+  "agy_protocol.hook_option_value": {
+    "en": "agy-hook {option} requires a value.",
+    "ko": "agy-hook {option}에 값이 필요합니다.",
+    "zh": "agy-hook {option} 需要一个值。",
+    "ja": "agy-hook {option} には値が必要です。"
+  },
+  "agy_protocol.hook_event_unknown": {
+    "en": "Unknown AGY hook event: {event}",
+    "ko": "알 수 없는 AGY hook 이벤트: {event}",
+    "zh": "未知 AGY hook 事件：{event}",
+    "ja": "不明な AGY hook イベント: {event}"
+  },
+  "agy_protocol.init_id_persist": {
+    "en": "Persist the actual AGY init conversation ID.",
+    "ko": "실제 AGY init 대화 ID를 저장합니다.",
+    "zh": "保存实际 AGY init 对话 ID。",
+    "ja": "実際の AGY init 会話 ID を保存します。"
   }
 }

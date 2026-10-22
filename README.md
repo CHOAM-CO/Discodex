@@ -13,9 +13,9 @@
 
 ---
 
-Discodex connects one Discord app profile to one persistent conversation. Text and voice share Codex context; an optional Antigravity CLI backend supports text conversations. The bundled Codex fork manages native tasks and subagents.
+Discodex connects one Discord app profile to a persistent working conversation. Codex or the optional Antigravity CLI executes work; OpenAI Realtime provides voice and delegates to that same working conversation. The bundled Codex fork manages native tasks and subagents.
 
-This page describes the 1.0 source tree. Downloadable binaries follow the published release tags.
+This page describes the current source tree. Downloadable binaries follow the published release tags.
 
 ## Features
 
@@ -65,9 +65,13 @@ The main-model and **Default subagent model** pickers include the native catalog
 
 Provider history compatibility uses independent `encrypted_content` and `agent_messages` capabilities. Outbound conversion preserves readable context and leaves saved history untouched; see [history compatibility](docs/design.md#provider-changes-and-encrypted-history).
 
-Enable **Advanced settings → Antigravity** to prepare a separate, profile-managed AGY CLI from the official prebuilt release. Setup installs it if needed, starts the native sign-in flow when required, and lets you cancel or exit. You complete browser consent yourself. The installer and Discord setup both offer existing AGY settings or separate Discodex settings; the OS account keyring still follows AGY's native behavior. Discodex removal deletes its managed AGY binary and leaves external AGY installations and shared settings intact.
+Open **Settings → Antigravity** to install and sign in to a profile-managed official AGY CLI. Setup offers existing preferences as a read-only baseline or separate preferences, and can be canceled or exited. Browser consent is completed by the user. Discodex always keeps its MCP registration, scoped tool allow rule and settings overrides in private profile files; personal AGY configuration is not modified. The OS account keyring follows AGY’s native behavior. Removal deletes the managed CLI and preserves external AGY installations and personal settings.
 
-The AGY model catalog reads model IDs from `agy models` and effort choices from CLI `--help`, then caches them for 24 hours. Refresh it at **Advanced settings → Antigravity → Update model list**. Recognized effort variants are passed as the base model ID plus a separate native effort; other model IDs are passed through. Discovery errors are shown, and explicitly selected unsupported effort values pass through without substitution. Codex `ultra` is a Codex orchestration mode, not an AGY effort: it stays in Codex execution guidance and is not sent as AGY's `--effort`; any selected AGY native effort remains separate. AGY uses its subscription CLI rather than an SDK. It runs overlapping built-in tools, while additional Discord and task tools connect through MCP and subagents remain managed by the Codex fork. Each response receives the native conversation and visible tool results in a fresh CLI execution; private AGY state is not resumed. AGY settings apply on the next model selection or execution. Voice uses Codex Realtime with the selected Codex account, including while AGY or a local/custom model handles the main work.
+The AGY catalog is cached for 24 hours; use **Settings → Antigravity → Update model list** to refresh it. The CLI receives a base model ID and a separate `--effort`. Supported levels come from the discovered model metadata. When a selected level is unavailable, it is lowered to the highest supported level at or below the selection, and settings show the actual value. Unknown model IDs are preserved and CLI errors are surfaced. Codex `ultra` retains its orchestration guidance even when the native AGY effort maps to a lower level.
+
+Each AGY execution starts a CLI process, resumes its stored exact conversation ID, and sends only newly accepted input and pending transcript context. Switching between Codex and AGY starts a fresh working session and keeps references for explicit history lookup. Child agents start fresh by default; explicit context forks remain available for supported Codex children, while an unsupported AGY fork returns its concrete error. Codex manages child lifecycle through MCP.
+
+Voice uses the selected Codex account’s OpenAI Realtime connection with any main executor. Delegated results return to the current call; speech after the last handoff is saved at call end without generating another response, and reaches the next normal request. Changing the primary session during a call leaves that call on its original working session. Native and Discodex failures retain their originating message, code and status when available.
 
 ## Updating
 
@@ -101,7 +105,7 @@ The updater downloads the worker and its matching prebuilt Codex package. Its ma
 | Check for and apply updates | `/discodex update` |
 | Start a new conversation | `/discodex new` |
 
-The settings panel offers the main model, default subagent model, reasoning effort, service tier, permission profile, approval policy, input delivery, voice profile, and release notices. Approval defaults to **on-request**, independently of the permission profile. **Advanced settings** contains detailed native feature switches; it does not repeat the subagent-model picker. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel. Approval choices are saved per profile in `native-features.json`; they do not overwrite shared Codex configuration.
+The settings panel offers the main model, default subagent model, reasoning effort, service tier, permission profile, approval policy, input delivery, voice profile, and release notices. Approval defaults to **on-request**, independently of the permission profile. **Antigravity** has its own settings-home entry. **Advanced settings** contains detailed native feature switches; it does not repeat the subagent-model picker. Voice changes apply to the next call. Detail screens return to the settings menu with Back; Exit closes the panel. Approval choices are saved per profile in `native-features.json`; they do not overwrite shared Codex configuration.
 
 Leaving voice disconnects the call while keeping the persistent conversation. Use `/discodex new` to start a different conversation.
 

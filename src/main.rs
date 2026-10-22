@@ -22,6 +22,9 @@ async fn main() -> Result<()> {
 
     // The MCP child uses stdout as its JSON-RPC transport. Dispatch before
     // initializing the normal application logger so no startup text can leak there.
+    if command == "agy-hook" {
+        return discodex::agy_hook::run(&rest);
+    }
     if command == "harness-tools" {
         let endpoint = voice_tools_endpoint(&rest)?;
         if rest.iter().any(|arg| arg == "--native") {
@@ -203,7 +206,10 @@ async fn shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn attach_parent_console_for_cli(command: Option<&str>) {
-    if matches!(command, Some("run" | "voice-tools" | "harness-tools")) {
+    if matches!(
+        command,
+        Some("run" | "voice-tools" | "harness-tools" | "agy-hook")
+    ) {
         return;
     }
 

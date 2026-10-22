@@ -1,4 +1,5 @@
 pub mod agy;
+pub mod agy_hook;
 pub mod agy_mcp;
 pub mod agy_settings;
 pub mod agy_setup;

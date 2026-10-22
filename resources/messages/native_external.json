@@ -40,5 +40,53 @@
     "ko": "AGY가 최종 결과를 반환하기 전에 종료되었습니다.",
     "zh": "AGY 在返回终结结果前退出。",
     "ja": "AGYは最終結果を返す前に終了しました。"
+  },
+  "native_external.context_updates": {
+    "en": "New voice context, with original source references:",
+    "ko": "새 음성 문맥과 원본 참조:",
+    "zh": "新增语音上下文及原始来源引用：",
+    "ja": "新しい音声の文脈と原文の参照:"
+  },
+  "native_external.new_input": {
+    "en": "New input in accepted order:",
+    "ko": "수락된 순서의 새 입력:",
+    "zh": "按接收顺序排列的新输入：",
+    "ja": "受け付けた順序の新しい入力:"
+  },
+  "native_external.thread_references": {
+    "en": "These IDs refer to readable conversation records. Use read_thread when their contents are needed: {references}",
+    "ko": "다음 ID는 읽을 수 있는 대화 기록의 참조입니다. 내용이 필요하면 read_thread로 조회하세요: {references}",
+    "zh": "这些 ID 引用可读取的对话记录。需要其内容时，请使用 read_thread 查询：{references}",
+    "ja": "これらの ID は閲覧できる会話記録への参照です。内容が必要な場合は read_thread で取得してください: {references}"
+  },
+  "native_external.recovered_attempt": {
+    "en": "Previous AGY run diagnostics; attempted input will not be resent automatically: {detail}",
+    "ko": "이전 AGY 실행 진단입니다. 전송을 시도한 입력은 자동 재전송하지 않습니다: {detail}",
+    "zh": "先前 AGY 运行的诊断信息；不会自动重发已尝试发送的输入：{detail}",
+    "ja": "前回の AGY 実行の診断です。送信を試みた入力は自動で再送しません: {detail}"
+  },
+  "native_external.init_id_missing": {
+    "en": "AGY did not begin with an init event containing its actual conversation ID.",
+    "ko": "AGY가 실제 대화 ID를 포함한 init 이벤트로 시작하지 않았습니다.",
+    "zh": "AGY 未以包含实际对话 ID 的 init 事件开始。",
+    "ja": "AGY が実際の会話 ID を含む init イベントで開始しませんでした。"
+  },
+  "native_external.unnamed_tool": {
+    "en": "AGY reported a tool step without a tool name: {detail}",
+    "ko": "AGY가 도구 이름이 없는 도구 단계를 반환했습니다: {detail}",
+    "zh": "AGY 返回了不含工具名称的工具步骤：{detail}",
+    "ja": "AGY がツール名のないツールステップを返しました: {detail}"
+  },
+  "native_external.no_public_output": {
+    "en": "AGY completed without public response text: {detail}",
+    "ko": "AGY가 공개 응답 텍스트 없이 실행을 마쳤습니다: {detail}",
+    "zh": "AGY 已结束运行，但未返回公开回复文本：{detail}",
+    "ja": "AGY は公開応答テキストを返さずに実行を終了しました: {detail}"
+  },
+  "native_external.attempt_references": {
+    "en": "AGY run and attempted context references: {references}",
+    "ko": "AGY 실행과 전송을 시도한 문맥의 참조: {references}",
+    "zh": "AGY 运行及已尝试发送的上下文引用：{references}",
+    "ja": "AGY 実行と送信を試みた文脈の参照: {references}"
   }
 }
