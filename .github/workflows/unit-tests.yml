@@ -58,14 +58,64 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
+          submodules: false
+      - name: Detect Codex gitlink changes
+        id: codex-change
+        shell: bash
+        working-directory: .
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$BASE_SHA"
+          else
+            base="$BEFORE_SHA"
+          fi
+
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git diff --quiet "$base" "$HEAD_SHA" -- third_party/codex; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            if [[ "$status" -eq 1 ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              exit "$status"
+            fi
+          fi
+      - name: Fetch changed Codex submodule
+        if: steps.codex-change.outputs.changed == 'true'
+        working-directory: .
+        run: git submodule update --init --recursive third_party/codex
       - uses: dtolnay/rust-toolchain@1.95.0
+        if: steps.codex-change.outputs.changed == 'true'
       - name: Install native build dependencies
+        if: steps.codex-change.outputs.changed == 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libcap-dev libssl-dev
       - uses: Swatinem/rust-cache@v2
+        if: steps.codex-change.outputs.changed == 'true'
         with:
           workspaces: third_party/codex/codex-rs -> target
       - name: Test provider history and protocol contracts
+        if: steps.codex-change.outputs.changed == 'true'
         run: |
           cargo test --locked -p codex-protocol --lib
           cargo test --locked -p codex-history --lib
@@ -80,6 +130,7 @@ jobs:
           cargo test --locked -p codex-rollout --lib recorder_preserves_executor_for_both_history_modes
           cargo test --locked -p codex-app-server-protocol --lib
       - name: Test native selection, child lifecycle and external execution
+        if: steps.codex-change.outputs.changed == 'true'
         run: |
           for test_filter in \
             agent::child_config::tests \
