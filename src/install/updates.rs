@@ -1620,14 +1620,18 @@ fn launch_windows_task(
     let service_executable = ownership.worker_executable.as_ref().context(
         language.message(crate::i18n::MessageKey::UpdateDiagnosticMissingOwnedWorkerExecutable),
     )?;
-    let task_executable = super::windows_task_executable_path(service_executable)?;
+    let task_executable = super::windows_task_executable_path(service_executable, language)?;
     let expected_executable = super::ps_single_quote(&task_executable.display().to_string());
     // Compare against the ownership record's original spelling. The canonical
     // config path can have different case or a `\\?\` prefix than the task.
     let expected_arguments =
         super::ps_single_quote(&windows_worker_task_arguments(&ownership.config_file));
-    let (task_state, run_level) =
-        super::inspect_owned_windows_task(&expected_executable, &expected_arguments, &ownership)?;
+    let (task_state, run_level) = super::inspect_owned_windows_task(
+        &expected_executable,
+        &expected_arguments,
+        &ownership,
+        language,
+    )?;
     ensure!(
         task_state == "matching",
         "{}",
