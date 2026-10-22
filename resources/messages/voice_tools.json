@@ -1,0 +1,182 @@
+{
+  "voice_tools.parse_error": {
+    "en": "Parse error: {error}",
+    "ko": "구문 분석 오류: {error}",
+    "zh": "解析错误：{error}",
+    "ja": "解析エラー: {error}"
+  },
+  "voice_tools.invalid_request": {
+    "en": "Invalid Request",
+    "ko": "잘못된 요청",
+    "zh": "无效请求",
+    "ja": "無効なリクエスト"
+  },
+  "voice_tools.voice_leave_description": {
+    "en": "End the active Discord voice call, then replace its original transcript-thread post with the concise summary you provide.",
+    "ko": "종료하려는 현재 Discord 음성 통화를 끝내고, 원래 전사 스레드 게시물을 제공한 간결한 요약으로 바꿉니다.",
+    "zh": "结束当前 Discord 语音通话，并用你提供的简明摘要替换原始转录线程帖子。",
+    "ja": "現在のDiscord音声通話を終了し、元の文字起こしスレッド投稿を指定した簡潔な要約に置き換えます。"
+  },
+  "voice_tools.summary_description": {
+    "en": "A concise, natural-language summary of this voice conversation, grounded in what was said.",
+    "ko": "실제 대화 내용에 근거한 간결하고 자연스러운 음성 대화 요약입니다.",
+    "zh": "根据实际对话内容撰写的简洁自然的语音通话摘要。",
+    "ja": "実際に話した内容に基づく、簡潔で自然な音声通話の要約です。"
+  },
+  "voice_tools.read_inbox_description": {
+    "en": "Read selected unread Discord messages received outside the current transcript thread during the active voice call. Call only when a message matters to this conversation or the user asks about it. Reading is separate from completing or acting on the message.",
+    "ko": "활성 음성 통화 중 현재 전사 스레드 밖에서 받은 읽지 않은 Discord 메시지 중 선택한 항목을 읽습니다. 메시지가 이 대화에 중요하거나 사용자가 물을 때만 호출하세요. 읽음은 메시지의 요청을 완료하거나 실행한 것이 아닙니다.",
+    "zh": "读取当前语音通话期间在当前转录线程之外收到的指定未读 Discord 消息。仅当消息与当前对话有关或用户询问时调用。读取不代表已完成或执行消息中的请求。",
+    "ja": "アクティブな音声通話中に現在の文字起こしスレッド外で受信した未読Discordメッセージから、指定したものを読みます。会話に関係する場合、またはユーザーが尋ねた場合にのみ呼び出してください。読むことはメッセージへの対応や実行を意味しません。"
+  },
+  "voice_tools.call_id_description": {
+    "en": "Active call ID shown in the inbox preview",
+    "ko": "받은편지함 미리보기에 표시된 활성 통화 ID",
+    "zh": "收件箱预览中显示的当前通话 ID",
+    "ja": "受信トレイのプレビューに表示された現在の通話 ID"
+  },
+  "voice_tools.message_ids_description": {
+    "en": "Message IDs from inbox previews",
+    "ko": "받은편지함 미리보기에 표시된 메시지 ID",
+    "zh": "收件箱预览中的消息 ID",
+    "ja": "受信トレイのプレビューに表示されたメッセージ ID"
+  },
+  "voice_tools.arguments_object": {
+    "en": "Discord tool arguments must be an object",
+    "ko": "Discord 도구 인수는 객체여야 합니다",
+    "zh": "Discord 工具参数必须是对象",
+    "ja": "Discordツールの引数はオブジェクトである必要があります"
+  },
+  "voice_tools.unknown_tool": {
+    "en": "Unknown tool: {name}",
+    "ko": "알 수 없는 도구: {name}",
+    "zh": "未知工具：{name}",
+    "ja": "不明なツール: {name}"
+  },
+  "voice_tools.method_not_found": {
+    "en": "Method not found: {name}",
+    "ko": "메서드를 찾을 수 없습니다: {name}",
+    "zh": "未找到方法：{name}",
+    "ja": "メソッドが見つかりません: {name}"
+  },
+  "voice_tools.channel_description": {
+    "en": "Voice channel name, optionally category/channel",
+    "ko": "음성 채널 이름. 필요하면 카테고리/채널 형식으로 지정",
+    "zh": "语音频道名称，可使用分类/频道格式",
+    "ja": "音声チャンネル名。必要に応じてカテゴリ/チャンネルで指定"
+  },
+  "voice_tools.channel_choice_description": {
+    "en": "Choice from discord_list_channels or an ambiguous lookup",
+    "ko": "discord_list_channels 또는 중복 이름 조회 결과의 선택 값",
+    "zh": "discord_list_channels 或名称歧义查询返回的选项值",
+    "ja": "discord_list_channelsまたは候補一覧で返された選択値"
+  },
+  "voice_tools.stdin_read_error": {
+    "en": "read MCP request from stdin",
+    "ko": "표준 입력에서 MCP 요청 읽기",
+    "zh": "从标准输入读取 MCP 请求",
+    "ja": "標準入力から MCP リクエストを読み取る"
+  },
+  "voice_tools.leave_args_object": {
+    "en": "voice_leave arguments must be an object",
+    "ko": "voice_leave 인수는 객체여야 합니다",
+    "zh": "voice_leave 参数必须是对象",
+    "ja": "voice_leave の引数はオブジェクトである必要があります"
+  },
+  "voice_tools.leave_args_only_summary": {
+    "en": "voice_leave arguments must contain only summary",
+    "ko": "voice_leave 인수에는 summary만 포함해야 합니다",
+    "zh": "voice_leave 参数只能包含 summary",
+    "ja": "voice_leave の引数には summary のみを含めてください"
+  },
+  "voice_tools.leave_summary_string": {
+    "en": "voice_leave summary must be a string",
+    "ko": "voice_leave summary는 문자열이어야 합니다",
+    "zh": "voice_leave summary 必须是字符串",
+    "ja": "voice_leave summary は文字列である必要があります"
+  },
+  "voice_tools.leave_summary_nonempty": {
+    "en": "voice_leave summary must not be empty",
+    "ko": "voice_leave summary가 비어 있으면 안 됩니다",
+    "zh": "voice_leave summary 不能为空",
+    "ja": "voice_leave summary は空にできません"
+  },
+  "voice_tools.leave_summary_too_long": {
+    "en": "voice_leave summary exceeds {limit} characters",
+    "ko": "voice_leave summary가 {limit}자를 초과했습니다",
+    "zh": "voice_leave summary 超过 {limit} 个字符",
+    "ja": "voice_leave summary が {limit} 文字を超えています"
+  },
+  "voice_tools.serialize_error": {
+    "en": "serialize MCP response",
+    "ko": "MCP 응답 직렬화",
+    "zh": "序列化 MCP 响应",
+    "ja": "MCP 応答をシリアル化"
+  },
+  "voice_tools.write_error": {
+    "en": "write MCP response",
+    "ko": "MCP 응답 쓰기",
+    "zh": "写入 MCP 响应",
+    "ja": "MCP 応答を書き込む"
+  },
+  "voice_tools.flush_error": {
+    "en": "flush MCP response",
+    "ko": "MCP 응답 플러시",
+    "zh": "刷新 MCP 响应",
+    "ja": "MCP 応答をフラッシュ"
+  },
+  "voice_tools.connect_ipc": {
+    "en": "connect to voice bridge IPC socket {path}: {error}",
+    "ko": "음성 브리지 IPC 소켓 {path} 연결: {error}",
+    "zh": "连接语音桥接 IPC 套接字 {path}：{error}",
+    "ja": "音声ブリッジ IPC ソケット {path} に接続: {error}"
+  },
+  "voice_tools.serialize_ipc": {
+    "en": "serialize Discord tool IPC request: {error}",
+    "ko": "Discord 도구 IPC 요청 직렬화: {error}",
+    "zh": "序列化 Discord 工具 IPC 请求：{error}",
+    "ja": "Discord ツール IPC リクエストをシリアル化: {error}"
+  },
+  "voice_tools.send_ipc": {
+    "en": "send Discord tool request to bridge: {error}",
+    "ko": "Discord 도구 요청을 브리지로 전송: {error}",
+    "zh": "向桥接发送 Discord 工具请求：{error}",
+    "ja": "Discord ツールリクエストをブリッジに送信: {error}"
+  },
+  "voice_tools.flush_ipc": {
+    "en": "flush Discord tool request: {error}",
+    "ko": "Discord 도구 요청 플러시: {error}",
+    "zh": "刷新 Discord 工具请求：{error}",
+    "ja": "Discord ツールリクエストをフラッシュ: {error}"
+  },
+  "voice_tools.read_ipc": {
+    "en": "read Discord tool response from bridge: {error}",
+    "ko": "브리지에서 Discord 도구 응답 읽기: {error}",
+    "zh": "从桥接读取 Discord 工具响应：{error}",
+    "ja": "ブリッジから Discord ツール応答を読み取る: {error}"
+  },
+  "voice_tools.ipc_closed": {
+    "en": "bridge closed Discord tool IPC before returning a result",
+    "ko": "브리지가 결과를 반환하기 전에 Discord 도구 IPC를 닫았습니다",
+    "zh": "桥接在返回结果前关闭了 Discord 工具 IPC",
+    "ja": "ブリッジが結果を返す前に Discord ツール IPC を閉じました"
+  },
+  "voice_tools.parse_ipc": {
+    "en": "parse Discord tool IPC response: {error}",
+    "ko": "Discord 도구 IPC 응답 분석: {error}",
+    "zh": "解析 Discord 工具 IPC 响应：{error}",
+    "ja": "Discord ツール IPC 応答を解析: {error}"
+  },
+  "voice_tools.ipc_id_mismatch": {
+    "en": "Discord tool IPC response ID {id} does not match request ID 1",
+    "ko": "Discord 도구 IPC 응답 ID {id}가 요청 ID 1과 일치하지 않습니다",
+    "zh": "Discord 工具 IPC 响应 ID {id} 与请求 ID 1 不匹配",
+    "ja": "Discord ツール IPC 応答 ID {id} がリクエスト ID 1 と一致しません"
+  },
+  "voice_tools.ipc_no_result": {
+    "en": "Discord tool IPC response has no result",
+    "ko": "Discord 도구 IPC 응답에 결과가 없습니다",
+    "zh": "Discord 工具 IPC 响应没有结果",
+    "ja": "Discord ツール IPC 応答に結果がありません"
+  }
+}

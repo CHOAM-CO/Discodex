@@ -57,14 +57,15 @@ fn signing_language_from_env() -> crate::i18n::Language {
         .unwrap_or_default()
 }
 
-fn signing_user_text(
-    language: crate::i18n::Language,
-    en: &str,
-    ko: &str,
-    zh: &str,
-    ja: &str,
-) -> String {
-    language.text(en, ko, zh, ja).to_owned()
+fn signing_user_text(language: crate::i18n::Language, key: crate::i18n::MessageKey) -> String {
+    language.message(key).to_owned()
+}
+
+fn signing_operation_error(language: crate::i18n::Language, detail: &str) -> String {
+    let detail = crate::discord::sanitize_discord_diagnostic(detail);
+    language
+        .message(crate::i18n::MessageKey::MacSigningOperationFailed)
+        .replace("{detail}", &detail)
 }
 
 fn validate_identifier(identifier: &str) -> Result<()> {
@@ -133,19 +134,33 @@ pub fn sign_binary(binary: &Path) -> Result<String> {
 
 #[cfg(target_os = "macos")]
 pub fn sign_binary_with_language(binary: &Path, language: crate::i18n::Language) -> Result<String> {
-    platform::sign_binary_with_language(binary, language)
+    platform::sign_binary_with_language(binary, language).map_err(|error| {
+        anyhow::anyhow!(
+            "{}",
+            signing_operation_error(language, &format!("{error:#}"))
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
 pub fn sign(args: &[String]) -> Result<()> {
     sign_binary_with_language(&binary_argument(args)?, signing_language_from_env())?;
-    println!("Staged binary signed and verified with this Mac's persistent identity.");
+    println!(
+        "{}",
+        signing_language_from_env().message(crate::i18n::MessageKey::MacSigningStagedBinarySigned)
+    );
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 pub fn sign_in_login_session(args: &[String]) -> Result<()> {
-    platform::sign_in_login_session(args, signing_language_from_env())
+    let language = signing_language_from_env();
+    platform::sign_in_login_session(args, language).map_err(|error| {
+        anyhow::anyhow!(
+            "{}",
+            signing_operation_error(language, &format!("{error:#}"))
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -241,20 +256,14 @@ mod platform {
         let open_status = unsafe { SecKeychainOpen(path.as_ptr(), &mut keychain) };
         let open_error = signing_user_text(
             language,
-            "Could not open the configured login keychain",
-            "설정된 로그인 키체인을 열 수 없습니다",
-            "无法打开已配置的登录钥匙串",
-            "設定されたログインキーチェーンを開けませんでした",
+            crate::i18n::MessageKey::MacSigningKeychainOpenFailed,
         );
         ensure!(open_status == 0, "{open_error} (OSStatus {open_status})");
         let unlock_status = unsafe { SecKeychainUnlock(keychain, 0, std::ptr::null(), 0) };
         unsafe { CFRelease(keychain) };
         let unlock_error = signing_user_text(
             language,
-            "macOS could not unlock the configured login keychain; complete the system authentication prompt and retry",
-            "macOS에서 설정된 로그인 키체인을 잠금 해제하지 못했습니다. 시스템 인증 안내를 완료한 뒤 다시 시도하세요",
-            "macOS 无法解锁已配置的登录钥匙串；请完成系统身份验证提示后重试",
-            "macOSで設定されたログインキーチェーンを解除できませんでした。システム認証ダイアログを完了してから再試行してください",
+            crate::i18n::MessageKey::MacSigningKeychainUnlockFailed,
         );
         ensure!(
             unlock_status == 0,
@@ -477,10 +486,7 @@ mod platform {
             };
             let guidance = signing_user_text(
                 language,
-                "Unlock the login keychain and authorize codesign from a Mac login session.",
-                "Mac 로그인 세션에서 로그인 키체인을 잠금 해제하고 codesign을 승인하세요.",
-                "请在 Mac 登录会话中解锁登录钥匙串并授权 codesign。",
-                "Macのログインセッションでログインキーチェーンを解除し、codesignを承認してください。",
+                crate::i18n::MessageKey::MacSigningCommandAuthorizationGuidance,
             );
             bail!("{action}: {detail}. {guidance}");
         }
@@ -630,10 +636,7 @@ mod platform {
         }
         let import_error = signing_user_text(
             language,
-            "macOS could not import the local signing identity; complete the system authentication prompt and retry",
-            "macOS에서 로컬 서명 ID를 가져오지 못했습니다. 시스템 인증 안내를 완료한 뒤 다시 시도하세요",
-            "macOS 无法导入本地签名身份；请完成系统身份验证提示后重试",
-            "macOSでローカル署名IDを読み込めませんでした。システム認証ダイアログを完了してから再試行してください",
+            crate::i18n::MessageKey::MacSigningIdentityImportFailed,
         );
         ensure!(
             import_status == 0,
@@ -960,10 +963,7 @@ mod platform {
         if !output.status.success() {
             let guidance = signing_user_text(
                 language,
-                "The existing login-keychain identity was preserved; unlock and authorize it from a Mac login session.",
-                "기존 로그인 키체인 ID는 보존되었습니다. Mac 로그인 세션에서 잠금 해제하고 승인하세요.",
-                "现有登录钥匙串身份已保留；请在 Mac 登录会话中解锁并授权。",
-                "既存のログインキーチェーンIDは保持されています。Macのログインセッションで解除して承認してください。",
+                crate::i18n::MessageKey::MacSigningPreservedIdentityGuidance,
             );
             bail!(
                 "Mac signing failed: {}. {guidance}",
@@ -1225,6 +1225,17 @@ mod tests {
             identifier: Some(DEFAULT_IDENTIFIER.to_owned()),
         }
     }
+    #[test]
+    fn signing_failure_message_is_localized_and_redacts_credentials() {
+        assert_eq!(
+            signing_operation_error(
+                crate::i18n::Language::Korean,
+                "codesign rejected api_key=fixture-secret",
+            ),
+            "Mac 서명 작업에 실패했습니다: codesign rejected api_key=[secret redacted]"
+        );
+    }
+
     #[test]
     fn restored_identity_has_the_same_requirement() {
         let first = identity();

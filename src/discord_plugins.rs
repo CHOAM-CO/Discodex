@@ -2,12 +2,12 @@
 //!
 //! This module deliberately delegates catalog, install, auth, and uninstall behavior to the
 //! app-server. Callers must obtain explicit user confirmation before `install_confirmed`.
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 use crate::native::Native;
 
 const APPROVAL_KIND: &str = "tool_suggestion";
@@ -60,14 +60,23 @@ pub struct PluginInstallTarget {
 }
 
 impl PluginInstallTarget {
-    pub fn from_catalog(marketplace: &PluginMarketplace, plugin: &PluginSummary) -> Result<Self> {
-        ensure!(!plugin.installed, "this plugin is already installed");
+    pub fn from_catalog(
+        marketplace: &PluginMarketplace,
+        plugin: &PluginSummary,
+        language: Language,
+    ) -> Result<Self> {
+        ensure!(
+            !plugin.installed,
+            "{}",
+            language.message(MessageKey::DiscordPluginsPluginAlreadyInstalled)
+        );
         ensure!(
             !matches!(
                 plugin.availability.as_deref(),
                 Some("NOT_AVAILABLE" | "DISABLED_BY_ADMIN")
             ),
-            "Codex reports this plugin is unavailable"
+            "{}",
+            language.message(MessageKey::DiscordPluginsPluginUnavailable)
         );
         if let Some(path) = marketplace.path.as_ref() {
             Ok(Self {
@@ -77,10 +86,12 @@ impl PluginInstallTarget {
                 display_name: plugin.name.clone(),
             })
         } else {
-            let remote_id = plugin
-                .remote_plugin_id
-                .as_ref()
-                .ok_or_else(|| anyhow!("remote plugin row has no remotePluginId"))?;
+            let remote_id = plugin.remote_plugin_id.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "{}",
+                    language.message(MessageKey::DiscordPluginsRemotePluginIdMissing)
+                )
+            })?;
             Ok(Self {
                 marketplace_path: None,
                 remote_marketplace_name: Some(marketplace.name.clone()),
@@ -182,32 +193,12 @@ pub struct SuggestionLabels {
     pub cancel: &'static str,
 }
 
-pub const fn suggestion_labels(language: Language) -> SuggestionLabels {
-    match language {
-        Language::English => SuggestionLabels {
-            accept: "Install",
-            decline: "Not now",
-            decline_and_remember: "Don't suggest again",
-            cancel: "Cancel",
-        },
-        Language::Korean => SuggestionLabels {
-            accept: "설치",
-            decline: "지금은 안 함",
-            decline_and_remember: "다시 제안하지 않기",
-            cancel: "취소",
-        },
-        Language::Chinese => SuggestionLabels {
-            accept: "安装",
-            decline: "暂不",
-            decline_and_remember: "不再建议",
-            cancel: "取消",
-        },
-        Language::Japanese => SuggestionLabels {
-            accept: "インストール",
-            decline: "今はしない",
-            decline_and_remember: "今後提案しない",
-            cancel: "キャンセル",
-        },
+pub fn suggestion_labels(language: Language) -> SuggestionLabels {
+    SuggestionLabels {
+        accept: language.message(MessageKey::DiscordPluginsInstall),
+        decline: language.message(MessageKey::DiscordPluginsNotNow),
+        decline_and_remember: language.message(MessageKey::DiscordPluginsDoNotSuggestAgain),
+        cancel: language.message(MessageKey::DiscordPluginsCancel),
     }
 }
 
@@ -223,11 +214,16 @@ pub async fn list_installed(native: &Native) -> Result<PluginCatalog> {
     Ok(serde_json::from_value(response)?)
 }
 
-pub async fn read_plugin(native: &Native, target: &PluginInstallTarget) -> Result<PluginDetail> {
+pub async fn read_plugin(
+    native: &Native,
+    target: &PluginInstallTarget,
+    language: Language,
+) -> Result<PluginDetail> {
     let mut params = target.selector_params();
     ensure!(
         !params.is_null(),
-        "plugin selection has invalid marketplace selector"
+        "{}",
+        language.message(MessageKey::DiscordPluginsMarketplaceSelectorInvalid)
     );
     params["pluginName"] = Value::String(target.plugin_name.clone());
     let response = native.request("plugin/read", params).await?;
@@ -240,15 +236,18 @@ pub async fn install_confirmed(
     native: &Native,
     target: &PluginInstallTarget,
     confirmed: bool,
+    language: Language,
 ) -> Result<PluginInstallOutcome> {
     ensure!(
         confirmed,
-        "plugin installation requires explicit user confirmation"
+        "{}",
+        language.message(MessageKey::DiscordPluginsInstallConfirmationRequired)
     );
     let mut params = target.selector_params();
     ensure!(
         !params.is_null(),
-        "plugin selection has invalid marketplace selector"
+        "{}",
+        language.message(MessageKey::DiscordPluginsMarketplaceSelectorInvalid)
     );
     params["pluginName"] = Value::String(target.plugin_name.clone());
     params["installAttemptId"] = Value::String(Uuid::new_v4().to_string());
@@ -256,10 +255,16 @@ pub async fn install_confirmed(
     Ok(serde_json::from_value(response)?)
 }
 
-pub async fn uninstall_confirmed(native: &Native, plugin_id: &str, confirmed: bool) -> Result<()> {
+pub async fn uninstall_confirmed(
+    native: &Native,
+    plugin_id: &str,
+    confirmed: bool,
+    language: Language,
+) -> Result<()> {
     ensure!(
         confirmed,
-        "plugin removal requires explicit user confirmation"
+        "{}",
+        language.message(MessageKey::DiscordPluginsRemovalConfirmationRequired)
     );
     native
         .request("plugin/uninstall", json!({"pluginId": plugin_id}))
@@ -281,11 +286,19 @@ pub async fn begin_oauth_login(
     Ok(serde_json::from_value(response)?)
 }
 
-pub fn oauth_completion(event: &Value) -> Option<OAuthCompletion> {
-    if event.get("method")?.as_str()? != "mcpServer/oauthLogin/completed" {
-        return None;
+pub fn oauth_completion(event: &Value) -> Result<Option<OAuthCompletion>> {
+    if !matches!(
+        event.get("method").and_then(Value::as_str),
+        Some("mcpServer/oauthLogin/completed" | "mcpServer/oauth/login/completed")
+    ) {
+        return Ok(None);
     }
-    serde_json::from_value(event.get("params")?.clone()).ok()
+    let params = event
+        .get("params")
+        .context("OAuth completion notification has no params")?;
+    serde_json::from_value(params.clone())
+        .map(Some)
+        .context("decode OAuth completion notification")
 }
 
 pub fn plugin_suggestion_request_id(event: &Value) -> Option<Value> {
@@ -375,10 +388,12 @@ pub fn suggested_plugin_is_installed(
 pub fn suggested_plugin_target(
     catalog: &PluginCatalog,
     suggestion: &PluginSuggestion,
+    language: Language,
 ) -> Result<PluginInstallTarget> {
     ensure!(
         is_plugin_suggestion(suggestion),
-        "suggestion is not a plugin install"
+        "{}",
+        language.message(MessageKey::DiscordPluginsSuggestionNotInstall)
     );
     let mut matches = catalog.marketplaces.iter().flat_map(|marketplace| {
         marketplace.plugins.iter().filter_map(move |plugin| {
@@ -386,13 +401,17 @@ pub fn suggested_plugin_target(
         })
     });
     let (marketplace, plugin) = matches.next().ok_or_else(|| {
-        anyhow!("suggested plugin is no longer available in Codex's native catalog")
+        anyhow!(
+            "{}",
+            language.message(MessageKey::DiscordPluginsSuggestionUnavailable)
+        )
     })?;
     ensure!(
         matches.next().is_none(),
-        "suggestion matches more than one native catalog entry"
+        "{}",
+        language.message(MessageKey::DiscordPluginsSuggestionAmbiguous)
     );
-    PluginInstallTarget::from_catalog(marketplace, plugin)
+    PluginInstallTarget::from_catalog(marketplace, plugin, language)
 }
 
 /// Matches the official post-install verification inputs before the elicitation is accepted.
@@ -447,7 +466,9 @@ mod tests {
             }]
         }))
         .unwrap();
-        let target = PluginInstallTarget::from_catalog(&remote, &remote.plugins[0]).unwrap();
+        let target =
+            PluginInstallTarget::from_catalog(&remote, &remote.plugins[0], Language::English)
+                .unwrap();
         assert_eq!(
             target.remote_marketplace_name.as_deref(),
             Some("openai-curated-remote")
@@ -464,7 +485,9 @@ mod tests {
             path: Some("/workspace/marketplace.json".to_owned()),
             plugins: vec![remote.plugins[0].clone()],
         };
-        let target = PluginInstallTarget::from_catalog(&local, &local.plugins[0]).unwrap();
+        let target =
+            PluginInstallTarget::from_catalog(&local, &local.plugins[0], Language::English)
+                .unwrap();
         assert_eq!(
             target.marketplace_path.as_deref(),
             Some("/workspace/marketplace.json")
@@ -538,7 +561,7 @@ mod tests {
             remote_plugin_id: Some("remote-calendar-id".to_owned()),
             app_connector_ids: vec!["calendar".to_owned()],
         };
-        let target = suggested_plugin_target(&catalog, &suggestion).unwrap();
+        let target = suggested_plugin_target(&catalog, &suggestion, Language::English).unwrap();
         assert_eq!(
             target.remote_marketplace_name.as_deref(),
             Some("openai-curated-remote")
@@ -571,7 +594,8 @@ mod tests {
                 &PluginSuggestion {
                     tool_type: Some("connector".to_owned()),
                     ..suggestion
-                }
+                },
+                Language::English,
             )
             .is_err()
         );
@@ -583,7 +607,8 @@ mod tests {
             oauth_completion(&json!({
                 "method": "mcpServer/oauthLogin/completed",
                 "params": {"name": "calendar", "threadId": "thread", "loginId": "login", "success": true}
-            })),
+            }))
+            .unwrap(),
             Some(OAuthCompletion {
                 name: "calendar".to_owned(),
                 thread_id: Some("thread".to_owned()),
@@ -598,11 +623,23 @@ mod tests {
                 "params": {"name": "calendar", "success": false, "error": "denied"}
             }))
             .unwrap()
+            .unwrap()
             .error
             .as_deref(),
             Some("denied")
         );
-        assert!(oauth_completion(&json!({"method": "mcpServer/status/list"})).is_none());
+        assert!(
+            oauth_completion(&json!({"method": "mcpServer/status/list"}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            oauth_completion(&json!({
+                "method": "mcpServer/oauthLogin/completed",
+                "params": {"success": "not-a-boolean"}
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -634,7 +671,8 @@ mod tests {
                     enabled: false,
                     install_policy: None,
                     availability: None
-                }
+                },
+                Language::English,
             )
             .is_err()
         );
@@ -653,7 +691,8 @@ mod tests {
                     enabled: false,
                     install_policy: None,
                     availability: None
-                }
+                },
+                Language::English,
             )
             .is_err()
         );

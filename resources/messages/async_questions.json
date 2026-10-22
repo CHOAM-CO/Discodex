@@ -1,0 +1,242 @@
+{
+  "async_questions.status_rejected": {
+    "en": "The previous answer was not accepted by the current turn. It is saved below; choose an answer to retry.",
+    "ko": "현재 턴에서 이전 답변을 접수하지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+    "zh": "当前轮次未接受上一个答案。答案已保存在下方；请选择答案重试。",
+    "ja": "現在のターンでは前回の回答を受け付けませんでした。下に保存されています。選択肢を選んで再試行してください。"
+  },
+  "async_questions.status_missing": {
+    "en": "The previous answer was not confirmed because no matching native queue record was found. It is saved below; choose an answer to retry.",
+    "ko": "일치하는 Codex 대기열 기록이 없어 이전 답변을 확인하지 못했습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+    "zh": "未找到匹配的 Codex 队列记录，因此无法确认上一个答案。答案已保存在下方；请选择答案重试。",
+    "ja": "対応する Codex キュー記録が見つからず、前回の回答を確認できませんでした。下に保存されています。選択肢を選んで再試行してください。"
+  },
+  "async_questions.status_unconfirmed": {
+    "en": "The previous answer was not confirmed. It is saved below; choose an answer to retry.",
+    "ko": "이전 답변이 확인되지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
+    "zh": "上一个答案未获确认。答案已保存在下方；请选择答案重试。",
+    "ja": "前回の回答は確認されませんでした。下に保存されています。選択肢を選んで再試行してください。"
+  },
+  "async_questions.details": {
+    "en": "Details",
+    "ko": "상세 정보",
+    "zh": "详情",
+    "ja": "詳細"
+  },
+  "async_questions.question": {
+    "en": "Question",
+    "ko": "질문",
+    "zh": "问题",
+    "ja": "質問"
+  },
+  "async_questions.choose_option": {
+    "en": "Choose an option or submit a free-text answer.",
+    "ko": "선택지를 고르거나 직접 답변을 입력하세요.",
+    "zh": "请选择一个选项或输入自由文本答案。",
+    "ja": "選択肢を選ぶか、自由入力で回答してください。"
+  },
+  "async_questions.free_text": {
+    "en": "Submit a free-text answer.",
+    "ko": "직접 답변을 입력하세요.",
+    "zh": "请输入自由文本答案。",
+    "ja": "自由入力で回答してください。"
+  },
+  "async_questions.submitting": {
+    "en": "Submitting answer…",
+    "ko": "답변을 제출하고 있습니다…",
+    "zh": "正在提交答案…",
+    "ja": "回答を送信しています…"
+  },
+  "async_questions.queued": {
+    "en": "Answer queued for Codex.",
+    "ko": "Codex로 전달할 답변이 대기 중입니다.",
+    "zh": "答案正在等待发送给 Codex。",
+    "ja": "Codex への回答送信を待っています。"
+  },
+  "async_questions.awaiting_confirmation": {
+    "en": "Answer awaiting Codex confirmation.",
+    "ko": "답변의 Codex 접수 확인을 기다리고 있습니다.",
+    "zh": "答案正在等待 Codex 确认接收。",
+    "ja": "Codex による回答の受信確認を待っています。"
+  },
+  "async_questions.choose_answer": {
+    "en": "Choose an answer",
+    "ko": "답변을 선택하세요",
+    "zh": "请选择答案",
+    "ja": "回答を選んでください"
+  },
+  "async_questions.answer_in_own_words": {
+    "en": "You can also answer in your own words.",
+    "ko": "원하는 표현으로 직접 답할 수도 있습니다.",
+    "zh": "你也可以用自己的话回答。",
+    "ja": "自由な文章で回答することもできます。"
+  },
+  "async_questions.write_different_answer": {
+    "en": "Write a different answer",
+    "ko": "다른 답변 직접 입력",
+    "zh": "输入其他答案",
+    "ja": "別の回答を入力"
+  },
+  "async_questions.awaiting_notice": {
+    "en": "Your answer is awaiting native confirmation. It has not been sent again.",
+    "ko": "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
+    "zh": "你的答案正在等待 Codex 确认，没有重复提交。",
+    "ja": "回答は Codex の確認待ちです。再送信していません。"
+  },
+  "async_questions.stale": {
+    "en": "This question is no longer available. Please use its latest Discord card.",
+    "ko": "이 질문은 더 이상 사용할 수 없습니다. 최신 Discord 질문 카드에서 답해주세요.",
+    "zh": "此问题已不可用。请使用最新的 Discord 问题卡片。",
+    "ja": "この質問は利用できません。最新の Discord 質問カードから回答してください。"
+  },
+  "async_questions.answer_question": {
+    "en": "Answer the question",
+    "ko": "질문에 답하기",
+    "zh": "回答问题",
+    "ja": "質問に回答"
+  },
+  "async_questions.your_answer": {
+    "en": "Your answer",
+    "ko": "답변",
+    "zh": "你的答案",
+    "ja": "回答"
+  },
+  "async_questions.not_confirmed": {
+    "en": "The answer was not confirmed. The question remains available for retry.",
+    "ko": "답변이 확인되지 않았습니다. 질문에서 다시 시도할 수 있습니다.",
+    "zh": "答案未获确认。你可以在问题卡片上重试。",
+    "ja": "回答は確認されませんでした。質問カードから再試行できます。"
+  },
+  "async_questions.call_id_required": {
+    "en": "async question call id must not be empty",
+    "ko": "비동기 질문 호출 ID가 비어 있으면 안 됩니다",
+    "zh": "异步问题调用 ID 不能为空",
+    "ja": "非同期質問の呼び出し ID は空にできません"
+  },
+  "async_questions.question_required": {
+    "en": "async question request must contain at least one question",
+    "ko": "비동기 질문 요청에는 질문이 하나 이상 있어야 합니다",
+    "zh": "异步问题请求必须至少包含一个问题",
+    "ja": "非同期質問リクエストには質問を1つ以上含める必要があります"
+  },
+  "async_questions.title_required": {
+    "en": "async question title must not be empty",
+    "ko": "비동기 질문 제목이 비어 있으면 안 됩니다",
+    "zh": "异步问题标题不能为空",
+    "ja": "非同期質問のタイトルは空にできません"
+  },
+  "async_questions.option_stale": {
+    "en": "async question option is stale or out of range",
+    "ko": "비동기 질문 선택지가 오래되었거나 범위를 벗어났습니다",
+    "zh": "异步问题选项已失效或超出范围",
+    "ja": "非同期質問の選択肢が古いか、範囲外です"
+  },
+  "async_questions.not_found": {
+    "en": "async question not found",
+    "ko": "비동기 질문을 찾을 수 없습니다",
+    "zh": "未找到异步问题",
+    "ja": "非同期質問が見つかりません"
+  },
+  "async_questions.not_ready": {
+    "en": "async question is not ready for submission",
+    "ko": "비동기 질문이 제출할 준비가 되지 않았습니다",
+    "zh": "异步问题尚未准备好提交",
+    "ja": "非同期質問はまだ送信できる状態ではありません"
+  },
+  "async_questions.page_out_of_range": {
+    "en": "presentation page index out of range",
+    "ko": "표시 페이지 인덱스가 범위를 벗어났습니다",
+    "zh": "展示页索引超出范围",
+    "ja": "表示ページのインデックスが範囲外です"
+  },
+  "async_questions.interaction_stale": {
+    "en": "async question interaction is stale",
+    "ko": "비동기 질문 상호작용이 오래되었습니다",
+    "zh": "异步问题交互已失效",
+    "ja": "非同期質問の操作が古くなっています"
+  },
+  "async_questions.already_answered": {
+    "en": "async question has already been answered or submitted",
+    "ko": "비동기 질문에 이미 답했거나 제출했습니다",
+    "zh": "异步问题已回答或提交",
+    "ja": "非同期質問にはすでに回答または送信済みです"
+  },
+  "async_questions.answer_required": {
+    "en": "async question answer must not be empty",
+    "ko": "비동기 질문 답변이 비어 있으면 안 됩니다",
+    "zh": "异步问题答案不能为空",
+    "ja": "非同期質問の回答は空にできません"
+  },
+  "async_questions.replace_page_failed": {
+    "en": "replace missing async question page",
+    "ko": "누락된 비동기 질문 페이지 교체",
+    "zh": "替换缺失的异步问题页面",
+    "ja": "欠落した非同期質問ページを置換"
+  },
+  "async_questions.update_page_failed": {
+    "en": "update async question page",
+    "ko": "비동기 질문 페이지 업데이트",
+    "zh": "更新异步问题页面",
+    "ja": "非同期質問ページを更新"
+  },
+  "async_questions.publish_page_failed": {
+    "en": "publish async question page",
+    "ko": "비동기 질문 페이지 게시",
+    "zh": "发布异步问题页面",
+    "ja": "非同期質問ページを公開"
+  },
+  "async_questions.remove_choice_page_failed": {
+    "en": "remove async question choice page",
+    "ko": "비동기 질문 선택지 페이지 삭제",
+    "zh": "删除异步问题选项页",
+    "ja": "非同期質問の選択肢ページを削除"
+  },
+  "async_questions.send_status_failed": {
+    "en": "send async answer status",
+    "ko": "비동기 답변 상태 전송",
+    "zh": "发送异步答案状态",
+    "ja": "非同期回答の状態を送信"
+  },
+  "async_questions.already_submitted": {
+    "en": "async question answer was already submitted",
+    "ko": "비동기 질문 답변을 이미 제출했습니다",
+    "zh": "异步问题答案已提交",
+    "ja": "非同期質問の回答はすでに送信されています"
+  },
+  "async_questions.no_admission": {
+    "en": "async question answer has no confirmed admission",
+    "ko": "비동기 질문 답변이 접수되었다는 확인이 없습니다",
+    "zh": "异步问题答案尚未确认接收",
+    "ja": "非同期質問の回答が受理されたことを確認できません"
+  },
+  "async_questions.invalid_component": {
+    "en": "invalid async question component id",
+    "ko": "비동기 질문 구성 요소 ID가 올바르지 않습니다",
+    "zh": "异步问题组件 ID 无效",
+    "ja": "非同期質問コンポーネント ID が無効です"
+  },
+  "async_questions.invalid_modal": {
+    "en": "invalid async question modal id",
+    "ko": "비동기 질문 모달 ID가 올바르지 않습니다",
+    "zh": "异步问题模态框 ID 无效",
+    "ja": "非同期質問モーダル ID が無効です"
+  },
+  "async_questions.different_conversation": {
+    "en": "this async question belongs to a different Codex conversation",
+    "ko": "이 비동기 질문은 다른 Codex 대화에 속합니다",
+    "zh": "此异步问题属于另一个 Codex 对话",
+    "ja": "この非同期質問は別の Codex 会話に属しています"
+  },
+  "async_questions.feedback_not_confirmed": {
+    "en": "The answer was not confirmed. The question remains available for retry.",
+    "ko": "답변이 확인되지 않았습니다. 질문에서 다시 시도할 수 있습니다.",
+    "zh": "答案未获确认。你可以在问题卡片上重试。",
+    "ja": "回答は確認されませんでした。質問カードから再試行できます。"
+  },
+  "async_questions.feedback_submitted": {
+    "en": "Answer submitted.",
+    "ko": "답변을 제출했습니다.",
+    "zh": "答案已提交。",
+    "ja": "回答を送信しました。"
+  }
+}

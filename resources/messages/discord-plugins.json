@@ -1,0 +1,80 @@
+{
+  "discord.plugins.cancel": {
+    "en": "Cancel",
+    "ko": "취소",
+    "zh": "取消",
+    "ja": "キャンセル"
+  },
+  "discord.plugins.do_not_suggest_again": {
+    "en": "Don't suggest again",
+    "ko": "다시 제안하지 않기",
+    "zh": "不再建议",
+    "ja": "今後提案しない"
+  },
+  "discord.plugins.install": {
+    "en": "Install",
+    "ko": "설치",
+    "zh": "安装",
+    "ja": "インストール"
+  },
+  "discord.plugins.install_confirmation_required": {
+    "en": "Plugin installation requires explicit user confirmation.",
+    "ko": "플러그인을 설치하려면 사용자의 명시적인 확인이 필요합니다.",
+    "zh": "安装插件需要用户明确确认。",
+    "ja": "プラグインのインストールには、ユーザーの明示的な確認が必要です。"
+  },
+  "discord.plugins.marketplace_selector_invalid": {
+    "en": "The plugin selection has an invalid marketplace selector.",
+    "ko": "플러그인 선택의 마켓플레이스 지정자가 올바르지 않습니다.",
+    "zh": "插件选择中的市场选择器无效。",
+    "ja": "プラグイン選択のマーケットプレイス指定が無効です。"
+  },
+  "discord.plugins.not_now": {
+    "en": "Not now",
+    "ko": "지금은 안 함",
+    "zh": "暂不",
+    "ja": "今はしない"
+  },
+  "discord.plugins.plugin_already_installed": {
+    "en": "This plugin is already installed.",
+    "ko": "이 플러그인은 이미 설치되어 있습니다.",
+    "zh": "此插件已安装。",
+    "ja": "このプラグインはすでにインストールされています。"
+  },
+  "discord.plugins.plugin_unavailable": {
+    "en": "Codex reports that this plugin is unavailable.",
+    "ko": "Codex에서 이 플러그인을 사용할 수 없다고 보고했습니다.",
+    "zh": "Codex 报告此插件不可用。",
+    "ja": "Codex でこのプラグインを利用できないと報告されています。"
+  },
+  "discord.plugins.remote_plugin_id_missing": {
+    "en": "The remote plugin entry has no remote plugin ID.",
+    "ko": "원격 플러그인 항목에 원격 플러그인 ID가 없습니다.",
+    "zh": "远程插件条目缺少远程插件 ID。",
+    "ja": "リモートプラグイン項目にリモートプラグイン ID がありません。"
+  },
+  "discord.plugins.removal_confirmation_required": {
+    "en": "Plugin removal requires explicit user confirmation.",
+    "ko": "플러그인을 제거하려면 사용자의 명시적인 확인이 필요합니다.",
+    "zh": "移除插件需要用户明确确认。",
+    "ja": "プラグインの削除には、ユーザーの明示的な確認が必要です。"
+  },
+  "discord.plugins.suggestion_ambiguous": {
+    "en": "The suggestion matches more than one native catalog entry.",
+    "ko": "제안이 네이티브 카탈로그의 여러 항목과 일치합니다.",
+    "zh": "该建议与原生目录中的多个条目匹配。",
+    "ja": "提案がネイティブカタログの複数の項目に一致しています。"
+  },
+  "discord.plugins.suggestion_not_install": {
+    "en": "The suggestion is not a plugin installation.",
+    "ko": "이 제안은 플러그인 설치 요청이 아닙니다.",
+    "zh": "此建议不是插件安装请求。",
+    "ja": "この提案はプラグインのインストールではありません。"
+  },
+  "discord.plugins.suggestion_unavailable": {
+    "en": "The suggested plugin is no longer available in Codex's native catalog.",
+    "ko": "제안된 플러그인을 Codex 네이티브 카탈로그에서 더 이상 찾을 수 없습니다.",
+    "zh": "建议的插件已不在 Codex 原生目录中。",
+    "ja": "提案されたプラグインは Codex のネイティブカタログで利用できなくなりました。"
+  }
+}

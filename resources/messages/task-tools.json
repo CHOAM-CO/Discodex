@@ -1,0 +1,14 @@
+{
+  "task_tools.status_read_failed": {
+    "en": "Could not read task status: {detail}",
+    "ko": "작업 상태를 읽지 못했습니다: {detail}",
+    "zh": "无法读取任务状态：{detail}",
+    "ja": "タスクの状態を読み取れませんでした: {detail}"
+  },
+  "task_tools.status_read_timeout": {
+    "en": "Timed out while reading task status.",
+    "ko": "작업 상태를 읽는 중 시간 초과가 발생했습니다.",
+    "zh": "读取任务状态时超时。",
+    "ja": "タスクの状態を読み取る際にタイムアウトしました。"
+  }
+}

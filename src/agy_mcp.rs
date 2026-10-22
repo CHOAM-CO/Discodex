@@ -119,9 +119,13 @@ pub fn write_workspace_config(project_dir: &Path, desired_entry: Value) -> Resul
         Err(error) => return Err(error).context("read Antigravity MCP configuration"),
     };
     let merged = merge_config(original.as_deref(), desired_entry)?;
-    let prior_permissions = fs::metadata(&path)
-        .ok()
-        .map(|metadata| metadata.permissions());
+    let prior_permissions = match fs::metadata(&path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).context("inspect existing Antigravity MCP configuration metadata");
+        }
+    };
     let mut staged =
         tempfile::NamedTempFile::new_in(parent).context("stage Antigravity MCP configuration")?;
     staged

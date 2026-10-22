@@ -1,0 +1,206 @@
+{
+  "discord.updates.already_up_date": {
+    "en": "Already up to date.",
+    "ko": "이미 최신 버전입니다.",
+    "zh": "已是最新版本。",
+    "ja": "すでに最新バージョンです。"
+  },
+  "discord.updates.cancel": {
+    "en": "Cancel",
+    "ko": "취소",
+    "zh": "取消",
+    "ja": "キャンセル"
+  },
+  "discord.updates.choose_update_start_session_settings_preserved": {
+    "en": "Choose Update to start; your session and settings are preserved.",
+    "ko": "업데이트를 누르면 시작합니다. 세션과 설정은 유지됩니다.",
+    "zh": "选择更新即可开始；会话和设置将被保留。",
+    "ja": "「更新」で開始します。セッションと設定は保持されます。"
+  },
+  "discord.updates.confirmation_no_longer_active_run_discodex": {
+    "en": "This confirmation is no longer active. Run /discodex update again.",
+    "ko": "지난 확인 화면입니다. /discodex update로 다시 확인해 주세요.",
+    "zh": "此确认已失效，请重新运行 /discodex update。",
+    "ja": "この確認画面は無効です。/discodex update を再実行してください。"
+  },
+  "discord.updates.could_not_check_updates_please_try": {
+    "en": "Could not check for updates. Please try again later.",
+    "ko": "업데이트를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    "zh": "无法检查更新，请稍后重试。",
+    "ja": "更新を確認できませんでした。しばらくしてから再試行してください。"
+  },
+  "discord.updates.could_not_start_update_run_discodex": {
+    "en": "Could not start this update. Run /discodex update again.",
+    "ko": "업데이트를 시작하지 못했습니다. /discodex update로 다시 확인해 주세요.",
+    "zh": "无法开始此更新，请重新运行 /discodex update。",
+    "ja": "更新を開始できませんでした。/discodex update を再実行してください。"
+  },
+  "discord.updates.installing_discodex_reconnect_session_settings_preserved": {
+    "en": "Installing. Discodex will reconnect with your session and settings preserved.",
+    "ko": "설치 중입니다. 세션과 설정을 유지한 채 다시 연결합니다.",
+    "zh": "正在安装，将保留会话和设置并重新连接。",
+    "ja": "インストール中です。セッションと設定を保持して再接続します。"
+  },
+  "discord.updates.latest_release_no_verified_prebuilt_executable": {
+    "en": "The latest release has no verified prebuilt executable for this platform. No update was started.",
+    "ko": "최신 릴리스에 이 플랫폼용 검증된 사전 빌드 실행 파일이 없어 업데이트를 시작하지 않았습니다.",
+    "zh": "最新版本没有适用于此平台且可验证的预构建可执行文件。未开始更新。",
+    "ja": "最新リリースにはこのプラットフォーム向けの検証済みビルドがありません。更新は開始していません。"
+  },
+  "discord.updates.never_notify_again": {
+    "en": "Never notify again",
+    "ko": "다시 알리지 않음",
+    "zh": "不再通知",
+    "ja": "今後通知しない"
+  },
+  "discord.updates.no_stable_release_published_yet_current": {
+    "en": "No stable release has been published yet. Current version:",
+    "ko": "아직 공개된 안정 버전이 없습니다. 현재 버전:",
+    "zh": "尚未发布稳定版本。当前版本：",
+    "ja": "安定版はまだ公開されていません。現在のバージョン:"
+  },
+  "discord.updates.preparing_selected_version_you_can_keep": {
+    "en": "Preparing the selected version. You can keep working.",
+    "ko": "선택한 버전을 준비하고 있습니다. 계속 작업할 수 있습니다.",
+    "zh": "正在准备所选版本，可以继续工作。",
+    "ja": "選択したバージョンを準備中です。作業は続けられます。"
+  },
+  "discord.updates.release_notes": {
+    "en": "Release notes",
+    "ko": "변경 내용",
+    "zh": "版本说明",
+    "ja": "リリースノート"
+  },
+  "discord.updates.scheduled_installation_wait_until_work_calls": {
+    "en": "Scheduled. Installation will wait until work and calls are idle.",
+    "ko": "예약했습니다. 작업과 통화가 끝나고 유휴 상태가 되면 설치합니다.",
+    "zh": "已安排，将在工作和通话结束且空闲后安装。",
+    "ja": "予約しました。作業と通話が終了し、待機状態になってからインストールします。"
+  },
+  "discord.updates.skip_version": {
+    "en": "Skip this version",
+    "ko": "이번 버전은 스킵",
+    "zh": "跳过此版本",
+    "ja": "このバージョンをスキップ"
+  },
+  "discord.updates.skipped_version": {
+    "en": "Skipped this version.",
+    "ko": "이번 버전을 건너뛰었습니다.",
+    "zh": "已跳过此版本。",
+    "ja": "このバージョンをスキップしました。"
+  },
+  "discord.updates.starting_update_now_all_active_work": {
+    "en": "Starting the update now. All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
+    "ko": "업데이트를 시작합니다. 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
+    "zh": "现在开始更新。包括子代理在内的所有进行中工作和通话都会中断，中断的工作不会自动恢复。会话历史和设置会保留。",
+    "ja": "更新を開始します。サブエージェントを含む進行中の作業と通話は中断され、中断した作業は自動再開されません。セッション履歴と設定は保持されます。"
+  },
+  "discord.updates.update": {
+    "en": "Update",
+    "ko": "업데이트",
+    "zh": "更新",
+    "ja": "更新"
+  },
+  "discord.updates.update_already_being_installed": {
+    "en": "The update is already being installed.",
+    "ko": "업데이트를 이미 설치하고 있습니다.",
+    "zh": "正在安装更新。",
+    "ja": "更新をインストール中です。"
+  },
+  "discord.updates.update_already_progress": {
+    "en": "An update is already in progress.",
+    "ko": "업데이트가 이미 진행 중입니다.",
+    "zh": "更新已在进行中。",
+    "ja": "更新はすでに進行中です。"
+  },
+  "discord.updates.update_cancelled": {
+    "en": "Update cancelled.",
+    "ko": "업데이트를 취소했습니다.",
+    "zh": "已取消更新。",
+    "ja": "更新をキャンセルしました。"
+  },
+  "discord.updates.update_complete_discodex_restarted_session_settings": {
+    "en": "Update complete. Discodex has restarted; your session and settings were preserved.",
+    "ko": "업데이트 완료. Discodex가 재시작됐으며 세션과 설정을 유지했습니다.",
+    "zh": "更新完成。Discodex 已重启，会话和设置已保留。",
+    "ja": "更新完了。Discodex が再起動し、セッションと設定は保持されています。"
+  },
+  "discord.updates.update_failed_not_retry_automatically_you": {
+    "en": "Update failed. It will not retry automatically. You can retry with Update.",
+    "ko": "업데이트에 실패했습니다. 자동 재시도하지 않습니다. 업데이트 버튼으로 다시 시도할 수 있습니다.",
+    "zh": "更新失败，不会自动重试。可点击更新重试。",
+    "ja": "更新に失敗しました。自動では再試行しません。「更新」で再試行できます。"
+  },
+  "discord.updates.update_failed_run_discodex_update_retry": {
+    "en": "Update failed. Run /discodex update to retry.",
+    "ko": "업데이트에 실패했습니다. /discodex update로 다시 시도할 수 있습니다.",
+    "zh": "更新失败。可运行 /discodex update 重试。",
+    "ja": "更新に失敗しました。/discodex update で再試行できます。"
+  },
+  "discord.updates.update_notice_replaced_use_latest_notice": {
+    "en": "This update notice has been replaced. Use the latest notice.",
+    "ko": "새 업데이트 알림을 사용해 주세요.",
+    "zh": "此通知已被替换，请使用最新通知。",
+    "ja": "最新の更新通知を使用してください。"
+  },
+  "discord.updates.update_notifications_off_turn_them_back": {
+    "en": "Update notifications are off. Turn them back on in Settings.",
+    "ko": "업데이트 알림을 껐습니다. 설정에서 다시 켤 수 있습니다.",
+    "zh": "更新通知已关闭，可在设置中重新开启。",
+    "ja": "更新通知をオフにしました。設定で再度オンにできます。"
+  },
+  "discord.updates.update_notifications_off_you_can_turn": {
+    "en": "\nUpdate notifications are off. You can turn them back on in Settings.",
+    "ko": "\n업데이트 알림을 껐습니다. 설정에서 다시 켤 수 있습니다.",
+    "zh": "\n更新通知已关闭，可在设置中重新开启。",
+    "ja": "\n更新通知はオフです。設定で再度オンにできます。"
+  },
+  "discord.updates.update_now_all_active_work_including": {
+    "en": "Update now? All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
+    "ko": "지금 업데이트할까요? 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
+    "zh": "现在更新吗？包括子代理在内的所有进行中工作和通话都会中断，且不会自动恢复。会话历史和设置会保留。",
+    "ja": "今すぐ更新しますか？サブエージェントを含む進行中の作業と通話は中断され、自動再開されません。セッション履歴と設定は保持されます。"
+  },
+  "discord.updates.updated_session_settings_preserved": {
+    "en": "Updated. Your session and settings were preserved.",
+    "ko": "업데이트했습니다. 세션과 설정을 유지했습니다.",
+    "zh": "已更新，会话和设置已保留。",
+    "ja": "更新しました。セッションと設定は保持されています。"
+  },
+  "discord.updates.state_unavailable": {
+    "en": "Update state is unavailable: {error}",
+    "ko": "업데이트 상태를 사용할 수 없습니다: {error}",
+    "zh": "更新状态不可用：{error}",
+    "ja": "更新状態を利用できません: {error}"
+  },
+  "discord.updates.confirmation_other_operator": {
+    "en": "This confirmation belongs to another operator.",
+    "ko": "이 확인은 다른 운영자의 요청입니다.",
+    "zh": "此确认属于另一位操作人员。",
+    "ja": "この確認は別の担当者のものです。"
+  },
+  "discord.updates.confirmation_stale": {
+    "en": "This release confirmation is no longer current.",
+    "ko": "이 릴리스 확인은 더 이상 유효하지 않습니다.",
+    "zh": "此版本确认已失效。",
+    "ja": "このリリース確認は古くなっています。"
+  },
+  "discord.updates.confirmation_invalid": {
+    "en": "Invalid update confirmation.",
+    "ko": "업데이트 확인 요청이 올바르지 않습니다.",
+    "zh": "更新确认无效。",
+    "ja": "更新確認が無効です。"
+  },
+  "discord.updates.action_invalid": {
+    "en": "Invalid update action.",
+    "ko": "업데이트 작업이 올바르지 않습니다.",
+    "zh": "更新操作无效。",
+    "ja": "更新操作が無効です。"
+  },
+  "discord.updates.action_unknown": {
+    "en": "Unknown update action.",
+    "ko": "알 수 없는 업데이트 작업입니다.",
+    "zh": "未知的更新操作。",
+    "ja": "不明な更新操作です。"
+  }
+}

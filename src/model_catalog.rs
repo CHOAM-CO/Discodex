@@ -4,14 +4,41 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
+pub(crate) const CODEX_DEFAULT_PROVIDER: &str = "openai";
+pub(crate) const ANTIGRAVITY_PROVIDER: &str = "antigravity";
+const CODEX_EXECUTOR_ID: &str = "codex";
+const ANTIGRAVITY_EXECUTOR_ID: &str = "antigravity";
+const FIELD_DATA: &str = "data";
+const FIELD_PROVIDER: &str = "provider";
+const FIELD_MODEL_PROVIDER: &str = "modelProvider";
+const FIELD_MODEL_EXECUTOR: &str = "modelExecutor";
+const FIELD_EXECUTOR: &str = "executor";
+const FIELD_MODEL: &str = "model";
+const FIELD_ID: &str = "id";
+const FIELD_SLUG: &str = "slug";
+const FIELD_SELECTION_VALUE: &str = "selectionValue";
+const FIELD_DISPLAY_NAME: &str = "displayName";
+const FIELD_AGY_VARIANTS: &str = "agyVariants";
+const FIELD_SUPPORTED_EFFORTS: &str = "supportedReasoningEfforts";
+const FIELD_REASONING_EFFORT: &str = "reasoningEffort";
+const FIELD_EFFORT_SOURCE: &str = "source";
+const FIELD_AGY_ORCHESTRATION: &str = "agyOrchestration";
+const CONFIG_MODEL_PROVIDER: &str = "model_provider";
+const CONFIG_MODEL_EXECUTOR: &str = "model_executor";
+const CONFIG_MODEL: &str = "model";
+const CONFIG_PROFILE: &str = "profile";
+const CONFIG_PROFILES: &str = "profiles";
+const FIELD_NEXT_CURSOR: &str = "nextCursor";
+const FIELD_CATALOG_PROVIDER: &str = "catalogProvider";
+
 pub(crate) fn model_id(model: &Value) -> Option<&str> {
-    ["model", "id", "slug"]
+    [FIELD_MODEL, FIELD_ID, FIELD_SLUG]
         .into_iter()
         .filter_map(|k| model.get(k).and_then(Value::as_str))
         .find(|v| !v.trim().is_empty())
 }
 pub(crate) fn selection_value(row: &Value) -> Option<&str> {
-    row.get("selectionValue")
+    row.get(FIELD_SELECTION_VALUE)
         .and_then(Value::as_str)
         .filter(|v| !v.trim().is_empty())
 }
@@ -19,19 +46,19 @@ pub(crate) fn model_matches(row: &Value, requested: &str) -> bool {
     selection_value(row) == Some(requested)
         || model_id(row) == Some(requested)
         || row
-            .get("agyVariants")
+            .get(FIELD_AGY_VARIANTS)
             .and_then(Value::as_array)
             .is_some_and(|variants| {
                 variants
                     .iter()
-                    .any(|variant| variant.get("id").and_then(Value::as_str) == Some(requested))
+                    .any(|variant| variant.get(FIELD_ID).and_then(Value::as_str) == Some(requested))
             })
-        || ["id", "slug"]
+        || [FIELD_ID, FIELD_SLUG]
             .into_iter()
             .any(|k| row.get(k).and_then(Value::as_str) == Some(requested))
 }
 pub(crate) fn catalog_has_model(c: &Value, requested: &str) -> bool {
-    c.get("data")
+    c.get(FIELD_DATA)
         .and_then(Value::as_array)
         .is_some_and(|rows| rows.iter().any(|r| model_matches(r, requested)))
 }
@@ -52,8 +79,8 @@ pub(crate) enum ModelExecutor {
 impl ModelExecutor {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Self::Codex => "codex",
-            Self::Antigravity => "antigravity",
+            Self::Codex => CODEX_EXECUTOR_ID,
+            Self::Antigravity => ANTIGRAVITY_EXECUTOR_ID,
         }
     }
 }
@@ -68,8 +95,8 @@ impl ModelSelection {
     }
 }
 fn provider(row: &Value) -> Option<&str> {
-    row.get("provider")
-        .or_else(|| row.get("modelProvider"))
+    row.get(FIELD_PROVIDER)
+        .or_else(|| row.get(FIELD_MODEL_PROVIDER))
         .and_then(Value::as_str)
         .filter(|p| !p.trim().is_empty())
 }
@@ -79,13 +106,16 @@ fn identity(p: &str, m: &str) -> String {
 fn row_selection(row: &Value, fallback: Option<&str>) -> Option<ModelSelection> {
     Some(ModelSelection {
         executor: row
-            .get("executor")
+            .get(FIELD_EXECUTOR)
             .cloned()
             .map(serde_json::from_value)
             .transpose()
             .ok()?
             .unwrap_or_default(),
-        provider: provider(row).or(fallback).unwrap_or("openai").to_owned(),
+        provider: provider(row)
+            .or(fallback)
+            .unwrap_or(CODEX_DEFAULT_PROVIDER)
+            .to_owned(),
         model: model_id(row)?.to_owned(),
     })
 }
@@ -95,13 +125,13 @@ pub(crate) fn add_antigravity_models(catalog: &mut Value, enabled: bool, models:
     if !enabled {
         return;
     }
-    let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) else {
+    let Some(rows) = catalog.get_mut(FIELD_DATA).and_then(Value::as_array_mut) else {
         return;
     };
     for model in models {
         let selection = ModelSelection {
             executor: ModelExecutor::Antigravity,
-            provider: "antigravity".into(),
+            provider: ANTIGRAVITY_PROVIDER.into(),
             model: model.clone(),
         };
         if !rows
@@ -109,8 +139,8 @@ pub(crate) fn add_antigravity_models(catalog: &mut Value, enabled: bool, models:
             .any(|row| selection_value(row) == Some(selection.value().as_str()))
         {
             rows.push(json!({"id":model,"model":model,"displayName":model,
-                "executor":"antigravity","provider":"antigravity","modelProvider":"antigravity",
-                "selectionValue":selection.value()}));
+                (FIELD_EXECUTOR):ModelExecutor::Antigravity.as_str(),(FIELD_PROVIDER):ANTIGRAVITY_PROVIDER,
+                (FIELD_MODEL_PROVIDER):ANTIGRAVITY_PROVIDER,(FIELD_SELECTION_VALUE):selection.value()}));
         }
     }
 }
@@ -120,32 +150,33 @@ pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::a
         .iter()
         .flat_map(|family| family.variants.iter().map(|variant| variant.id.clone()))
         .collect::<HashSet<_>>();
-    let Some(rows) = catalog.get_mut("data").and_then(Value::as_array_mut) else {
+    let Some(rows) = catalog.get_mut(FIELD_DATA).and_then(Value::as_array_mut) else {
         return;
     };
     let mut existing = std::mem::take(rows);
     for family in groups {
         let selection = ModelSelection {
             executor: ModelExecutor::Antigravity,
-            provider: "antigravity".into(),
+            provider: ANTIGRAVITY_PROVIDER.into(),
             model: family.id.clone(),
         };
         let mut row = existing
             .iter()
             .position(|row| {
-                row.get("executor").and_then(Value::as_str) == Some("antigravity")
+                row.get(FIELD_EXECUTOR).and_then(Value::as_str)
+                    == Some(ModelExecutor::Antigravity.as_str())
                     && model_id(row) == Some(family.id.as_str())
             })
             .map(|index| existing.remove(index))
             .unwrap_or_else(|| json!({}));
-        row["id"] = json!(family.id);
-        row["model"] = json!(family.id);
-        row["displayName"] = json!(family.label);
-        row["executor"] = json!("antigravity");
-        row["provider"] = json!("antigravity");
-        row["modelProvider"] = json!("antigravity");
-        row["selectionValue"] = json!(selection.value());
-        row["agyVariants"] = json!(
+        row[FIELD_ID] = json!(family.id);
+        row[FIELD_MODEL] = json!(family.id);
+        row[FIELD_DISPLAY_NAME] = json!(family.label);
+        row[FIELD_EXECUTOR] = json!(ModelExecutor::Antigravity.as_str());
+        row[FIELD_PROVIDER] = json!(ANTIGRAVITY_PROVIDER);
+        row[FIELD_MODEL_PROVIDER] = json!(ANTIGRAVITY_PROVIDER);
+        row[FIELD_SELECTION_VALUE] = json!(selection.value());
+        row[FIELD_AGY_VARIANTS] = json!(
             family
                 .variants
                 .iter()
@@ -162,23 +193,24 @@ pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::a
                 efforts.push(variant.effort.clone());
             }
         }
-        row["supportedReasoningEfforts"] = json!(
+        row[FIELD_SUPPORTED_EFFORTS] = json!(
             efforts
                 .iter()
                 .map(|effort| json!({
-                    "reasoningEffort": effort,
-                    "source": "agy-model-variant",
+                    (FIELD_REASONING_EFFORT): effort,
+                    (FIELD_EFFORT_SOURCE): "agy-model-variant",
                 }))
                 .chain(std::iter::once(json!({
-                    "reasoningEffort": "ultra",
-                    "agyOrchestration": true,
+                    (FIELD_REASONING_EFFORT): crate::agy_model_catalog::CODEX_ORCHESTRATION_EFFORT,
+                    (FIELD_AGY_ORCHESTRATION): true,
                 })))
                 .collect::<Vec<_>>()
         );
         rows.push(row);
     }
     existing.retain(|row| {
-        !(row.get("executor").and_then(Value::as_str) == Some("antigravity")
+        !(row.get(FIELD_EXECUTOR).and_then(Value::as_str)
+            == Some(ModelExecutor::Antigravity.as_str())
             && model_id(row).is_some_and(|id| variant_ids.contains(id)))
     });
     rows.extend(existing);
@@ -190,32 +222,33 @@ pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::a
         }
         let selection = ModelSelection {
             executor: ModelExecutor::Antigravity,
-            provider: "antigravity".into(),
+            provider: ANTIGRAVITY_PROVIDER.into(),
             model: model.id.clone(),
         };
         if let Some(row) = rows.iter_mut().find(|row| {
-            row.get("executor").and_then(Value::as_str) == Some("antigravity")
+            row.get(FIELD_EXECUTOR).and_then(Value::as_str)
+                == Some(ModelExecutor::Antigravity.as_str())
                 && model_id(row) == Some(model.id.as_str())
         }) {
-            row["displayName"] = json!(model.label);
-            row["selectionValue"] = json!(selection.value());
+            row[FIELD_DISPLAY_NAME] = json!(model.label);
+            row[FIELD_SELECTION_VALUE] = json!(selection.value());
             row.as_object_mut()
-                .map(|object| object.remove("supportedReasoningEfforts"));
+                .map(|object| object.remove(FIELD_SUPPORTED_EFFORTS));
         } else {
             rows.push(
                 json!({"id":model.id,"model":model.id,"displayName":model.label,
-                "executor":"antigravity","provider":"antigravity","modelProvider":"antigravity",
-                "selectionValue":selection.value()}),
+                (FIELD_EXECUTOR):ModelExecutor::Antigravity.as_str(),(FIELD_PROVIDER):ANTIGRAVITY_PROVIDER,
+                (FIELD_MODEL_PROVIDER):ANTIGRAVITY_PROVIDER,(FIELD_SELECTION_VALUE):selection.value()}),
             );
         }
     }
 }
 pub(crate) fn resolve_selection(c: &Value, requested: &str) -> Result<ModelSelection> {
     let rows = c
-        .get("data")
+        .get(FIELD_DATA)
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("native model catalog omitted its data list"))?;
-    let active = c.get("provider").and_then(Value::as_str);
+    let active = c.get(FIELD_PROVIDER).and_then(Value::as_str);
     let mut matches = Vec::new();
     for row in rows {
         if model_matches(row, requested) {
@@ -239,7 +272,7 @@ pub(crate) fn resolve_selection(c: &Value, requested: &str) -> Result<ModelSelec
 }
 pub(crate) fn model_choices(c: &Value) -> Vec<(String, String)> {
     let mut seen = HashSet::new();
-    c.get("data")
+    c.get(FIELD_DATA)
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -253,7 +286,7 @@ pub(crate) fn model_choices(c: &Value) -> Vec<(String, String)> {
             if !seen.insert(value.clone()) {
                 return None;
             }
-            let display = ["displayName", "name", "display_name"]
+            let display = [FIELD_DISPLAY_NAME, "name", "display_name"]
                 .into_iter()
                 .filter_map(|k| row.get(k).and_then(Value::as_str))
                 .find(|v| !v.trim().is_empty())
@@ -271,10 +304,10 @@ pub(crate) fn model_choices(c: &Value) -> Vec<(String, String)> {
 fn annotate(row: &mut Value, p: &str) {
     let id = model_id(row).map(str::to_owned);
     if let Some(obj) = row.as_object_mut() {
-        obj.insert("provider".into(), json!(p));
-        obj.insert("modelProvider".into(), json!(p));
+        obj.insert(FIELD_PROVIDER.into(), json!(p));
+        obj.insert(FIELD_MODEL_PROVIDER.into(), json!(p));
         if let Some(id) = id {
-            obj.insert("selectionValue".into(), json!(identity(p, &id)));
+            obj.insert(FIELD_SELECTION_VALUE.into(), json!(identity(p, &id)));
         }
     }
 }
@@ -282,7 +315,7 @@ fn has_model(rows: &[Value], p: &str, name: &str) -> bool {
     rows.iter().any(|r| {
         provider(r) == Some(p)
             && (model_id(r) == Some(name)
-                || ["id", "slug"]
+                || [FIELD_ID, FIELD_SLUG]
                     .into_iter()
                     .any(|key| r.get(key).and_then(Value::as_str) == Some(name)))
     })
@@ -292,13 +325,16 @@ fn add(rows: &mut Vec<Value>, name: Option<&str>, p: &str) {
         return;
     };
     if !has_model(rows, p, name) {
-        rows.push(json!({"id":name,"model":name,"displayName":name,"provider":p,"modelProvider":p,"selectionValue":identity(p,name)}));
+        rows.push(
+            json!({(FIELD_ID):name,(FIELD_MODEL):name,(FIELD_DISPLAY_NAME):name,
+            (FIELD_PROVIDER):p,(FIELD_MODEL_PROVIDER):p,(FIELD_SELECTION_VALUE):identity(p,name)}),
+        );
     }
 }
 fn active_profile(c: &Value) -> Option<&Value> {
-    c.get("profile")?
+    c.get(CONFIG_PROFILE)?
         .as_str()
-        .and_then(|n| c.get("profiles")?.get(n))
+        .and_then(|n| c.get(CONFIG_PROFILES)?.get(n))
 }
 fn active_value<'a>(c: &'a Value, k: &str) -> Option<&'a Value> {
     active_profile(c)
@@ -307,9 +343,9 @@ fn active_value<'a>(c: &'a Value, k: &str) -> Option<&'a Value> {
         .or_else(|| c.get(k).filter(|v| !v.is_null()))
 }
 pub(crate) fn configured_provider(c: &Value) -> &str {
-    active_value(c, "model_provider")
+    active_value(c, CONFIG_MODEL_PROVIDER)
         .and_then(Value::as_str)
-        .unwrap_or("openai")
+        .unwrap_or(CODEX_DEFAULT_PROVIDER)
 }
 pub(crate) fn assemble_catalog(
     mut rows: Vec<Value>,
@@ -324,35 +360,39 @@ pub(crate) fn assemble_catalog(
         annotate(row, active);
     }
     let root = c
-        .get("model_provider")
+        .get(CONFIG_MODEL_PROVIDER)
         .and_then(Value::as_str)
-        .unwrap_or("openai");
-    let root_executor = c.get("model_executor").and_then(Value::as_str);
-    if root_executor != Some("antigravity") {
-        add(&mut rows, c.get("model").and_then(Value::as_str), root);
+        .unwrap_or(CODEX_DEFAULT_PROVIDER);
+    let root_executor = c.get(CONFIG_MODEL_EXECUTOR).and_then(Value::as_str);
+    if root_executor != Some(ModelExecutor::Antigravity.as_str()) {
+        add(&mut rows, c.get(CONFIG_MODEL).and_then(Value::as_str), root);
     }
-    if let Some(profiles) = c.get("profiles").and_then(Value::as_object) {
+    if let Some(profiles) = c.get(CONFIG_PROFILES).and_then(Value::as_object) {
         for profile in profiles.values() {
             if profile
-                .get("model_executor")
+                .get(CONFIG_MODEL_EXECUTOR)
                 .and_then(Value::as_str)
                 .or(root_executor)
-                == Some("antigravity")
+                == Some(ModelExecutor::Antigravity.as_str())
             {
                 continue;
             }
             let p = profile
-                .get("model_provider")
+                .get(CONFIG_MODEL_PROVIDER)
                 .and_then(Value::as_str)
                 .unwrap_or(root);
-            add(&mut rows, profile.get("model").and_then(Value::as_str), p);
+            add(
+                &mut rows,
+                profile.get(CONFIG_MODEL).and_then(Value::as_str),
+                p,
+            );
         }
     }
     let subagent_p = subagent_provider.unwrap_or(active);
     if c.pointer("/agents/default_subagent_executor")
         .and_then(Value::as_str)
         .or(root_executor)
-        != Some("antigravity")
+        != Some(ModelExecutor::Antigravity.as_str())
     {
         add(
             &mut rows,
@@ -365,17 +405,21 @@ pub(crate) fn assemble_catalog(
     }
     add(&mut rows, installation, active);
     let thread_p = thread
-        .get("modelProvider")
+        .get(FIELD_MODEL_PROVIDER)
         .and_then(Value::as_str)
         .unwrap_or(active);
-    if thread.get("modelExecutor").and_then(Value::as_str) != Some("antigravity") {
+    if thread.get(FIELD_MODEL_EXECUTOR).and_then(Value::as_str)
+        != Some(ModelExecutor::Antigravity.as_str())
+    {
         add(
             &mut rows,
-            thread.get("model").and_then(Value::as_str),
+            thread.get(FIELD_MODEL).and_then(Value::as_str),
             thread_p,
         );
     }
-    Ok(json!({"data":rows,"nextCursor":null,"provider":thread_p,"catalogProvider":active}))
+    Ok(
+        json!({(FIELD_DATA):rows,(FIELD_NEXT_CURSOR):null,(FIELD_PROVIDER):thread_p,(FIELD_CATALOG_PROVIDER):active}),
+    )
 }
 pub(crate) async fn read_pages<F, Fut>(mut request: F) -> Result<Vec<Value>>
 where
@@ -388,7 +432,7 @@ where
     loop {
         let page = request(params.clone()).await?;
         let data = page
-            .get("data")
+            .get(FIELD_DATA)
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("native model catalog omitted its data list"))?;
         rows.extend(data.iter().cloned());

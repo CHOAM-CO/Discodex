@@ -23,6 +23,12 @@ use crate::config::Config;
 use crate::model_catalog::{ModelExecutor, ModelSelection};
 use crate::state::StateStore;
 
+const NATIVE_ERROR_CODE_FIELD: &str = "code";
+const NATIVE_ERROR_MESSAGE_FIELD: &str = "message";
+const MISSING_NATIVE_ERROR_MESSAGE: &str = "native request failed";
+const TURN_STEER_METHOD: &str = "turn/steer";
+const THREAD_RESUME_METHOD: &str = "thread/resume";
+
 #[path = "native_external.rs"]
 mod external;
 
@@ -135,23 +141,25 @@ impl NativeRequestError {
     pub(crate) fn from_response(method: String, error: &Value) -> Self {
         Self {
             method,
-            code: error.get("code").and_then(Value::as_i64),
+            code: error.get(NATIVE_ERROR_CODE_FIELD).and_then(Value::as_i64),
             message: error
-                .get("message")
+                .get(NATIVE_ERROR_MESSAGE_FIELD)
                 .and_then(Value::as_str)
-                .unwrap_or("native request failed")
+                .filter(|message| !message.trim().is_empty())
+                .unwrap_or(MISSING_NATIVE_ERROR_MESSAGE)
                 .to_owned(),
         }
     }
 
     pub(crate) fn is_expected_turn_mismatch(&self) -> bool {
-        self.method == "turn/steer"
+        self.method == TURN_STEER_METHOD
             && self.code == Some(-32600)
             && (self.message == "no active turn to steer"
                 || self.message.starts_with("expected active turn id"))
     }
+
     fn is_thread_closing(&self) -> bool {
-        self.method == "thread/resume"
+        self.method == THREAD_RESUME_METHOD
             && self.code == Some(-32600)
             && self
                 .message
@@ -189,10 +197,34 @@ pub(crate) fn is_history_pagination_unsupported(error: &anyhow::Error) -> bool {
 
 impl std::fmt::Display for NativeRequestError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_expected_turn_mismatch() {
-            write!(formatter, "native {} request was rejected", self.method)
+        if self.message == MISSING_NATIVE_ERROR_MESSAGE {
+            // Preserve the established fallback when the server omitted a
+            // usable error message.
+            write!(
+                formatter,
+                "{} ({})",
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::NativeRequestFailed),
+                self.method
+            )
+        } else if let Some(code) = self.code {
+            write!(
+                formatter,
+                "{} ({}; code {code}): {}",
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::NativeRequestFailed),
+                self.method,
+                self.message
+            )
         } else {
-            write!(formatter, "native {} request failed", self.method)
+            write!(
+                formatter,
+                "{} ({}): {}",
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::NativeRequestFailed),
+                self.method,
+                self.message
+            )
         }
     }
 }
@@ -219,6 +251,9 @@ struct Inner {
     pending: Mutex<HashMap<String, PendingRequest>>,
     server_requests: AsyncMutex<HashMap<ServerRequestKey, ServerRequestState>>,
     events: broadcast::Sender<Value>,
+    pending_thread_settings: Mutex<HashMap<ThreadSettingKey, PendingThreadSetting>>,
+    thread_setting_current: Mutex<HashMap<ThreadSettingKey, Weak<AtomicBool>>>,
+    next_thread_setting_revision: AtomicU64,
     bridge_events: Mutex<BridgeEventBuffer>,
     harness_worktrees: tokio::sync::OnceCell<crate::worktree_tools::WorktreeTools>,
     startup_events: Mutex<Vec<Value>>,
@@ -245,6 +280,204 @@ struct Inner {
     config: Config,
     #[cfg(windows)]
     child_job: WindowsChildJob,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ThreadSettingKey {
+    generation: u64,
+    thread_id: String,
+    field: String,
+}
+
+struct PendingThreadSetting {
+    revision: u64,
+    expected: Value,
+    status: watch::Sender<ThreadSettingUpdateStatus>,
+    current: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Debug)]
+enum ThreadSettingUpdateStatus {
+    Pending,
+    Applied(Value),
+    Superseded,
+    Failed(String),
+}
+
+pub enum ThreadSettingUpdate {
+    Confirmed(Value),
+    Pending(ThreadSettingUpdateTicket),
+}
+
+pub enum ThreadSettingUpdateOutcome {
+    Applied(Value),
+    Superseded,
+}
+
+pub struct ThreadSettingUpdateTicket {
+    key: ThreadSettingKey,
+    revision: u64,
+    inner: Weak<Inner>,
+    status: watch::Receiver<ThreadSettingUpdateStatus>,
+    current: Arc<AtomicBool>,
+}
+
+impl ThreadSettingUpdateTicket {
+    pub fn is_current(&self) -> bool {
+        self.current.load(Ordering::Acquire)
+    }
+
+    pub async fn wait(&mut self) -> Result<ThreadSettingUpdateOutcome> {
+        loop {
+            match self.status.borrow().clone() {
+                ThreadSettingUpdateStatus::Pending => {}
+                ThreadSettingUpdateStatus::Applied(snapshot) => {
+                    return Ok(ThreadSettingUpdateOutcome::Applied(snapshot));
+                }
+                ThreadSettingUpdateStatus::Superseded => {
+                    return Ok(ThreadSettingUpdateOutcome::Superseded);
+                }
+                ThreadSettingUpdateStatus::Failed(reason) => {
+                    bail!("thread settings update was not confirmed: {reason}");
+                }
+            }
+            self.status
+                .changed()
+                .await
+                .context("thread settings update status channel closed")?;
+        }
+    }
+}
+
+impl Drop for ThreadSettingUpdateTicket {
+    fn drop(&mut self) {
+        let terminal = !matches!(&*self.status.borrow(), ThreadSettingUpdateStatus::Pending);
+        if !terminal {
+            return;
+        }
+        let Some(inner) = self.inner.upgrade() else {
+            return;
+        };
+        if let Ok(mut current) = inner.thread_setting_current.lock()
+            && current
+                .get(&self.key)
+                .and_then(Weak::upgrade)
+                .is_some_and(|value| Arc::ptr_eq(&value, &self.current))
+        {
+            current.remove(&self.key);
+        }
+    }
+}
+
+fn setting_value<'a>(settings: &'a Value, field: &str) -> Option<&'a Value> {
+    match field {
+        "effort" | "reasoningEffort" => settings
+            .get("effort")
+            .or_else(|| settings.get("reasoningEffort")),
+        other => settings.get(other),
+    }
+}
+
+fn confirmed_thread_setting_event(
+    event: &Value,
+    key: &ThreadSettingKey,
+    expected: &Value,
+) -> Option<Value> {
+    if event.get("method").and_then(Value::as_str) != Some("thread/settings/updated")
+        || event
+            .pointer("/params/_discodex_connection_generation")
+            .and_then(Value::as_u64)
+            != Some(key.generation)
+        || event.pointer("/params/threadId").and_then(Value::as_str) != Some(key.thread_id.as_str())
+    {
+        return None;
+    }
+    let settings = event.pointer("/params/threadSettings")?;
+    (setting_value(settings, &key.field) == Some(expected))
+        .then(|| thread_state_summary(&json!({ "thread": settings })))
+}
+
+#[cfg(test)]
+mod thread_setting_confirmation_tests {
+    use super::*;
+
+    #[test]
+    fn confirmation_requires_matching_thread_generation_and_requested_value() {
+        let key = ThreadSettingKey {
+            generation: 7,
+            thread_id: "thread-synthetic".to_owned(),
+            field: "model".to_owned(),
+        };
+        let expected = json!("synthetic-model-b");
+        let event = json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "_discodex_connection_generation": 7,
+                "threadId": "thread-synthetic",
+                "threadSettings": { "model": "synthetic-model-b", "effort": "high" }
+            }
+        });
+        let confirmed = confirmed_thread_setting_event(&event, &key, &expected)
+            .expect("matching applied event confirms the requested value");
+        assert_eq!(confirmed.get("model"), Some(&expected));
+
+        let wrong_thread = json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "_discodex_connection_generation": 7,
+                "threadId": "other-thread",
+                "threadSettings": { "model": "synthetic-model-b" }
+            }
+        });
+        assert_eq!(
+            confirmed_thread_setting_event(&wrong_thread, &key, &expected),
+            None
+        );
+
+        let wrong_generation = json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "_discodex_connection_generation": 6,
+                "threadId": "thread-synthetic",
+                "threadSettings": { "model": "synthetic-model-b" }
+            }
+        });
+        assert_eq!(
+            confirmed_thread_setting_event(&wrong_generation, &key, &expected),
+            None
+        );
+
+        let mismatched_value = json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "_discodex_connection_generation": 7,
+                "threadId": "thread-synthetic",
+                "threadSettings": { "model": "synthetic-model-a" }
+            }
+        });
+        assert_eq!(
+            confirmed_thread_setting_event(&mismatched_value, &key, &expected),
+            None
+        );
+    }
+
+    #[test]
+    fn effort_confirmation_accepts_native_reasoning_effort_alias() {
+        let key = ThreadSettingKey {
+            generation: 2,
+            thread_id: "thread-synthetic".to_owned(),
+            field: "effort".to_owned(),
+        };
+        let event = json!({
+            "method": "thread/settings/updated",
+            "params": {
+                "_discodex_connection_generation": 2,
+                "threadId": "thread-synthetic",
+                "threadSettings": { "reasoningEffort": "medium" }
+            }
+        });
+        assert!(confirmed_thread_setting_event(&event, &key, &json!("medium")).is_some());
+    }
 }
 
 #[cfg(windows)]
@@ -411,7 +644,9 @@ where
             let requested = if let Some(provider) = preferences.subagent_model_provider.as_ref() {
                 ModelSelection {
                     executor: match preferences.subagent_model_executor.as_deref() {
-                        Some("antigravity") => ModelExecutor::Antigravity,
+                        Some(executor) if executor == ModelExecutor::Antigravity.as_str() => {
+                            ModelExecutor::Antigravity
+                        }
                         _ => ModelExecutor::Codex,
                     },
                     provider: provider.clone(),
@@ -689,12 +924,13 @@ impl Native {
                 Err(error) => {
                     drop(voice_listener);
                     let cleanup = cleanup_endpoint(&voice_tool_endpoint, &voice_tool_endpoint_dir);
-                    return match cleanup {
-                        Ok(()) => Err(error).context("resolve discodex executable for MCP"),
-                        Err(cleanup_error) => Err(error).context(format!(
+                    let context = match cleanup {
+                        Ok(()) => "resolve discodex executable for MCP".to_owned(),
+                        Err(cleanup_error) => format!(
                             "resolve discodex executable for MCP; cleanup also failed: {cleanup_error:#}"
-                        )),
+                        ),
                     };
+                    return Err(error).context(context);
                 }
             },
         };
@@ -703,12 +939,13 @@ impl Native {
             None => {
                 drop(voice_listener);
                 let cleanup = cleanup_endpoint(&voice_tool_endpoint, &voice_tool_endpoint_dir);
-                return match cleanup {
-                    Ok(()) => bail!("discodex MCP executable path is not valid UTF-8"),
-                    Err(cleanup_error) => bail!(
+                let context = match cleanup {
+                    Ok(()) => "discodex MCP executable path is not valid UTF-8".to_owned(),
+                    Err(cleanup_error) => format!(
                         "discodex MCP executable path is not valid UTF-8; cleanup also failed: {cleanup_error:#}"
                     ),
                 };
+                bail!("{context}");
             }
         };
         let voice_endpoint_arg = match voice_tool_endpoint.to_str() {
@@ -716,12 +953,13 @@ impl Native {
             None => {
                 drop(voice_listener);
                 let cleanup = cleanup_endpoint(&voice_tool_endpoint, &voice_tool_endpoint_dir);
-                return match cleanup {
-                    Ok(()) => bail!("voice tool IPC socket path is not valid UTF-8"),
-                    Err(cleanup_error) => bail!(
+                let context = match cleanup {
+                    Ok(()) => "voice tool IPC socket path is not valid UTF-8".to_owned(),
+                    Err(cleanup_error) => format!(
                         "voice tool IPC socket path is not valid UTF-8; cleanup also failed: {cleanup_error:#}"
                     ),
                 };
+                bail!("{context}");
             }
         };
         let worker_args = serde_json::to_string(&[
@@ -883,6 +1121,9 @@ impl Native {
             pending: Mutex::new(HashMap::new()),
             server_requests: AsyncMutex::new(HashMap::new()),
             events,
+            pending_thread_settings: Mutex::new(HashMap::new()),
+            thread_setting_current: Mutex::new(HashMap::new()),
+            next_thread_setting_revision: AtomicU64::new(1),
             bridge_events: Mutex::new(BridgeEventBuffer::new(bridge_events_enabled)),
             harness_worktrees: tokio::sync::OnceCell::new(),
             startup_events: Mutex::new(Vec::new()),
@@ -1104,7 +1345,8 @@ impl Native {
             .and_then(Value::as_str)
             .zip(old.get("model").and_then(Value::as_str))
             .map(|(provider, model)| ModelSelection {
-                executor: if old.get("modelExecutor").and_then(Value::as_str) == Some("antigravity")
+                executor: if old.get("modelExecutor").and_then(Value::as_str)
+                    == Some(ModelExecutor::Antigravity.as_str())
                 {
                     ModelExecutor::Antigravity
                 } else {
@@ -1177,6 +1419,287 @@ impl Native {
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
         self.ensure_connected().await?;
         self.request_raw(method, params).await
+    }
+
+    /// Queue a per-thread setting update and distinguish the RPC acknowledgement
+    /// from the later settings-applied notification. A ticket remains current only
+    /// until a newer request for the same thread and field supersedes it.
+    pub async fn request_thread_setting_update(
+        &self,
+        thread_id: &str,
+        params: Value,
+        field: &'static str,
+        expected: Value,
+    ) -> Result<ThreadSettingUpdate> {
+        if params.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+            bail!("thread/settings/update params do not match the requested thread");
+        }
+        let generation = self.current_generation();
+        let key = ThreadSettingKey {
+            generation,
+            thread_id: thread_id.to_owned(),
+            field: field.to_owned(),
+        };
+        let mut events = self.subscribe();
+        let (revision, status_rx, superseded_pending, current_flag) = {
+            let mut pending = self
+                .inner
+                .pending_thread_settings
+                .lock()
+                .map_err(|_| anyhow!("pending thread settings lock poisoned"))?;
+            if let Some(existing) = pending.get(&key) {
+                if existing.expected == expected
+                    && matches!(
+                        &*existing.status.borrow(),
+                        ThreadSettingUpdateStatus::Pending
+                    )
+                {
+                    return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+                        key,
+                        revision: existing.revision,
+                        inner: Arc::downgrade(&self.inner),
+                        status: existing.status.subscribe(),
+                        current: existing.current.clone(),
+                    }));
+                }
+            }
+            let mut superseded = false;
+            let mut current = self
+                .inner
+                .thread_setting_current
+                .lock()
+                .map_err(|_| anyhow!("thread setting current-state lock poisoned"))?;
+            let obsolete = current
+                .keys()
+                .filter(|old_key| old_key.thread_id == key.thread_id && old_key.field == key.field)
+                .cloned()
+                .collect::<Vec<_>>();
+            for old_key in obsolete {
+                if let Some(flag) = current.remove(&old_key).and_then(|flag| flag.upgrade()) {
+                    flag.store(false, Ordering::Release);
+                }
+                if let Some(old) = pending.remove(&old_key)
+                    && matches!(&*old.status.borrow(), ThreadSettingUpdateStatus::Pending)
+                {
+                    superseded = true;
+                    old.status
+                        .send_replace(ThreadSettingUpdateStatus::Superseded);
+                }
+            }
+            let revision = self
+                .inner
+                .next_thread_setting_revision
+                .fetch_add(1, Ordering::AcqRel);
+            let (status_tx, status_rx) = watch::channel(ThreadSettingUpdateStatus::Pending);
+            let current_flag = Arc::new(AtomicBool::new(true));
+            current.insert(key.clone(), Arc::downgrade(&current_flag));
+            pending.insert(
+                key.clone(),
+                PendingThreadSetting {
+                    revision,
+                    expected: expected.clone(),
+                    status: status_tx,
+                    current: current_flag.clone(),
+                },
+            );
+            (revision, status_rx, superseded, current_flag)
+        };
+
+        let snapshot = match self
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": false}),
+            )
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                self.finish_thread_setting(
+                    &key,
+                    revision,
+                    ThreadSettingUpdateStatus::Failed(format!("{error:#}")),
+                );
+                self.forget_thread_setting_current(&key, &current_flag);
+                return Err(error).context("read current thread settings before update");
+            }
+        };
+        if response_thread_id(&snapshot).ok().as_deref() != Some(thread_id) {
+            let error = anyhow!("thread/read returned a different thread than requested");
+            self.finish_thread_setting(
+                &key,
+                revision,
+                ThreadSettingUpdateStatus::Failed(error.to_string()),
+            );
+            self.forget_thread_setting_current(&key, &current_flag);
+            return Err(error);
+        }
+        let summary = thread_state_summary(&snapshot);
+        if !superseded_pending && setting_value(&summary, field) == Some(&expected) {
+            if self.thread_setting_is_current(&key, revision) {
+                self.finish_thread_setting(
+                    &key,
+                    revision,
+                    ThreadSettingUpdateStatus::Applied(summary.clone()),
+                );
+                self.forget_thread_setting_current(&key, &current_flag);
+                return Ok(ThreadSettingUpdate::Confirmed(summary));
+            }
+            return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+                key,
+                revision,
+                inner: Arc::downgrade(&self.inner),
+                status: status_rx,
+                current: current_flag.clone(),
+            }));
+        }
+        if !self.thread_setting_is_current(&key, revision) {
+            return Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+                key,
+                revision,
+                inner: Arc::downgrade(&self.inner),
+                status: status_rx,
+                current: current_flag.clone(),
+            }));
+        }
+        if let Err(error) = self.request("thread/settings/update", params).await {
+            self.finish_thread_setting(
+                &key,
+                revision,
+                ThreadSettingUpdateStatus::Failed(format!("{error:#}")),
+            );
+            self.forget_thread_setting_current(&key, &current_flag);
+            return Err(error).context("queue thread settings update");
+        }
+        let native = self.clone();
+        let watch_key = key.clone();
+        let mut watcher_status = status_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                if !native.thread_setting_is_current(&watch_key, revision) {
+                    break;
+                }
+                tokio::select! {
+                    changed = watcher_status.changed() => {
+                        if changed.is_err()
+                            || !matches!(&*watcher_status.borrow(), ThreadSettingUpdateStatus::Pending)
+                        {
+                            break;
+                        }
+                    }
+                    received = events.recv() => match received {
+                    Ok(event) => {
+                        let method = event.get("method").and_then(Value::as_str);
+                        let event_generation = event
+                            .pointer("/params/_discodex_connection_generation")
+                            .and_then(Value::as_u64);
+                        if method == Some("discodex/connection-closed")
+                            && event_generation == Some(watch_key.generation)
+                        {
+                            native.finish_thread_setting(
+                                &watch_key,
+                                revision,
+                                ThreadSettingUpdateStatus::Failed(
+                                    "native connection closed before settings were confirmed"
+                                        .to_owned(),
+                                ),
+                            );
+                            break;
+                        }
+                        if method == Some("thread/settings/updated")
+                            && event_generation == Some(watch_key.generation)
+                            && let Some(summary) =
+                                confirmed_thread_setting_event(&event, &watch_key, &expected)
+                        {
+                            native.finish_thread_setting(
+                                &watch_key,
+                                revision,
+                                ThreadSettingUpdateStatus::Applied(summary),
+                            );
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(count)) => {
+                        native.finish_thread_setting(
+                            &watch_key,
+                            revision,
+                            ThreadSettingUpdateStatus::Failed(format!(
+                                "missed {count} native events before settings confirmation"
+                            )),
+                        );
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        native.finish_thread_setting(
+                            &watch_key,
+                            revision,
+                            ThreadSettingUpdateStatus::Failed(
+                                "native event stream closed before settings were confirmed"
+                                    .to_owned(),
+                            ),
+                        );
+                        break;
+                    }
+                    }
+                }
+            }
+        });
+        Ok(ThreadSettingUpdate::Pending(ThreadSettingUpdateTicket {
+            key,
+            revision,
+            inner: Arc::downgrade(&self.inner),
+            status: status_rx,
+            current: current_flag,
+        }))
+    }
+
+    fn thread_setting_is_current(&self, key: &ThreadSettingKey, revision: u64) -> bool {
+        self.inner
+            .pending_thread_settings
+            .lock()
+            .ok()
+            .and_then(|pending| pending.get(key).map(|state| state.revision == revision))
+            .unwrap_or(false)
+    }
+
+    fn forget_thread_setting_current(&self, key: &ThreadSettingKey, flag: &Arc<AtomicBool>) {
+        if let Ok(mut current) = self.inner.thread_setting_current.lock()
+            && current
+                .get(key)
+                .and_then(Weak::upgrade)
+                .is_some_and(|value| Arc::ptr_eq(&value, flag))
+        {
+            current.remove(key);
+        }
+    }
+
+    fn finish_thread_setting(
+        &self,
+        key: &ThreadSettingKey,
+        revision: u64,
+        status: ThreadSettingUpdateStatus,
+    ) {
+        let flag = if let Ok(mut pending) = self.inner.pending_thread_settings.lock()
+            && pending
+                .get(key)
+                .is_some_and(|current| current.revision == revision)
+        {
+            pending.remove(key).map(|current| {
+                current.status.send_replace(status);
+                current.current
+            })
+        } else {
+            None
+        };
+        if let Some(flag) = flag
+            && Arc::strong_count(&flag) == 1
+            && let Ok(mut current) = self.inner.thread_setting_current.lock()
+            && current
+                .get(key)
+                .and_then(Weak::upgrade)
+                .is_some_and(|value| Arc::ptr_eq(&value, &flag))
+        {
+            current.remove(key);
+        }
     }
 
     pub(crate) async fn request_prepared(&self, method: &str, params: Value) -> Result<Value> {
@@ -1442,13 +1965,15 @@ impl Native {
             None,
         )?;
         let mut configured_agy_models = preferences.antigravity_models.clone();
-        if preferences.subagent_model_executor.as_deref() == Some("antigravity")
+        if preferences.subagent_model_executor.as_deref()
+            == Some(ModelExecutor::Antigravity.as_str())
             && let Some(model) = preferences.subagent_model.as_ref()
         {
             configured_agy_models.push(model.clone());
         }
         let thread = self.thread_state();
-        if thread.get("modelExecutor").and_then(Value::as_str) == Some("antigravity")
+        if thread.get("modelExecutor").and_then(Value::as_str)
+            == Some(ModelExecutor::Antigravity.as_str())
             && let Some(model) = thread.get("model").and_then(Value::as_str)
         {
             configured_agy_models.push(model.to_owned());
@@ -2306,7 +2831,7 @@ async fn handle_voice_tool_connection(mut stream: UnixStream, inner: &Arc<Inner>
             }
             Some("voice_leave") => {
                 let args = request.get("params").cloned().unwrap_or_else(|| json!({}));
-                match crate::voice_tools::parse_leave_summary(&args) {
+                match crate::voice_tools::parse_leave_summary(&args, inner.config.language) {
                     Err(error) => voice_rpc_error(id, -32602, &error.to_string()),
                     Ok(summary) => {
                         let handler = inner
@@ -2496,11 +3021,7 @@ fn native_tool_rpc_response(id: Value, result: Result<Value>) -> Value {
         Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
         Err(error) => {
             if let Some(native) = error.downcast_ref::<NativeRequestError>() {
-                let message = match native.code {
-                    Some(code) => format!("{error:#} (code {code}): {}", native.message),
-                    None => format!("{error:#}: {}", native.message),
-                };
-                voice_rpc_error(id, native.code.unwrap_or(-32000), &message)
+                voice_rpc_error(id, native.code.unwrap_or(-32000), &format!("{error:#}"))
             } else {
                 voice_rpc_error(id, -32000, &format!("{error:#}"))
             }
@@ -2581,7 +3102,7 @@ fn validate_model_selection_response(response: &Value, selection: &ModelSelectio
     let executor = thread
         .get("modelExecutor")
         .and_then(Value::as_str)
-        .unwrap_or("codex");
+        .unwrap_or(ModelExecutor::Codex.as_str());
     if model != Some(selection.model.as_str())
         || executor != selection.executor.as_str()
         || (selection.executor == ModelExecutor::Codex
@@ -2925,6 +3446,14 @@ fn spawn_reader(
                     {
                         let mut requests = inner.server_requests.lock().await;
                         resolve_server_request(&mut requests, generation, request_id);
+                    }
+                }
+                if method == "thread/settings/updated" {
+                    if let Some(params) = value.get_mut("params").and_then(Value::as_object_mut) {
+                        params.insert(
+                            "_discodex_connection_generation".to_owned(),
+                            json!(generation),
+                        );
                     }
                 }
                 if let Some(thread_id) = materialized_user_thread(&inner, &value) {
@@ -3592,7 +4121,7 @@ mod thread_state_tests {
             native_tool_rpc_response(json!("request-a"), Err(typed)),
             json!({"jsonrpc":"2.0","id":"request-a","error":{
                 "code":-32602,
-                "message":"execute native delegation tool: native thread/tool/call request failed (code -32602): tool argument `target` is missing"
+                "message":"execute native delegation tool: Native request failed (thread/tool/call; code -32602): tool argument `target` is missing"
             }})
         );
         let untyped = anyhow!("connection closed").context("read native tool response");
@@ -3670,7 +4199,21 @@ mod thread_state_tests {
         assert!(!other_invalid_request.is_expected_turn_mismatch());
         assert_eq!(
             other_invalid_request.to_string(),
-            "native turn/start request failed"
+            "Native request failed (turn/start; code -32600): invalid request"
+        );
+        let missing_message =
+            NativeRequestError::from_response("thread/resume".to_owned(), &json!({"code": -32602}));
+        assert_eq!(
+            missing_message.to_string(),
+            "Native request failed (thread/resume)"
+        );
+        let empty_message = NativeRequestError::from_response(
+            "thread/resume".to_owned(),
+            &json!({"code": -32602, "message": "   "}),
+        );
+        assert_eq!(
+            empty_message.to_string(),
+            "Native request failed (thread/resume)"
         );
         record_native_request_error(&other_invalid_request);
     }
@@ -3716,7 +4259,10 @@ mod thread_state_tests {
         assert!(
             output.contains("native_error_message=expected active turn id `old` but found `new`")
         );
-        assert_eq!(error.to_string(), "native turn/steer request was rejected");
+        assert_eq!(
+            error.to_string(),
+            "Native request failed (turn/steer; code -32600): expected active turn id `old` but found `new`"
+        );
         let wrapped: anyhow::Error = error.into();
         assert!(wrapped.downcast_ref::<NativeRequestError>().is_some());
     }

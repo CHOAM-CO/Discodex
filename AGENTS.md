@@ -22,3 +22,11 @@ Product documentation defaults to English in `README.md`, `docs/design.md`, and 
 Do not introduce product restrictions that the user did not request, such as inferred path deny lists, artificial size/count/range caps, or forced permission profiles. Accommodate actual service and protocol limits through pagination and split delivery, and preserve the requested content instead of silently truncating it.
 
 Discodex controls Discord connectivity: channel and thread routing, voice sessions, and message delivery. Do not add a second permission, security, or file-access policy over Codex and the host OS. Explicitly selected readable files are eligible for attachment regardless of type or path.
+
+## Failure reporting
+
+- Failures must remain visible. When a Codex request fails, preserve and return the originating `error.message`, `error.code`, and status when available. Do not turn an upstream failure into a generic success, an empty response, or a silent timeout. Discodex failures must likewise surface their concrete diagnostic details.
+- Redact concrete credentials and secret values only. Do not remove the full diagnostic or replace useful error details with a generic message. Do not add unrelated input, prompt, or debug dumps to an error reply.
+- If Discord delivery itself fails, record a structured local failure with its type/code and delivery context, then use an existing bounded retry path when available. Never retry indefinitely or report delivery as successful when it failed.
+- Preserve existing Discord routing, access controls, and required protocol behavior. Distinguish those actual boundaries from newly invented model, file, or content gates; do not use failure handling as a reason to add arbitrary restrictions.
+- Put product-facing UI text, tool descriptions, and authored error wrappers in `resources/messages/<domain>.json`, select them through generated `MessageKey` values, and provide English, Korean, Simplified Chinese, and Japanese entries. Keep protocol identifiers, CLI syntax, and useful low-level diagnostic text intact; a diagnostic may remain English when localizing it would obscure the original error.

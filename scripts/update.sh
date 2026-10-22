@@ -1,14 +1,15 @@
 #!/bin/sh
 set -eu
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$SCRIPT_DIR/product.generated.sh"
+DISCODEX_LANGUAGE=${DISCODEX_LANGUAGE:-en}
+case " $DISCODEX_SUPPORTED_LANGUAGES " in
+  *" $DISCODEX_LANGUAGE "*) ;;
+  *) discodex_message install.language_environment_error en >&2; exit 2 ;;
+esac
 
 usage() {
-  cat <<'USAGE'
-Usage: ./update --config <existing-profile-config.json> [--migrate-adhoc]
-
-Downloads the official Discodex release for this operating system and architecture,
-then stages its matching prebuilt Codex runtime and updates the selected profile.
-The existing Codex data home, conversations and settings are preserved.
-USAGE
+  discodex_message update.usage "$DISCODEX_LANGUAGE"
 }
 
 CONFIG=
@@ -16,7 +17,7 @@ MIGRATE_ADHOC=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --config)
-      [ "$#" -ge 2 ] || { printf '%s\n' 'Missing value for --config.' >&2; usage >&2; exit 2; }
+      [ "$#" -ge 2 ] || { discodex_message update.missing_config_value "$DISCODEX_LANGUAGE" >&2; usage >&2; exit 2; }
       CONFIG=$2
       shift 2
       ;;
@@ -29,48 +30,53 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     *)
-      printf 'Unknown update option: %s\n' "$1" >&2
+      discodex_message update.unknown_option "$DISCODEX_LANGUAGE" "$1" >&2
       usage >&2
       exit 2
       ;;
   esac
 done
 
-[ -n "$CONFIG" ] || { printf '%s\n' 'An existing profile config is required with --config.' >&2; usage >&2; exit 2; }
-[ -f "$CONFIG" ] || { printf 'Config file not found: %s\n' "$CONFIG" >&2; exit 2; }
-command -v curl >/dev/null 2>&1 || { printf '%s\n' 'curl is required to download the official Discodex release.' >&2; exit 2; }
+[ -n "$CONFIG" ] || { discodex_message update.missing_config "$DISCODEX_LANGUAGE" >&2; usage >&2; exit 2; }
+[ -f "$CONFIG" ] || { discodex_message update.config_not_found "$DISCODEX_LANGUAGE" "$CONFIG" >&2; exit 2; }
+command -v curl >/dev/null 2>&1 || { discodex_message install.curl_required "$DISCODEX_LANGUAGE" >&2; exit 2; }
 
 OS=$(uname -s)
 ARCH=$(uname -m)
-case "$OS:$ARCH" in
-  Linux:x86_64|Linux:amd64) TARGET=x86_64-unknown-linux-gnu ;;
-  Linux:aarch64|Linux:arm64) TARGET=aarch64-unknown-linux-gnu ;;
-  Darwin:x86_64|Darwin:amd64) TARGET=x86_64-apple-darwin ;;
-  Darwin:arm64|Darwin:aarch64) TARGET=aarch64-apple-darwin ;;
-  *) printf 'No prebuilt Discodex release is available for %s/%s.\n' "$OS" "$ARCH" >&2; exit 2 ;;
-esac
+TARGET=$(discodex_platform_target "$OS" "$ARCH") || {
+  discodex_message update.unsupported_platform "$DISCODEX_LANGUAGE" "$OS" "$ARCH" >&2
+  exit 2
+}
 
-ASSET="discodex-${TARGET}"
-BASE_URL="https://github.com/CHOAM-CO/Discodex/releases/latest/download"
-TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/discodex-update.XXXXXX")
-cleanup() { rm -rf "$TEMP_DIR"; }
-trap cleanup EXIT HUP INT TERM
+ASSET=$(discodex_platform_asset "$OS" "$ARCH")
+BASE_URL="$DISCODEX_RELEASE_DOWNLOAD_ROOT/latest/download"
+TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/$DISCODEX_UPDATE_TEMP_PREFIX.XXXXXX")
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if ! rm -rf "$TEMP_DIR" && [ "$status" -eq 0 ]; then status=1; fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 BINARY="$TEMP_DIR/$ASSET"
 CHECKSUM="$TEMP_DIR/$ASSET.sha256"
 curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET" --output "$BINARY"
 curl --fail --location --silent --show-error --retry 3 "$BASE_URL/$ASSET.sha256" --output "$CHECKSUM"
 EXPECTED=$(awk 'NR == 1 { print $1 }' "$CHECKSUM")
 case "$EXPECTED" in
-  ''|*[!0123456789abcdefABCDEF]*) printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1 ;;
+  ''|*[!0123456789abcdefABCDEF]*) discodex_message install.invalid_checksum "$DISCODEX_LANGUAGE" >&2; exit 1 ;;
 esac
-[ "${#EXPECTED}" -eq 64 ] || { printf '%s\n' 'The release checksum file is invalid.' >&2; exit 1; }
+[ "${#EXPECTED}" -eq 64 ] || { discodex_message install.invalid_checksum "$DISCODEX_LANGUAGE" >&2; exit 1; }
 if command -v sha256sum >/dev/null 2>&1; then
   ACTUAL=$(sha256sum "$BINARY" | awk '{ print $1 }')
 else
   ACTUAL=$(shasum -a 256 "$BINARY" | awk '{ print $1 }')
 fi
 [ "$(printf '%s' "$EXPECTED" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$ACTUAL" | tr '[:upper:]' '[:lower:]')" ] || {
-  printf '%s\n' 'The downloaded release binary failed SHA256 verification.' >&2
+  discodex_message install.checksum_mismatch "$DISCODEX_LANGUAGE" >&2
   exit 1
 }
 chmod +x "$BINARY"

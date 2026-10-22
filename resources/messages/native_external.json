@@ -1,0 +1,14 @@
+{
+  "native_external.terminal_failure": {
+    "en": "Antigravity returned {status}: {detail}",
+    "ko": "Antigravity가 {status} 상태를 반환했습니다: {detail}",
+    "zh": "Antigravity 返回了 {status} 状态：{detail}",
+    "ja": "Antigravityはステータス{status}を返しました: {detail}"
+  },
+  "native_external.execution_failed": {
+    "en": "Antigravity execution failed: {detail}",
+    "ko": "Antigravity 실행에 실패했습니다: {detail}",
+    "zh": "Antigravity 执行失败：{detail}",
+    "ja": "Antigravityの実行に失敗しました: {detail}"
+  }
+}

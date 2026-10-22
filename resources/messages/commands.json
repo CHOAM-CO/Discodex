@@ -1,0 +1,2108 @@
+{
+  "commands.code_mode_004c354e": {
+    "en": "Code Mode",
+    "ko": "Code Mode",
+    "zh": "Code Mode",
+    "ja": "Code Mode"
+  },
+  "commands.code_mode_host_4cb2e89d": {
+    "en": "Code Mode host",
+    "ko": "Code Mode 호스트",
+    "zh": "Code Mode 主机",
+    "ja": "Code Mode ホスト"
+  },
+  "commands.multi_agent_v2_6dd758e9": {
+    "en": "Multi-agent v2",
+    "ko": "멀티 에이전트 v2",
+    "zh": "多代理 v2",
+    "ja": "マルチエージェント v2"
+  },
+  "commands.wait_for_agents_032f9048": {
+    "en": "Wait for agents",
+    "ko": "에이전트 대기",
+    "zh": "等待代理",
+    "ja": "エージェントを待つ"
+  },
+  "commands.async_notifications_0c673297": {
+    "en": "Async notifications",
+    "ko": "비동기 알림",
+    "zh": "异步通知",
+    "ja": "非同期通知"
+  },
+  "commands.native_questions_d61baa04": {
+    "en": "Native questions",
+    "ko": "네이티브 질문",
+    "zh": "原生提问",
+    "ja": "ネイティブ質問"
+  },
+  "commands.clock_and_time_reminders_4246b655": {
+    "en": "Clock and time reminders",
+    "ko": "시계 및 시간 알림",
+    "zh": "时钟和时间提醒",
+    "ja": "時計と時刻リマインダー"
+  },
+  "commands.token_budget_6a6282bf": {
+    "en": "Token budget",
+    "ko": "토큰 예산",
+    "zh": "令牌预算",
+    "ja": "トークン予算"
+  },
+  "commands.history_notes_234724c3": {
+    "en": "History notes",
+    "ko": "대화 기록 메모",
+    "zh": "历史记录注释",
+    "ja": "履歴メモ"
+  },
+  "commands.default_subagent_model_9811e108": {
+    "en": "Default subagent model",
+    "ko": "기본 하위 에이전트 모델",
+    "zh": "默认子代理模型",
+    "ja": "既定のサブエージェントモデル"
+  },
+  "commands.manage_the_current_discodex_conversation_and_set_831a7659": {
+    "en": "Manage the current Discodex conversation and settings",
+    "ko": "현재 Discodex 대화와 설정을 관리합니다",
+    "zh": "管理当前 Discodex 对话和设置",
+    "ja": "現在の Discodex 会話と設定を管理します"
+  },
+  "commands.check_for_the_latest_discodex_update_and_confirm_68b53c7f": {
+    "en": "Check for the latest Discodex update and confirm installation",
+    "ko": "최신 Discodex 업데이트를 확인하고 설치 여부를 선택합니다",
+    "zh": "检查最新 Discodex 更新并确认安装",
+    "ja": "最新の Discodex 更新を確認し、インストールを選択します"
+  },
+  "commands.choose_conversation_settings_with_buttons_70876a9a": {
+    "en": "Choose conversation settings with buttons",
+    "ko": "버튼으로 대화 설정을 선택합니다",
+    "zh": "使用按钮选择对话设置",
+    "ja": "ボタンで会話設定を選択します"
+  },
+  "commands.choose_a_voice_profile_with_buttons_89280fb4": {
+    "en": "Choose a voice profile with buttons",
+    "ko": "버튼으로 음성 프로필을 선택합니다",
+    "zh": "使用按钮选择语音配置",
+    "ja": "ボタンで音声プロファイルを選択します"
+  },
+  "commands.show_conversation_connection_and_settings_181cc827": {
+    "en": "Show conversation connection and settings",
+    "ko": "현재 대화 연결과 설정을 조회합니다",
+    "zh": "查看当前对话连接和设置",
+    "ja": "会話の接続状態と設定を表示します"
+  },
+  "commands.stop_the_current_response_ca339947": {
+    "en": "Stop the current response",
+    "ko": "현재 진행 중인 응답을 중단합니다",
+    "zh": "中断当前回复",
+    "ja": "現在の応答を中断します"
+  },
+  "commands.compact_conversation_context_replacing_any_activ_6fcab920": {
+    "en": "Compact conversation context, replacing any active response",
+    "ko": "진행 중인 응답을 중단하고 대화 문맥을 압축합니다",
+    "zh": "压缩对话上下文，替换正在进行的回复",
+    "ja": "進行中の応答を中断して会話のコンテキストを圧縮します"
+  },
+  "commands.start_a_new_codex_conversation_0a33cf04": {
+    "en": "Start a new Codex conversation",
+    "ko": "새 Codex 대화를 시작합니다",
+    "zh": "开始新的 Codex 对话",
+    "ja": "新しい Codex 会話を開始します"
+  },
+  "commands.how_to_handle_the_active_response_0bfb7119": {
+    "en": "How to handle the active response",
+    "ko": "진행 중인 응답의 처리 방식",
+    "zh": "如何处理正在进行的回复",
+    "ja": "進行中の応答の扱い"
+  },
+  "commands.finish_then_start_a_new_conversation_b9003cb8": {
+    "en": "Finish, then start a new conversation",
+    "ko": "마친 뒤 새 대화",
+    "zh": "完成后开始新对话",
+    "ja": "完了後に新しい会話を開始"
+  },
+  "commands.interrupt_first_84068a6d": {
+    "en": "Interrupt first",
+    "ko": "먼저 중단",
+    "zh": "先中断",
+    "ja": "先に中断"
+  },
+  "commands.leave_the_current_voice_call_04af42c5": {
+    "en": "Leave the current voice call",
+    "ko": "현재 음성 통화를 종료합니다",
+    "zh": "离开当前语音通话",
+    "ja": "現在の音声通話から退出します"
+  },
+  "commands.join_an_allowed_voice_channel_c1945831": {
+    "en": "Join an allowed voice channel",
+    "ko": "허용한 음성 채널에 참여합니다",
+    "zh": "加入允许的语音频道",
+    "ja": "許可された音声チャンネルに参加します"
+  },
+  "commands.allowed_voice_channel_to_join_4e5d0bf6": {
+    "en": "Allowed voice channel to join",
+    "ko": "참여할 허용 음성 채널",
+    "zh": "要加入的允许语音频道",
+    "ja": "参加する許可済み音声チャンネル"
+  },
+  "commands.browse_install_or_remove_native_codex_plugins_7a3ef886": {
+    "en": "Browse, install, or remove native Codex plugins",
+    "ko": "Codex 플러그인을 찾아 설치하거나 제거합니다",
+    "zh": "浏览、安装或移除 Codex 插件",
+    "ja": "Codex プラグインを閲覧、インストール、削除します"
+  },
+  "commands.catalog_or_installed_plugins_d3704ecb": {
+    "en": "Catalog or installed plugins",
+    "ko": "카탈로그 또는 설치된 플러그인",
+    "zh": "目录或已安装插件",
+    "ja": "カタログまたはインストール済みプラグイン"
+  },
+  "commands.catalog_fe5df316": {
+    "en": "Catalog",
+    "ko": "카탈로그",
+    "zh": "目录",
+    "ja": "カタログ"
+  },
+  "commands.installed_a4c359ee": {
+    "en": "Installed",
+    "ko": "설치됨",
+    "zh": "已安装",
+    "ja": "インストール済み"
+  },
+  "commands.could_not_load_the_current_settings_choices_0a0afc4d": {
+    "en": "Could not load the current settings choices.",
+    "ko": "현재 설정 선택지를 불러오지 못했습니다.",
+    "zh": "无法加载当前设置选项。",
+    "ja": "現在の設定候補を読み込めませんでした。"
+  },
+  "commands.could_not_load_the_native_plugin_list_check_code_c2348bb5": {
+    "en": "Could not load the native plugin list. Check Codex account access and try again.",
+    "ko": "네이티브 플러그인 목록을 불러오지 못했습니다. Codex 계정 접근을 확인한 뒤 다시 시도하세요.",
+    "zh": "无法加载原生插件列表。请检查 Codex 账户访问权限后重试。",
+    "ja": "ネイティブプラグイン一覧を読み込めませんでした。Codex アカウントへのアクセスを確認して再試行してください。"
+  },
+  "commands.current_codex_conversation_status_3da97baf": {
+    "en": "Current Codex conversation status",
+    "ko": "현재 Codex 대화 상태",
+    "zh": "当前 Codex 对话状态",
+    "ja": "現在の Codex 会話の状態"
+  },
+  "commands.voice_call_7fee09b5": {
+    "en": "Voice call",
+    "ko": "음성 통화",
+    "zh": "语音通话",
+    "ja": "音声通話"
+  },
+  "commands.connected_1881bcc7": {
+    "en": "Connected",
+    "ko": "연결됨",
+    "zh": "已连接",
+    "ja": "接続中"
+  },
+  "commands.not_connected_97df72d5": {
+    "en": "Not connected",
+    "ko": "연결되지 않음",
+    "zh": "未连接",
+    "ja": "未接続"
+  },
+  "commands.settings_2dd4ab86": {
+    "en": "Settings",
+    "ko": "현재 설정",
+    "zh": "当前设置",
+    "ja": "現在の設定"
+  },
+  "commands.input_delivery_47ae354d": {
+    "en": "Input delivery",
+    "ko": "입력 전달 방식",
+    "zh": "输入传递方式",
+    "ja": "入力の送信方法"
+  },
+  "commands.active_response_007ef48b": {
+    "en": "Active response",
+    "ko": "진행 중인 응답",
+    "zh": "正在进行的回复",
+    "ja": "進行中の応答"
+  },
+  "commands.yes_528feda9": {
+    "en": "Yes",
+    "ko": "있음",
+    "zh": "有",
+    "ja": "あり"
+  },
+  "commands.no_a97f680d": {
+    "en": "No",
+    "ko": "없음",
+    "zh": "没有",
+    "ja": "なし"
+  },
+  "commands.queued_inputs_61de5fed": {
+    "en": "Queued inputs",
+    "ko": "대기 중인 입력",
+    "zh": "排队的输入",
+    "ja": "待機中の入力"
+  },
+  "commands.installation_feature_checks_c6ab7b32": {
+    "en": "Installation feature checks",
+    "ko": "설치 기능 확인",
+    "zh": "安装功能检查",
+    "ja": "インストール機能の確認"
+  },
+  "commands.a_response_is_in_progress_choose_how_to_handle_i_d71652a8": {
+    "en": "A response is in progress. Choose how to handle it before starting a new conversation.",
+    "ko": "진행 중인 응답이 있습니다. 새 대화를 시작하기 전에 처리 방식을 선택해 주세요.",
+    "zh": "有回复正在进行。开始新对话前，请选择如何处理。",
+    "ja": "応答が進行中です。新しい会話を始める前に処理方法を選択してください。"
+  },
+  "commands.asked_the_existing_response_to_stop_31ecef20": {
+    "en": "Asked the existing response to stop.\n",
+    "ko": "기존 응답의 중단을 요청했습니다.\n",
+    "zh": "已请求中断现有回复。\n",
+    "ja": "既存の応答に中断を要求しました。\n"
+  },
+  "commands.the_existing_response_will_continue_in_the_previ_758e7673": {
+    "en": "The existing response will continue in the previous conversation.\n",
+    "ko": "기존 응답은 이전 대화에서 계속 생성됩니다.\n",
+    "zh": "现有回复将继续在之前的对话中生成。\n",
+    "ja": "既存の応答は前の会話で引き続き生成されます。\n"
+  },
+  "commands.choose_how_to_handle_the_active_response_8f647f6b": {
+    "en": "Choose how to handle the active response.",
+    "ko": "진행 중인 응답의 처리 방식을 선택해 주세요",
+    "zh": "请选择如何处理正在进行的回复。",
+    "ja": "進行中の応答の扱いを選択してください。"
+  },
+  "commands.wait_for_the_voice_call_to_end_before_starting_a_051a4271": {
+    "en": "Wait for the voice call to end before starting a new conversation.",
+    "ko": "음성 통화 종료가 확인된 뒤 새 대화를 시작해 주세요.",
+    "zh": "请先确认语音通话已结束，再开始新对话。",
+    "ja": "音声通話の終了を確認してから新しい会話を始めてください。"
+  },
+  "commands.wait_for_queued_messages_in_this_conversation_to_64053425": {
+    "en": "Wait for queued messages in this conversation to finish before starting a new one.",
+    "ko": "현재 대화의 대기 메시지가 처리된 뒤 새 대화를 시작해 주세요.",
+    "zh": "请等待当前对话中的排队消息处理完毕后再开始新对话。",
+    "ja": "この会話の待機中メッセージが処理されてから新しい会話を始めてください。"
+  },
+  "commands.a_queued_message_has_started_choose_again_how_to_117bdf62": {
+    "en": "A queued message has started. Choose again how to handle the active work before starting a new conversation.",
+    "ko": "대기 메시지의 작업이 시작되었습니다. 새 대화를 시작하기 전에 진행 중인 작업의 처리 방식을 다시 선택해 주세요.",
+    "zh": "排队消息已开始处理。开始新对话前，请重新选择如何处理当前任务。",
+    "ja": "待機中のメッセージの処理が始まりました。新しい会話を始める前に、進行中の作業の扱いを再度選択してください。"
+  },
+  "commands.started_a_new_codex_conversation_5b85b8f3": {
+    "en": "Started a new Codex conversation.",
+    "ko": "새 Codex 대화를 시작했습니다.",
+    "zh": "已开始新的 Codex 对话。",
+    "ja": "新しい Codex 会話を開始しました。"
+  },
+  "commands.this_voice_channel_is_not_allowlisted_62b54e80": {
+    "en": "This voice channel is not allowlisted.",
+    "ko": "허용 목록에 없는 음성 채널입니다",
+    "zh": "此语音频道不在允许列表中。",
+    "ja": "この音声チャンネルは許可リストにありません。"
+  },
+  "commands.joined_voice_channel_b6c9416a": {
+    "en": "Joined voice channel",
+    "ko": "음성 채널에 참여했습니다",
+    "zh": "已加入语音频道",
+    "ja": "音声チャンネルに参加しました"
+  },
+  "commands.message_3a07098d": {
+    "en": ".",
+    "ko": ".",
+    "zh": "。",
+    "ja": "。"
+  },
+  "commands.unknown_discodex_command_c126ecfd": {
+    "en": "Unknown `/discodex` command",
+    "ko": "알 수 없는 `/discodex` 명령입니다",
+    "zh": "未知的 `/discodex` 命令",
+    "ja": "不明な `/discodex` コマンドです"
+  },
+  "commands.could_not_request_conversation_compaction_092a77b5": {
+    "en": "Could not request conversation compaction:",
+    "ko": "대화 문맥 압축을 요청하지 못했습니다:",
+    "zh": "无法请求压缩对话上下文：",
+    "ja": "会話のコンテキスト圧縮を要求できませんでした："
+  },
+  "commands.on_65845774": {
+    "en": "On",
+    "ko": "켜기",
+    "zh": "开启",
+    "ja": "オン"
+  },
+  "commands.off_5677591d": {
+    "en": "Off",
+    "ko": "끄기",
+    "zh": "关闭",
+    "ja": "オフ"
+  },
+  "commands.saved_preference_47ce2cf1": {
+    "en": "Saved preference",
+    "ko": "저장된 설정",
+    "zh": "已保存的偏好",
+    "ja": "保存済みの設定"
+  },
+  "commands.effective_codex_config_eeb899f3": {
+    "en": "Effective Codex config",
+    "ko": "실효 Codex 설정",
+    "zh": "Codex 当前生效配置",
+    "ja": "有効な Codex 設定"
+  },
+  "commands.restart_required_to_apply_this_preference_4ac207b7": {
+    "en": "Restart required to apply this preference.",
+    "ko": "이 설정을 적용하려면 재시작이 필요합니다.",
+    "zh": "此偏好需要重启后生效。",
+    "ja": "この設定の適用には再起動が必要です。"
+  },
+  "commands.current_policy_7ed3f9e2": {
+    "en": "Current policy",
+    "ko": "현재 정책",
+    "zh": "当前策略",
+    "ja": "現在のポリシー"
+  },
+  "commands.paired_db2c2b0b": {
+    "en": "Paired",
+    "ko": "페어링",
+    "zh": "已配对",
+    "ja": "ペアリング済み"
+  },
+  "commands.whitelist_4df98d9d": {
+    "en": "Whitelist",
+    "ko": "화이트리스트",
+    "zh": "白名单",
+    "ja": "許可リスト"
+  },
+  "commands.blacklist_d5332ba7": {
+    "en": "Blacklist",
+    "ko": "블랙리스트",
+    "zh": "黑名单",
+    "ja": "ブロックリスト"
+  },
+  "commands.registered_channels_5a818eab": {
+    "en": "Registered channels",
+    "ko": "등록 채널",
+    "zh": "已登记频道",
+    "ja": "登録チャンネル"
+  },
+  "commands.edit_paired_accounts_aceb36c6": {
+    "en": "Edit paired accounts",
+    "ko": "페어링 계정 편집",
+    "zh": "编辑已配对账号",
+    "ja": "ペアリング済みアカウントを編集"
+  },
+  "commands.edit_whitelist_82750902": {
+    "en": "Edit whitelist",
+    "ko": "화이트리스트 편집",
+    "zh": "编辑白名单",
+    "ja": "許可リストを編集"
+  },
+  "commands.edit_blocklist_f37f514b": {
+    "en": "Edit blocklist",
+    "ko": "차단 목록 편집",
+    "zh": "编辑屏蔽列表",
+    "ja": "ブロックリストを編集"
+  },
+  "commands.edit_registered_channels_cca7da5c": {
+    "en": "Edit registered channels",
+    "ko": "등록 채널 편집",
+    "zh": "编辑已登记频道",
+    "ja": "登録チャンネルを編集"
+  },
+  "commands.entries_9281e703": {
+    "en": "Entries",
+    "ko": "항목",
+    "zh": "条目",
+    "ja": "項目"
+  },
+  "commands.active_model_provider_ea54b5ed": {
+    "en": "Active model provider",
+    "ko": "현재 모델 제공자",
+    "zh": "当前模型提供方",
+    "ja": "現在のモデルプロバイダー"
+  },
+  "commands.off_4d374cce": {
+    "en": "Off",
+    "ko": "끔",
+    "zh": "关闭",
+    "ja": "オフ"
+  },
+  "commands.none_45e9a015": {
+    "en": "None",
+    "ko": "없음",
+    "zh": "无",
+    "ja": "なし"
+  },
+  "commands.minimal_b4fec1ec": {
+    "en": "Minimal",
+    "ko": "최소",
+    "zh": "最低",
+    "ja": "最小"
+  },
+  "commands.low_cbc3febe": {
+    "en": "Low",
+    "ko": "낮음",
+    "zh": "低",
+    "ja": "低"
+  },
+  "commands.medium_ed9c6849": {
+    "en": "Medium",
+    "ko": "보통",
+    "zh": "中",
+    "ja": "中"
+  },
+  "commands.high_454ac2f1": {
+    "en": "High",
+    "ko": "높음",
+    "zh": "高",
+    "ja": "高"
+  },
+  "commands.extra_high_fd13615e": {
+    "en": "Extra high",
+    "ko": "매우 높음",
+    "zh": "很高",
+    "ja": "非常に高い"
+  },
+  "commands.maximum_ae40202b": {
+    "en": "Maximum",
+    "ko": "최대",
+    "zh": "最高",
+    "ja": "最大"
+  },
+  "commands.ultra_0f57cfc1": {
+    "en": "Ultra",
+    "ko": "울트라",
+    "zh": "超高",
+    "ja": "ウルトラ"
+  },
+  "commands.priority_e9c80c39": {
+    "en": "Priority",
+    "ko": "우선 처리",
+    "zh": "优先",
+    "ja": "優先"
+  },
+  "commands.standard_0dd9d07b": {
+    "en": "Standard",
+    "ko": "표준",
+    "zh": "标准",
+    "ja": "標準"
+  },
+  "commands.flex_0f24853f": {
+    "en": "Flex",
+    "ko": "유연 처리",
+    "zh": "灵活",
+    "ja": "フレックス"
+  },
+  "commands.voice_profile_2f25af45": {
+    "en": "Voice profile",
+    "ko": "음성 프로필",
+    "zh": "语音配置",
+    "ja": "音声プロファイル"
+  },
+  "commands.native_default_308250fc": {
+    "en": "Native default",
+    "ko": "네이티브 기본값",
+    "zh": "原生默认值",
+    "ja": "ネイティブ既定値"
+  },
+  "commands.the_saved_child_default_applies_on_the_next_thre_8f9e7706": {
+    "en": "The saved child default applies on the next thread creation or resume, including after a worker restart. The current thread keeps its effective settings until resumed.",
+    "ko": "저장한 하위 에이전트 기본값은 다음 스레드 생성·재개 시 적용되며, 워커 재시작 후 재개할 때도 적용됩니다. 현재 스레드의 실효 설정은 재개 전까지 유지됩니다.",
+    "zh": "保存的子代理默认值在下次创建或恢复线程时生效，包括工作进程重启后的恢复。当前线程在恢复前保持其有效设置。",
+    "ja": "保存した子エージェントの既定値は、ワーカー再起動後を含め、次のスレッド作成・再開時に適用されます。現在のスレッドは再開するまで有効な設定を保持します。"
+  },
+  "commands.saved_7b6b2c9c": {
+    "en": "Saved.",
+    "ko": "저장했습니다.",
+    "zh": "已保存。",
+    "ja": "保存しました。"
+  },
+  "commands.on_2666c335": {
+    "en": "On",
+    "ko": "켜짐",
+    "zh": "已开启",
+    "ja": "オン"
+  },
+  "commands.off_38c695fb": {
+    "en": "Off",
+    "ko": "꺼짐",
+    "zh": "已关闭",
+    "ja": "オフ"
+  },
+  "commands.settings_6f9676eb": {
+    "en": "Settings",
+    "ko": "설정",
+    "zh": "设置",
+    "ja": "設定"
+  },
+  "commands.advanced_settings_c1402b86": {
+    "en": "Advanced settings",
+    "ko": "고급 설정",
+    "zh": "高级设置",
+    "ja": "詳細設定"
+  },
+  "commands.update_notifications_6a160463": {
+    "en": "Update notifications",
+    "ko": "업데이트 알림",
+    "zh": "更新通知",
+    "ja": "更新通知"
+  },
+  "commands.model_704caa01": {
+    "en": "Model",
+    "ko": "모델",
+    "zh": "模型",
+    "ja": "モデル"
+  },
+  "commands.reasoning_effort_ceade6e1": {
+    "en": "Reasoning effort",
+    "ko": "추론 강도",
+    "zh": "推理强度",
+    "ja": "推論の強さ"
+  },
+  "commands.fast_mode_86774341": {
+    "en": "Fast mode",
+    "ko": "Fast 모드",
+    "zh": "Fast 模式",
+    "ja": "Fastモード"
+  },
+  "commands.permission_profile_c7e4bb80": {
+    "en": "Permission profile",
+    "ko": "권한 프로필",
+    "zh": "权限配置",
+    "ja": "権限プロファイル"
+  },
+  "commands.approval_policy_be6ee113": {
+    "en": "Approval policy",
+    "ko": "승인 방식",
+    "zh": "审批策略",
+    "ja": "承認ポリシー"
+  },
+  "commands.message_reception_policy_13952d44": {
+    "en": "Message reception policy",
+    "ko": "메시지 수신 정책",
+    "zh": "消息接收策略",
+    "ja": "メッセージ受信ポリシー"
+  },
+  "commands.paired_accounts_263399a8": {
+    "en": "Paired accounts",
+    "ko": "페어링 계정",
+    "zh": "已配对账号",
+    "ja": "ペアリング済みアカウント"
+  },
+  "commands.current_46b1c35d": {
+    "en": "Current",
+    "ko": "현재",
+    "zh": "当前",
+    "ja": "現在"
+  },
+  "commands.choose_an_option_page_9bb1942d": {
+    "en": "Choose an option · page",
+    "ko": "선택지 · 페이지",
+    "zh": "选择一项 · 页码",
+    "ja": "選択肢 · ページ"
+  },
+  "commands.choose_an_option_6254cba9": {
+    "en": "Choose an option",
+    "ko": "선택지를 선택하세요",
+    "zh": "请选择一项",
+    "ja": "項目を選んでください"
+  },
+  "commands.choose_a_setting_a7d20000": {
+    "en": "Choose a setting",
+    "ko": "설정을 선택하세요",
+    "zh": "请选择设置",
+    "ja": "設定を選んでください"
+  },
+  "commands.previous_9be71e5f": {
+    "en": "Previous",
+    "ko": "이전",
+    "zh": "上一页",
+    "ja": "前へ"
+  },
+  "commands.back_c2e16a99": {
+    "en": "Back",
+    "ko": "뒤로가기",
+    "zh": "返回",
+    "ja": "戻る"
+  },
+  "commands.next_8a0c8241": {
+    "en": "Next",
+    "ko": "다음",
+    "zh": "下一页",
+    "ja": "次へ"
+  },
+  "commands.exit_82c65349": {
+    "en": "Exit",
+    "ko": "나가기",
+    "zh": "退出",
+    "ja": "閉じる"
+  },
+  "commands.everyone_including_dms_3d00363e": {
+    "en": "Everyone, including DMs",
+    "ko": "DM을 포함한 모든 사용자",
+    "zh": "所有人（包括私信）",
+    "ja": "DMを含む全員"
+  },
+  "commands.all_members_in_registered_server_e81e3e9f": {
+    "en": "All members in registered server",
+    "ko": "등록 서버의 모든 구성원",
+    "zh": "已登记服务器中的所有成员",
+    "ja": "登録サーバーの全メンバー"
+  },
+  "commands.shared_existing_settings_afa9effe": {
+    "en": "Shared existing settings",
+    "ko": "기존 설정 공유",
+    "zh": "共享现有设置",
+    "ja": "既存の設定を共有"
+  },
+  "commands.separate_settings_016de9e5": {
+    "en": "Separate settings",
+    "ko": "별도 설정",
+    "zh": "独立设置",
+    "ja": "個別の設定"
+  },
+  "commands.choose_during_setup_9558c853": {
+    "en": "Choose during setup",
+    "ko": "활성화 시 선택",
+    "zh": "启用时选择",
+    "ja": "セットアップ時に選択"
+  },
+  "commands.model_ids_f17651aa": {
+    "en": "Model IDs",
+    "ko": "모델 ID",
+    "zh": "模型 ID",
+    "ja": "モデル ID"
+  },
+  "commands.discodex_manages_its_own_agy_cli_enabling_it_sta_9ab1e631": {
+    "en": "Discodex manages its own AGY CLI. Enabling it starts installation and sign-in when needed. Settings changes apply to the next AGY session.",
+    "ko": "Discodex 전용 AGY CLI를 관리합니다. 활성화하면 필요한 설치와 로그인을 시작합니다. 설정 변경은 다음 AGY 세션에 적용됩니다.",
+    "zh": "Discodex 管理独立的 AGY CLI。启用时会按需启动安装和登录。设置更改将在下次 AGY 会话中生效。",
+    "ja": "Discodex 専用の AGY CLI を管理します。有効にすると必要なインストールとログインを開始します。設定変更は次の AGY セッションに適用されます。"
+  },
+  "commands.settings_sharing_2e85b807": {
+    "en": "Settings sharing",
+    "ko": "설정 공유",
+    "zh": "设置共享",
+    "ja": "設定の共有"
+  },
+  "commands.update_model_list_3e0facf2": {
+    "en": "Update model list",
+    "ko": "모델 목록 업데이트",
+    "zh": "更新模型列表",
+    "ja": "モデル一覧を更新"
+  },
+  "commands.updated_the_antigravity_model_list_d912f16d": {
+    "en": "Updated the Antigravity model list",
+    "ko": "Antigravity 모델 목록을 업데이트했습니다",
+    "zh": "已更新 Antigravity 模型列表",
+    "ja": "Antigravity モデル一覧を更新しました"
+  },
+  "commands.antigravity_models_977cb98b": {
+    "en": "Antigravity models",
+    "ko": "Antigravity 모델",
+    "zh": "Antigravity 模型",
+    "ja": "Antigravity モデル"
+  },
+  "commands.model_ids_one_per_line_5bc970c7": {
+    "en": "Model IDs (one per line)",
+    "ko": "모델 ID (줄마다 하나)",
+    "zh": "模型 ID（每行一个）",
+    "ja": "モデル ID（1 行に 1 つ）"
+  },
+  "commands.exact_model_ids_from_your_agy_cli_ac57b51e": {
+    "en": "Exact model IDs from your AGY CLI",
+    "ko": "AGY CLI에서 확인한 정확한 모델 ID",
+    "zh": "AGY CLI 中的准确模型 ID",
+    "ja": "AGY CLI の正確なモデル ID"
+  },
+  "commands.could_not_apply_that_setting_the_current_choices_1c140555": {
+    "en": "Could not apply that setting. The current choices are shown below.",
+    "ko": "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
+    "zh": "无法应用该设置。当前选项如下。",
+    "ja": "設定を適用できませんでした。現在の選択肢を表示します。"
+  },
+  "commands.this_panel_is_no_longer_active_open_discodex_set_a4e5b13c": {
+    "en": "This panel is no longer active. Open `/discodex settings` again.",
+    "ko": "이 설정 화면은 더 이상 유효하지 않습니다. `/discodex settings`를 다시 여세요.",
+    "zh": "此设置面板已失效。请重新打开 `/discodex settings`。",
+    "ja": "このパネルは無効です。`/discodex settings` を開き直してください。"
+  },
+  "commands.only_the_person_who_opened_this_settings_panel_c_4f357438": {
+    "en": "Only the person who opened this settings panel can use it.",
+    "ko": "이 설정 화면을 연 사용자만 사용할 수 있습니다.",
+    "zh": "只有打开此设置面板的用户可以使用它。",
+    "ja": "この設定パネルを開いたユーザーだけが操作できます。"
+  },
+  "commands.this_setting_is_still_being_processed_please_wai_cd1fb4ef": {
+    "en": "This setting is still being processed. Please wait a moment.",
+    "ko": "설정을 처리 중입니다. 잠시 기다려 주세요.",
+    "zh": "正在处理设置，请稍候。",
+    "ja": "設定を処理中です。少々お待ちください。"
+  },
+  "commands.enter_a_discord_numeric_id_03937d9b": {
+    "en": "Enter a Discord numeric ID",
+    "ko": "Discord 숫자 ID를 입력하세요",
+    "zh": "输入 Discord 数字 ID",
+    "ja": "Discord 数字 ID を入力してください"
+  },
+  "commands.the_codex_connection_changed_open_settings_again_e9c70d30": {
+    "en": "The Codex connection changed. Open settings again.",
+    "ko": "Codex 연결이 변경되었습니다. 설정을 다시 여세요.",
+    "zh": "Codex 连接已更改，请重新打开设置。",
+    "ja": "Codex 接続が変わりました。設定を開き直してください。"
+  },
+  "commands.could_not_close_settings_you_can_retry_exit_ad305cd1": {
+    "en": "Could not close settings. You can retry Exit.",
+    "ko": "설정 화면을 닫지 못했습니다. 나가기를 다시 눌러 주세요.",
+    "zh": "无法关闭设置。请重试退出。",
+    "ja": "設定を閉じられませんでした。もう一度「閉じる」を押してください。"
+  },
+  "commands.could_not_update_settings_you_can_retry_the_exis_d59486a7": {
+    "en": "Could not update settings. You can retry the existing settings panel.",
+    "ko": "설정을 갱신하지 못했습니다. 기존 설정 화면에서 다시 시도할 수 있습니다.",
+    "zh": "无法更新设置。可以在原设置面板中重试。",
+    "ja": "設定を更新できませんでした。元の設定画面で再試行できます。"
+  },
+  "commands.policy_saved_6bb6f2da": {
+    "en": "Policy saved",
+    "ko": "정책 저장됨",
+    "zh": "策略已保存",
+    "ja": "ポリシーを保存しました"
+  },
+  "commands.that_choice_is_no_longer_available_current_choic_b53f72ff": {
+    "en": "That choice is no longer available. Current choices were refreshed.",
+    "ko": "선택한 항목을 더 이상 사용할 수 없어 최신 선택지를 표시했습니다.",
+    "zh": "此选项已不可用，已刷新当前选项。",
+    "ja": "選んだ項目は利用できなくなったため、選択肢を更新しました。"
+  },
+  "commands.antigravity_preference_saved_it_applies_on_the_n_85aacfc8": {
+    "en": "Antigravity preference saved. It applies on the next model selection or AGY session start.",
+    "ko": "Antigravity 설정을 저장했습니다. 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+    "zh": "Antigravity 设置已保存。将在下次选择模型或启动 AGY 会话时生效。",
+    "ja": "Antigravity の設定を保存しました。次のモデル選択または AGY セッション開始時に適用されます。"
+  },
+  "commands.approval_policy_applied_and_saved_a6d52828": {
+    "en": "Approval policy applied and saved",
+    "ko": "승인 방식을 적용하고 저장했습니다",
+    "zh": "审批策略已应用并保存",
+    "ja": "承認ポリシーを適用して保存しました"
+  },
+  "commands.input_delivery_set_to_dd4696ee": {
+    "en": "Input delivery set to",
+    "ko": "입력 전달 방식:",
+    "zh": "输入传递方式已设为",
+    "ja": "入力の送信方法:"
+  },
+  "commands.voice_profile_saved_for_the_next_call_the_active_468592de": {
+    "en": "Voice profile saved for the next call; the active call is unchanged.",
+    "ko": "음성 프로필을 저장했습니다. 현재 통화에는 적용되지 않고 다음 통화부터 적용됩니다.",
+    "zh": "语音配置已保存，将用于下次通话；当前通话不变。",
+    "ja": "音声プロファイルを保存しました。現在の通話は変わらず、次回の通話から適用されます。"
+  },
+  "commands.saved_for_the_next_discodex_worker_start_restart_0f175de2": {
+    "en": "Saved for the next Discodex worker start. Restart required; the effective native config shown above is unchanged for this running process.",
+    "ko": "다음 Discodex 워커 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
+    "zh": "已保存，供下次 Discodex 工作进程启动时使用。需要重启；当前运行进程的有效原生配置未变。",
+    "ja": "次回の Discodex ワーカー起動用に保存しました。再起動が必要です。現在のプロセスの有効なネイティブ設定は上記のままです。"
+  },
+  "commands.choice_sent_to_the_request_b2a9b18b": {
+    "en": "Choice sent to the request.",
+    "ko": "요청에 선택을 전달했습니다.",
+    "zh": "已向请求发送选择。",
+    "ja": "リクエストに選択を送信しました。"
+  },
+  "commands.this_settings_panel_is_no_longer_active_open_set_7d065fd5": {
+    "en": "This settings panel is no longer active. Open settings again.",
+    "ko": "설정 화면이 만료되었습니다. 설정을 다시 여세요.",
+    "zh": "此设置面板已失效。请重新打开设置。",
+    "ja": "この設定パネルは無効です。設定を開き直してください。"
+  },
+  "commands.this_message_access_panel_is_no_longer_active_op_b96a7437": {
+    "en": "This message-access panel is no longer active. Open settings again.",
+    "ko": "메시지 접근 설정이 만료되었습니다. 설정을 다시 여세요.",
+    "zh": "此消息接收设置已失效。请重新打开设置。",
+    "ja": "メッセージ受信設定の有効期限が切れました。設定を開き直してください。"
+  },
+  "commands.enter_a_nonzero_discord_numeric_id_5a3a739d": {
+    "en": "Enter a nonzero Discord numeric ID.",
+    "ko": "0이 아닌 Discord 숫자 ID를 입력하세요.",
+    "zh": "请输入非零 Discord 数字 ID。",
+    "ja": "0 以外の Discord 数字 ID を入力してください。"
+  },
+  "commands.saved_but_could_not_refresh_the_list_reopen_sett_05e90f73": {
+    "en": "Saved, but could not refresh the list. Reopen settings to view it.",
+    "ko": "저장했지만 목록을 새로고침하지 못했습니다. 설정을 다시 열어 확인하세요.",
+    "zh": "已保存，但无法刷新列表。请重新打开设置查看。",
+    "ja": "保存しましたが一覧を更新できませんでした。設定を開き直してください。"
+  },
+  "commands.account_list_updated_e892e513": {
+    "en": "Account list updated.",
+    "ko": "계정 목록을 업데이트했습니다.",
+    "zh": "账号列表已更新。",
+    "ja": "アカウントリストを更新しました。"
+  },
+  "commands.could_not_save_message_access_settings_dfe7562c": {
+    "en": "Could not save message access settings",
+    "ko": "메시지 접근 설정을 저장하지 못했습니다",
+    "zh": "无法保存消息接收设置",
+    "ja": "メッセージ受信設定を保存できませんでした"
+  },
+  "commands.could_not_read_the_answer_use_the_displayed_form_be586209": {
+    "en": "Could not read the answer. Use the displayed format and try again.",
+    "ko": "답변을 읽지 못했습니다. 표시된 형식에 맞게 입력한 뒤 다시 시도해 주세요.",
+    "zh": "无法读取答案。请按显示的格式输入后重试。",
+    "ja": "回答を読み取れませんでした。表示された形式で入力して再試行してください。"
+  },
+  "commands.answer_sent_to_the_request_daffc8b1": {
+    "en": "Answer sent to the request.",
+    "ko": "요청에 답변을 전달했습니다.",
+    "zh": "已向请求发送答案。",
+    "ja": "リクエストに回答を送信しました。"
+  },
+  "commands.the_approval_response_could_not_be_confirmed_as_36c4b12d": {
+    "en": "The approval response could not be confirmed as sent. This does not establish whether the command ran.",
+    "ko": "승인 응답 전달을 확인하지 못했습니다. 이 오류만으로 명령 실행 여부를 판단할 수 없습니다.",
+    "zh": "无法确认审批响应已发送。此错误不能证明命令是否已执行。",
+    "ja": "承認応答の送信を確認できませんでした。このエラーだけではコマンドが実行されたかは判断できません。"
+  },
+  "commands.allow_host_420b5fac": {
+    "en": "Allow host",
+    "ko": "호스트 허용 규칙",
+    "zh": "允许主机",
+    "ja": "ホストを許可"
+  },
+  "commands.deny_host_fd5846c5": {
+    "en": "Deny host",
+    "ko": "호스트 거부 규칙",
+    "zh": "拒绝主机",
+    "ja": "ホストを拒否"
+  },
+  "commands.host_rule_795adbfa": {
+    "en": "Host rule",
+    "ko": "호스트 규칙",
+    "zh": "主机规则",
+    "ja": "ホストルール"
+  },
+  "commands.allow_8557860a": {
+    "en": "Allow",
+    "ko": "허용",
+    "zh": "允许",
+    "ja": "許可"
+  },
+  "commands.allow_for_session_5daec59d": {
+    "en": "Allow for session",
+    "ko": "세션 허용",
+    "zh": "本次会话允许",
+    "ja": "セッション中は許可"
+  },
+  "commands.decline_and_continue_2f0154e7": {
+    "en": "Decline and continue",
+    "ko": "거절 후 계속",
+    "zh": "拒绝并继续",
+    "ja": "拒否して続行"
+  },
+  "commands.decline_and_stop_fa4203c2": {
+    "en": "Decline and stop",
+    "ko": "거절·중단",
+    "zh": "拒绝并停止",
+    "ja": "拒否して中止"
+  },
+  "commands.allow_with_policy_change_c36cdbe2": {
+    "en": "Allow with policy change",
+    "ko": "정책 수정 후 허용",
+    "zh": "修改策略后允许",
+    "ja": "ポリシーを変更して許可"
+  },
+  "commands.choose_92fc12fb": {
+    "en": "Choose",
+    "ko": "선택",
+    "zh": "选择",
+    "ja": "選択"
+  },
+  "commands.install_92cf4534": {
+    "en": "Install",
+    "ko": "설치",
+    "zh": "安装",
+    "ja": "インストール"
+  },
+  "commands.open_setup_5b5190a9": {
+    "en": "Open setup",
+    "ko": "설정 열기",
+    "zh": "打开设置",
+    "ja": "セットアップを開く"
+  },
+  "commands.setup_completed_check_access_11750254": {
+    "en": "Setup completed / Check access",
+    "ko": "설정 완료 / 접근 확인",
+    "zh": "完成设置 / 检查访问",
+    "ja": "セットアップ完了 / 接続確認"
+  },
+  "commands.allow_once_3fb701fe": {
+    "en": "Allow once",
+    "ko": "이번만 허용",
+    "zh": "仅允许一次",
+    "ja": "今回のみ許可"
+  },
+  "commands.always_allow_73a593b2": {
+    "en": "Always allow",
+    "ko": "항상 허용",
+    "zh": "始终允许",
+    "ja": "常に許可"
+  },
+  "commands.decline_4a93815a": {
+    "en": "Decline",
+    "ko": "거절",
+    "zh": "拒绝",
+    "ja": "拒否"
+  },
+  "commands.cancel_4973805f": {
+    "en": "Cancel",
+    "ko": "취소",
+    "zh": "取消",
+    "ja": "キャンセル"
+  },
+  "commands.allow_this_response_bab75358": {
+    "en": "Allow this response",
+    "ko": "이번 응답 허용",
+    "zh": "允许本次回复",
+    "ja": "今回の応答で許可"
+  },
+  "commands.do_not_grant_more_permissions_850c5a39": {
+    "en": "Do not grant more permissions",
+    "ko": "추가 권한 미부여",
+    "zh": "不授予额外权限",
+    "ja": "追加権限を付与しない"
+  },
+  "commands.write_a_response_b91cf891": {
+    "en": "Write a response",
+    "ko": "응답 작성",
+    "zh": "填写回复",
+    "ja": "回答を入力"
+  },
+  "commands.cancel_response_19bbaa6e": {
+    "en": "Cancel response",
+    "ko": "응답 취소",
+    "zh": "取消回复",
+    "ja": "応答をキャンセル"
+  },
+  "commands.wait_for_the_active_response_or_voice_call_to_fi_a5ef13df": {
+    "en": "Wait for the active response or voice call to finish before switching model providers. Your current model is unchanged.",
+    "ko": "모델 공급자를 변경하려면 진행 중인 응답이나 음성 통화가 끝난 뒤 다시 선택하세요. 현재 모델은 그대로입니다.",
+    "zh": "请等待当前回复或语音通话结束后再切换模型提供方。当前模型未更改。",
+    "ja": "実行中の応答や音声通話が終了してからモデルプロバイダーを変更してください。現在のモデルは変更されていません。"
+  },
+  "commands.updated_settings_for_later_work_in_the_active_re_c44c334f": {
+    "en": "Updated settings for later work in the active response. Already-started work is unchanged.",
+    "ko": "진행 중인 응답에서 이후 작업이 사용할 설정을 갱신했습니다. 이미 시작된 작업은 바꾸지 않습니다.",
+    "zh": "已更新当前回复后续任务使用的设置。已开始的任务不会更改。",
+    "ja": "進行中の応答で後続の作業に使う設定を更新しました。すでに始まった作業は変わりません。"
+  },
+  "commands.could_not_apply_settings_to_the_active_response_ceec6b12": {
+    "en": "Could not apply settings to the active response.",
+    "ko": "진행 중인 응답에 설정을 적용할 수 없었습니다.",
+    "zh": "无法将设置应用于当前回复。",
+    "ja": "進行中の応答に設定を適用できませんでした。"
+  },
+  "commands.could_not_confirm_whether_settings_were_applied_ace88396": {
+    "en": "Could not confirm whether settings were applied to the active response.",
+    "ko": "진행 중인 응답의 설정 적용 결과를 확인하지 못했습니다.",
+    "zh": "无法确认设置是否已应用于当前回复。",
+    "ja": "進行中の応答に設定が適用されたか確認できませんでした。"
+  },
+  "commands.could_not_send_the_settings_update_to_the_active_f50c2a86": {
+    "en": "Could not send the settings update to the active response.",
+    "ko": "진행 중인 응답에 설정 변경 요청을 전달하지 못했습니다.",
+    "zh": "无法向当前回复发送设置更新。",
+    "ja": "進行中の応答に設定変更を送信できませんでした。"
+  },
+  "commands.no_response_is_in_progress_16302856": {
+    "en": "No response is in progress.",
+    "ko": "진행 중인 응답이 없습니다.",
+    "zh": "当前没有正在进行的回复。",
+    "ja": "進行中の応答はありません。"
+  },
+  "commands.requested_value_9eb15821": {
+    "en": "Requested value",
+    "ko": "요청한 값",
+    "zh": "请求的值",
+    "ja": "要求された値"
+  },
+  "commands.sent_the_conversation_default_update_request_7097b23b": {
+    "en": "Sent the conversation-default update request.",
+    "ko": "대화 기본값 변경 요청을 전달했습니다.",
+    "zh": "已发送对话默认值更新请求。",
+    "ja": "会話の既定値の更新を要求しました。"
+  },
+  "commands.conversation_defaults_after_update_4806be50": {
+    "en": "Conversation defaults after update",
+    "ko": "이후 대화 기본값",
+    "zh": "更新后的对话默认值",
+    "ja": "更新後の会話の既定値"
+  },
+  "commands.current_response_5c4a065c": {
+    "en": "Current response",
+    "ko": "현재 응답",
+    "zh": "当前回复",
+    "ja": "現在の応答"
+  },
+  "commands.permission_use_in_the_active_response_was_not_co_485a99f0": {
+    "en": "Permission use in the active response was not confirmed.",
+    "ko": "진행 중인 응답의 권한 적용은 확인하지 않았습니다.",
+    "zh": "未确认当前回复是否已应用权限。",
+    "ja": "進行中の応答への権限適用は確認していません。"
+  },
+  "commands.set_permission_profile_to_1589e2c0": {
+    "en": "Set permission profile to",
+    "ko": "권한 프로필을",
+    "zh": "已将权限配置设为",
+    "ja": "権限プロファイルを"
+  },
+  "commands.message_6c09cf1f": {
+    "en": ".",
+    "ko": "로 설정하고 이후 대화 기본값을 확인했습니다.",
+    "zh": "。",
+    "ja": "に設定し、会話の既定値を確認しました。"
+  },
+  "commands.service_tier_b86474e3": {
+    "en": "Service tier",
+    "ko": "서비스 등급",
+    "zh": "服务等级",
+    "ja": "サービスティア"
+  },
+  "commands.file_access_65b1775e": {
+    "en": "File access",
+    "ko": "파일 접근 범위",
+    "zh": "文件访问",
+    "ja": "ファイルアクセス"
+  },
+  "commands.approval_reviewer_1bb5dad9": {
+    "en": "Approval reviewer",
+    "ko": "승인 검토",
+    "zh": "审批审核者",
+    "ja": "承認レビュー担当"
+  },
+  "commands.read_only_aabd721a": {
+    "en": "Read only",
+    "ko": "읽기 전용",
+    "zh": "只读",
+    "ja": "読み取り専用"
+  },
+  "commands.read_and_write_in_the_workspace_cd2cf07f": {
+    "en": "Read and write in the workspace",
+    "ko": "작업 공간 안에서 읽기·쓰기",
+    "zh": "在工作区内读写",
+    "ja": "ワークスペース内で読み書き"
+  },
+  "commands.unrestricted_file_access_9720c6c4": {
+    "en": "Unrestricted file access",
+    "ko": "제한 없는 파일 접근",
+    "zh": "不受限制的文件访问",
+    "ja": "制限のないファイルアクセス"
+  },
+  "commands.current_native_setting_32c855ae": {
+    "en": "Current native setting",
+    "ko": "현재 native 설정",
+    "zh": "当前 native 设置",
+    "ja": "現在の native 設定"
+  },
+  "commands.readable_locations_99fdcca7": {
+    "en": "Readable locations",
+    "ko": "읽기 가능 위치",
+    "zh": "可读位置",
+    "ja": "読み取り可能な場所"
+  },
+  "commands.writable_locations_dd96deb1": {
+    "en": "Writable locations",
+    "ko": "쓰기 가능 위치",
+    "zh": "可写位置",
+    "ja": "書き込み可能な場所"
+  },
+  "commands.network_access_eec1571b": {
+    "en": "Network access",
+    "ko": "네트워크 접근",
+    "zh": "网络访问",
+    "ja": "ネットワークアクセス"
+  },
+  "commands.allowed_0d02047a": {
+    "en": "Allowed",
+    "ko": "허용",
+    "zh": "允许",
+    "ja": "許可"
+  },
+  "commands.blocked_1b94f0d3": {
+    "en": "Blocked",
+    "ko": "차단",
+    "zh": "阻止",
+    "ja": "ブロック"
+  },
+  "commands.ask_when_needed_998a5eef": {
+    "en": "Ask when needed",
+    "ko": "필요할 때 확인",
+    "zh": "需要时询问",
+    "ja": "必要なときに確認"
+  },
+  "commands.ask_unless_trusted_d339f046": {
+    "en": "Ask unless trusted",
+    "ko": "신뢰된 명령 외에는 확인",
+    "zh": "非信任命令需审批",
+    "ja": "信頼済みコマンド以外は確認"
+  },
+  "commands.never_ask_e7783a8c": {
+    "en": "Never ask",
+    "ko": "승인 요청 안 함",
+    "zh": "不请求审批",
+    "ja": "承認を要求しない"
+  },
+  "commands.effective_policy_b2e092d3": {
+    "en": "Effective policy",
+    "ko": "실효 승인 방식",
+    "zh": "当前生效策略",
+    "ja": "有効なポリシー"
+  },
+  "commands.profile_policy_adaebde1": {
+    "en": "Profile policy",
+    "ko": "프로필 승인 방식",
+    "zh": "配置策略",
+    "ja": "プロファイルポリシー"
+  },
+  "commands.off_9616c89c": {
+    "en": "Off",
+    "ko": "해제",
+    "zh": "关闭",
+    "ja": "オフ"
+  },
+  "commands.enabled_222f5de9": {
+    "en": "Enabled",
+    "ko": "사용",
+    "zh": "已启用",
+    "ja": "有効"
+  },
+  "commands.disabled_a5d631b5": {
+    "en": "Disabled",
+    "ko": "사용 안 함",
+    "zh": "未启用",
+    "ja": "無効"
+  },
+  "commands.read_0c3244ec": {
+    "en": "Read",
+    "ko": "읽기",
+    "zh": "读取",
+    "ja": "読み取り"
+  },
+  "commands.write_d2cfe0e4": {
+    "en": "Write",
+    "ko": "쓰기",
+    "zh": "写入",
+    "ja": "書き込み"
+  },
+  "commands.network_0e84aac9": {
+    "en": "Network",
+    "ko": "네트워크",
+    "zh": "网络",
+    "ja": "ネットワーク"
+  },
+  "commands.allowed_paths_8c5120c2": {
+    "en": "Allowed paths",
+    "ko": "허용 경로",
+    "zh": "允许的路径",
+    "ja": "許可パス"
+  },
+  "commands.scope_60298d24": {
+    "en": "Scope",
+    "ko": "범위",
+    "zh": "范围",
+    "ja": "範囲"
+  },
+  "commands.unnamed_model_906cf8f6": {
+    "en": "Unnamed model",
+    "ko": "이름 없는 모델",
+    "zh": "未命名模型",
+    "ja": "名前のないモデル"
+  },
+  "commands.available_models_and_settings_54e331f3": {
+    "en": "Available models and settings",
+    "ko": "사용 가능한 모델과 설정 선택지",
+    "zh": "可用模型和设置选项",
+    "ja": "利用可能なモデルと設定項目"
+  },
+  "commands.available_64e2ae33": {
+    "en": "Available",
+    "ko": "사용 가능",
+    "zh": "可用",
+    "ja": "利用可能"
+  },
+  "commands.currently_unavailable_6ed28c28": {
+    "en": "Currently unavailable",
+    "ko": "현재 사용할 수 없음",
+    "zh": "当前不可用",
+    "ja": "現在利用できません"
+  },
+  "commands.status_not_reported_b5c12e4b": {
+    "en": "Status not reported",
+    "ko": "상태 미보고",
+    "zh": "未报告状态",
+    "ja": "状態未報告"
+  },
+  "commands.permission_profiles_enter_the_display_name_to_se_2ca03a87": {
+    "en": "Permission profiles (enter the display name to set one)",
+    "ko": "권한 프로필 (설정 시 표시 이름을 입력하세요)",
+    "zh": "权限配置（设置时请输入显示名称）",
+    "ja": "権限プロファイル（設定時は表示名を入力してください）"
+  },
+  "commands.source_message_28a4f745": {
+    "en": "Source message",
+    "ko": "원본 메시지",
+    "zh": "源消息",
+    "ja": "元のメッセージ"
+  },
+  "commands.codex_requested_permission_to_run_a_terminal_com_26660fce": {
+    "en": "Codex requested permission to run a terminal command.",
+    "ko": "Codex가 터미널 명령 실행을 요청했습니다.",
+    "zh": "Codex 请求运行终端命令的权限。",
+    "ja": "Codex がターミナルコマンドの実行許可を求めています。"
+  },
+  "commands.working_directory_1ef220d7": {
+    "en": "Working directory",
+    "ko": "작업 위치",
+    "zh": "工作目录",
+    "ja": "作業ディレクトリ"
+  },
+  "commands.network_target_025d41e4": {
+    "en": "Network target",
+    "ko": "네트워크 대상",
+    "zh": "网络目标",
+    "ja": "ネットワーク対象"
+  },
+  "commands.choose_the_permission_scope_below_e618ebe0": {
+    "en": "Choose the permission scope below.",
+    "ko": "아래에서 허용 범위를 선택해 주세요.",
+    "zh": "请在下方选择权限范围。",
+    "ja": "以下から許可する範囲を選択してください。"
+  },
+  "commands.files_b5f72d90": {
+    "en": "Files",
+    "ko": "대상 파일",
+    "zh": "文件",
+    "ja": "対象ファイル"
+  },
+  "commands.codex_requested_file_changes_2b51e425": {
+    "en": "Codex requested file changes.",
+    "ko": "Codex가 파일 변경을 요청했습니다.",
+    "zh": "Codex 请求更改文件。",
+    "ja": "Codex がファイル変更を求めています。"
+  },
+  "commands.codex_requested_additional_permissions_ac468166": {
+    "en": "Codex requested additional permissions.",
+    "ko": "Codex가 추가 권한을 요청했습니다.",
+    "zh": "Codex 请求额外权限。",
+    "ja": "Codex が追加権限を求めています。"
+  },
+  "commands.requested_permissions_82d992f3": {
+    "en": "Requested permissions",
+    "ko": "요청한 권한",
+    "zh": "请求的权限",
+    "ja": "要求された権限"
+  },
+  "commands.no_details_were_provided_d84630b6": {
+    "en": "No details were provided.",
+    "ko": "세부 항목이 제공되지 않았습니다.",
+    "zh": "未提供详细信息。",
+    "ja": "詳細はありません。"
+  },
+  "commands.enter_your_answer_694089c6": {
+    "en": "Enter your answer.",
+    "ko": "답변을 입력해 주세요.",
+    "zh": "请输入答案。",
+    "ja": "回答を入力してください。"
+  },
+  "commands.options_d0bca22f": {
+    "en": "Options",
+    "ko": "선택지",
+    "zh": "选项",
+    "ja": "選択肢"
+  },
+  "commands.codex_asked_you_to_answer_the_following_question_03e6cccf": {
+    "en": "Codex asked you to answer the following questions.",
+    "ko": "Codex가 다음 질문에 답변을 요청했습니다.",
+    "zh": "Codex 请您回答以下问题。",
+    "ja": "Codex が次の質問への回答を求めています。"
+  },
+  "commands.press_write_a_response_to_answer_49aa6928": {
+    "en": "Press ‘Write a response’ to answer.",
+    "ko": "‘응답 작성’을 눌러 답변해 주세요.",
+    "zh": "点击“填写回复”作答。",
+    "ja": "「回答を入力」を押して回答してください。"
+  },
+  "commands.codex_suggests_installing_a_plugin_cb61c9dc": {
+    "en": "Codex suggests installing a plugin.",
+    "ko": "Codex가 플러그인 설치를 제안합니다.",
+    "zh": "Codex 建议安装一个插件。",
+    "ja": "Codex がプラグインのインストールを提案しています。"
+  },
+  "commands.codex_suggests_connecting_this_app_c9f49f9d": {
+    "en": "Codex suggests connecting this app.",
+    "ko": "Codex가 앱 연결을 제안합니다.",
+    "zh": "Codex 建议连接此应用。",
+    "ja": "Codex がアプリの接続を提案しています。"
+  },
+  "commands.the_mcp_tool_requested_additional_information_7ffe761a": {
+    "en": "The MCP tool requested additional information.",
+    "ko": "MCP 도구가 추가 정보를 요청했습니다.",
+    "zh": "MCP 工具请求补充信息。",
+    "ja": "MCP ツールが追加情報を求めています。"
+  },
+  "commands.mcp_tool_execution_approval_is_required_76b9e25c": {
+    "en": "MCP tool execution approval is required.",
+    "ko": "MCP 도구 실행 승인이 필요합니다.",
+    "zh": "需要批准执行 MCP 工具。",
+    "ja": "MCP ツールの実行承認が必要です。"
+  },
+  "commands.requested_fields_70ec5151": {
+    "en": "Requested fields",
+    "ko": "요청한 항목",
+    "zh": "请求的字段",
+    "ja": "要求された項目"
+  },
+  "commands.required_e306ce88": {
+    "en": " (required)",
+    "ko": " (필수)",
+    "zh": "（必填）",
+    "ja": "（必須）"
+  },
+  "commands.multiple_a0fe33e9": {
+    "en": " (multiple)",
+    "ko": " (여러 개)",
+    "zh": "（可多选）",
+    "ja": "（複数可）"
+  },
+  "commands.value_76361ed6": {
+    "en": "value",
+    "ko": "값",
+    "zh": "值",
+    "ja": "値"
+  },
+  "commands.text_8dac6330": {
+    "en": "text",
+    "ko": "문자",
+    "zh": "文本",
+    "ja": "テキスト"
+  },
+  "commands.number_de58f6aa": {
+    "en": "number",
+    "ko": "숫자",
+    "zh": "数字",
+    "ja": "数値"
+  },
+  "commands.yes_no_19b2b691": {
+    "en": "yes/no",
+    "ko": "예/아니요",
+    "zh": "是/否",
+    "ja": "はい/いいえ"
+  },
+  "commands.list_38b51386": {
+    "en": "list",
+    "ko": "목록",
+    "zh": "列表",
+    "ja": "リスト"
+  },
+  "commands.multiple_fields_5d939658": {
+    "en": "multiple fields",
+    "ko": "여러 항목",
+    "zh": "多个字段",
+    "ja": "複数項目"
+  },
+  "commands.question_numbers_and_answers_cf643d88": {
+    "en": "Question numbers and answers",
+    "ko": "질문 번호와 답변",
+    "zh": "问题编号和答案",
+    "ja": "質問番号と回答"
+  },
+  "commands.one_number_answer_per_line_example_1_answer_d4bd5012": {
+    "en": "One number:answer per line. Example: 1:answer",
+    "ko": "각 줄에 번호:답변. 예: 1:답변 (콜론 뒤 공백도 답변에 포함됨)",
+    "zh": "每行填写 编号:答案。例如：1:答案",
+    "ja": "各行に番号:回答を入力。例: 1:回答"
+  },
+  "commands.answer_requested_by_codex_fd12fd68": {
+    "en": "Answer requested by Codex",
+    "ko": "Codex가 요청한 답변",
+    "zh": "Codex 请求的回复",
+    "ja": "Codex が求める回答"
+  },
+  "commands.answer_21d69914": {
+    "en": "Answer",
+    "ko": "답변",
+    "zh": "回答",
+    "ja": "回答"
+  },
+  "commands.requested_information_5885acc4": {
+    "en": "Requested information",
+    "ko": "요청한 정보",
+    "zh": "所需信息",
+    "ja": "求められた情報"
+  },
+  "commands.enter_additional_information_42ca01e5": {
+    "en": "Enter additional information",
+    "ko": "추가 정보 입력",
+    "zh": "输入其他信息",
+    "ja": "追加情報を入力"
+  },
+  "commands.this_command_is_available_only_in_the_configured_bd74104f": {
+    "en": "This command is available only in the configured home server.",
+    "ko": "이 명령은 설정된 홈 서버에서만 사용할 수 있습니다",
+    "zh": "此命令只能在已配置的主服务器中使用。",
+    "ja": "このコマンドは設定済みのホームサーバーでのみ使用できます。"
+  },
+  "commands.this_discord_user_is_not_configured_as_an_operat_97197eb8": {
+    "en": "This Discord user is not configured as an operator.",
+    "ko": "이 Discord 사용자는 조작자로 설정되어 있지 않습니다",
+    "zh": "此 Discord 用户未配置为操作员。",
+    "ja": "この Discord ユーザーはオペレーターに設定されていません。"
+  },
+  "commands.send_to_the_active_response_32141a0b": {
+    "en": "Send to the active response",
+    "ko": "실행 중인 응답에 전달",
+    "zh": "发送到当前回复",
+    "ja": "進行中の応答に送信"
+  },
+  "commands.send_before_the_next_response_9c3b5081": {
+    "en": "Send before the next response",
+    "ko": "다음 응답 전에 전달",
+    "zh": "在下一条回复前发送",
+    "ja": "次の応答の前に送信"
+  },
+  "commands.finished_sign_in_check_again_d61b0267": {
+    "en": "Finished sign-in / Check again",
+    "ko": "로그인 완료 / 다시 확인",
+    "zh": "完成登录 / 重新检查",
+    "ja": "サインイン完了 / 再確認"
+  },
+  "commands.codex_returned_setup_links_b3940f5f": {
+    "en": "Codex returned setup links:",
+    "ko": "Codex가 설정 링크를 반환했습니다:",
+    "zh": "Codex 返回了设置链接：",
+    "ja": "Codex からセットアップリンクが返されました："
+  },
+  "commands.codex_has_not_reported_the_requested_plugin_apps_ebf234e2": {
+    "en": "Codex has not reported the requested plugin/apps ready yet. Finish sign-in, then use “Finished sign-in / Check again”. No acceptance was sent.",
+    "ko": "Codex가 요청된 플러그인/앱의 준비를 아직 확인하지 못했습니다. 로그인 후 ‘로그인 완료 / 다시 확인’을 누르세요. 수락 응답은 보내지 않았습니다.",
+    "zh": "Codex 尚未确认所请求的插件/应用已就绪。完成登录后点击“完成登录 / 重新检查”。尚未发送接受响应。",
+    "ja": "Codex は要求されたプラグインやアプリの準備をまだ確認できていません。サインイン後に「サインイン完了 / 再確認」を押してください。承諾応答はまだ送信していません。"
+  },
+  "commands.acceptance_sent_to_codex_codex_will_report_wheth_fdec8fc5": {
+    "en": "Acceptance sent to Codex. Codex will report whether its install verification completed.",
+    "ko": "Codex에 수락을 전달했습니다. 설치 검증이 완료되었는지는 Codex가 보고합니다.",
+    "zh": "已向 Codex 发送接受响应。Codex 会报告其安装验证是否完成。",
+    "ja": "Codex に承諾を送信しました。インストール検証の結果は Codex から報告されます。"
+  },
+  "commands.codex_could_not_complete_the_plugin_setup_check_0cc616ac": {
+    "en": "Codex could not complete the plugin setup check",
+    "ko": "Codex가 플러그인 설정 확인을 완료하지 못했습니다",
+    "zh": "Codex 无法完成插件设置检查",
+    "ja": "Codex がプラグイン設定の確認を完了できませんでした"
+  },
+  "commands.review_this_native_codex_plugin_before_installin_5706ca16": {
+    "en": "Review this native Codex plugin before installing:",
+    "ko": "설치 전에 네이티브 Codex 플러그인을 확인하세요:",
+    "zh": "安装前请查看此原生 Codex 插件：",
+    "ja": "インストール前にネイティブ Codex プラグインを確認してください："
+  },
+  "commands.confirm_removal_of_this_installed_codex_plugin_ae4e33e6": {
+    "en": "Confirm removal of this installed Codex plugin:",
+    "ko": "설치된 Codex 플러그인을 제거할지 확인하세요:",
+    "zh": "请确认是否移除此 Codex 插件：",
+    "ja": "インストール済み Codex プラグインの削除を確認してください："
+  },
+  "commands.confirm_install_ae773718": {
+    "en": "Confirm install",
+    "ko": "설치 확인",
+    "zh": "确认安装",
+    "ja": "インストールを確認"
+  },
+  "commands.confirm_removal_d1a86560": {
+    "en": "Confirm removal",
+    "ko": "제거 확인",
+    "zh": "确认移除",
+    "ja": "削除を確認"
+  },
+  "commands.back_ff4b818b": {
+    "en": "Back",
+    "ko": "뒤로",
+    "zh": "返回",
+    "ja": "戻る"
+  },
+  "commands.native_codex_plugin_catalog_247a5e12": {
+    "en": "Native Codex plugin catalog",
+    "ko": "네이티브 Codex 플러그인 카탈로그",
+    "zh": "原生 Codex 插件目录",
+    "ja": "ネイティブ Codex プラグインカタログ"
+  },
+  "commands.no_installable_plugins_were_returned_by_codex_730c5822": {
+    "en": "No installable plugins were returned by Codex.",
+    "ko": "Codex가 설치 가능한 플러그인을 반환하지 않았습니다.",
+    "zh": "Codex 未返回可安装的插件。",
+    "ja": "Codex からインストール可能なプラグインが返されませんでした。"
+  },
+  "commands.choose_a_plugin_to_review_then_confirm_installat_11ac8020": {
+    "en": "Choose a plugin to review, then confirm installation.",
+    "ko": "검토할 플러그인을 고른 뒤 설치를 확인하세요.",
+    "zh": "选择插件查看详情，然后确认安装。",
+    "ja": "プラグインを選んで詳細を確認し、インストールを確定してください。"
+  },
+  "commands.installed_codex_plugins_dd11cf68": {
+    "en": "Installed Codex plugins",
+    "ko": "설치된 Codex 플러그인",
+    "zh": "已安装的 Codex 插件",
+    "ja": "インストール済み Codex プラグイン"
+  },
+  "commands.codex_returned_no_installed_plugins_5efd4691": {
+    "en": "Codex returned no installed plugins.",
+    "ko": "Codex가 설치된 플러그인을 반환하지 않았습니다.",
+    "zh": "Codex 未返回已安装的插件。",
+    "ja": "Codex からインストール済みプラグインが返されませんでした。"
+  },
+  "commands.choose_a_plugin_to_review_then_confirm_removal_3ad3c64e": {
+    "en": "Choose a plugin to review, then confirm removal.",
+    "ko": "검토할 플러그인을 고른 뒤 제거를 확인하세요.",
+    "zh": "选择插件查看详情，然后确认移除。",
+    "ja": "プラグインを選んで詳細を確認し、削除を確定してください。"
+  },
+  "commands.codex_reports_these_apps_need_authentication_ef990cc6": {
+    "en": "Codex reports these apps need authentication:",
+    "ko": "Codex 결과 다음 앱에 인증이 필요합니다:",
+    "zh": "Codex 报告以下应用需要身份验证：",
+    "ja": "Codex の結果、次のアプリで認証が必要です："
+  },
+  "commands.start_native_oauth_for_a_plugin_mcp_server_e072fd5b": {
+    "en": "Start native OAuth for a plugin MCP server:",
+    "ko": "플러그인 MCP 서버의 네이티브 OAuth를 시작하세요:",
+    "zh": "为插件 MCP 服务器启动原生 OAuth：",
+    "ja": "プラグイン MCP サーバーのネイティブ OAuth を開始できます："
+  },
+  "commands.no_plugin_mcp_servers_were_returned_by_codex_3f464c0e": {
+    "en": "No plugin MCP servers were returned by Codex.",
+    "ko": "Codex가 플러그인 MCP 서버를 반환하지 않았습니다.",
+    "zh": "Codex 未返回插件 MCP 服务器。",
+    "ja": "Codex からプラグイン MCP サーバーが返されませんでした。"
+  },
+  "commands.plugins_b04ed055": {
+    "en": "Plugins",
+    "ko": "플러그인",
+    "zh": "插件",
+    "ja": "プラグイン"
+  },
+  "commands.close_e91bd255": {
+    "en": "Close",
+    "ko": "닫기",
+    "zh": "关闭",
+    "ja": "閉じる"
+  },
+  "commands.plugin_oauth_af3b23e6": {
+    "en": "Plugin OAuth",
+    "ko": "플러그인 OAuth",
+    "zh": "插件 OAuth",
+    "ja": "プラグイン OAuth"
+  },
+  "commands.this_plugin_panel_expired_run_discodex_plugins_a_3a629725": {
+    "en": "This plugin panel expired. Run `/discodex plugins` again.",
+    "ko": "플러그인 화면이 만료되었습니다. `/discodex plugins`를 다시 실행하세요.",
+    "zh": "此插件面板已过期。请重新运行 `/discodex plugins`。",
+    "ja": "このプラグインパネルは期限切れです。`/discodex plugins` をもう一度実行してください。"
+  },
+  "commands.only_the_person_who_opened_this_panel_can_use_it_a550ca64": {
+    "en": "Only the person who opened this panel can use it.",
+    "ko": "이 화면을 연 사용자만 사용할 수 있습니다.",
+    "zh": "只有打开此面板的用户可以操作。",
+    "ja": "このパネルを開いたユーザーだけが操作できます。"
+  },
+  "commands.this_plugin_action_is_still_processing_e3038c8d": {
+    "en": "This plugin action is still processing.",
+    "ko": "플러그인 작업을 처리 중입니다.",
+    "zh": "正在处理此插件操作。",
+    "ja": "このプラグイン操作を処理中です。"
+  },
+  "commands.the_codex_connection_changed_run_discodex_plugin_b4158b22": {
+    "en": "The Codex connection changed. Run `/discodex plugins` again.",
+    "ko": "Codex 연결이 변경되었습니다. `/discodex plugins`를 다시 실행하세요.",
+    "zh": "Codex 连接已更改。请重新运行 `/discodex plugins`。",
+    "ja": "Codex 接続が変わりました。`/discodex plugins` をもう一度実行してください。"
+  },
+  "commands.that_oauth_server_is_no_longer_listed_924f32d6": {
+    "en": "That OAuth server is no longer listed.",
+    "ko": "해당 OAuth 서버는 더 이상 목록에 없습니다.",
+    "zh": "此 OAuth 服务器已不在列表中。",
+    "ja": "その OAuth サーバーは一覧にありません。"
+  },
+  "commands.native_oauth_sign_in_started_open_the_authorizat_2e3156cb": {
+    "en": "Native OAuth sign-in started. Open the authorization link and complete sign-in.",
+    "ko": "네이티브 OAuth 로그인을 시작했습니다. 인증 링크를 열고 로그인을 완료하세요.",
+    "zh": "已启动原生 OAuth 登录。请打开授权链接并完成登录。",
+    "ja": "ネイティブ OAuth ログインを開始しました。認証リンクを開いてログインを完了してください。"
+  },
+  "commands.login_id_eae80152": {
+    "en": "Login ID",
+    "ko": "로그인 ID",
+    "zh": "登录 ID",
+    "ja": "ログイン ID"
+  },
+  "commands.codex_could_not_start_oauth_sign_in_908daee8": {
+    "en": "Codex could not start OAuth sign-in",
+    "ko": "Codex가 OAuth 로그인을 시작하지 못했습니다",
+    "zh": "Codex 无法启动 OAuth 登录",
+    "ja": "Codex が OAuth ログインを開始できませんでした"
+  },
+  "commands.codex_confirmed_installation_of_9ae67a2a": {
+    "en": "Codex confirmed installation of",
+    "ko": "Codex가 설치를 확인했습니다:",
+    "zh": "Codex 已确认安装：",
+    "ja": "Codex がインストールを確認しました："
+  },
+  "commands.could_not_refresh_the_installed_list_05716ecd": {
+    "en": "Could not refresh the installed list",
+    "ko": "설치 목록을 새로고침하지 못했습니다",
+    "zh": "无法刷新已安装列表",
+    "ja": "インストール済み一覧を更新できませんでした"
+  },
+  "commands.codex_confirmed_removal_of_6da0bc0c": {
+    "en": "Codex confirmed removal of",
+    "ko": "Codex가 제거를 확인했습니다:",
+    "zh": "Codex 已确认移除：",
+    "ja": "Codex が削除を確認しました："
+  },
+  "commands.codex_could_not_complete_this_plugin_action_0111fad8": {
+    "en": "Codex could not complete this plugin action",
+    "ko": "Codex가 플러그인 작업을 완료하지 못했습니다",
+    "zh": "Codex 无法完成此插件操作",
+    "ja": "Codex がプラグイン操作を完了できませんでした"
+  },
+  "commands.oauth_sign_in_completed_for_149c7a44": {
+    "en": "OAuth sign-in completed for",
+    "ko": "OAuth 로그인이 완료되었습니다:",
+    "zh": "OAuth 登录已完成：",
+    "ja": "OAuth ログインが完了しました："
+  },
+  "commands.oauth_sign_in_did_not_complete_for_4d954f84": {
+    "en": "OAuth sign-in did not complete for",
+    "ko": "OAuth 로그인이 완료되지 않았습니다:",
+    "zh": "OAuth 登录未完成：",
+    "ja": "OAuth ログインが未完了です："
+  },
+  "commands.could_not_check_for_updates_please_try_again_af2aa53e": {
+    "en": "Could not check for updates. Please try again.",
+    "ko": "업데이트를 확인하지 못했습니다. 다시 시도해 주세요.",
+    "zh": "无法检查更新，请重试。",
+    "ja": "更新を確認できませんでした。再試行してください。"
+  },
+  "commands.the_discodex_request_failed_check_the_input_and_71994868": {
+    "en": "The Discodex request failed. Check the input and connection status.",
+    "ko": "Discodex 요청을 처리하지 못했습니다. 입력과 연결 상태를 확인해 주세요.",
+    "zh": "Discodex 请求未能处理。请检查输入和连接状态。",
+    "ja": "Discodex リクエストを処理できませんでした。入力と接続状態を確認してください。"
+  },
+  "commands.use_discodex_status_29fe8772": {
+    "en": "Use `/discodex status`.",
+    "ko": "`/discodex status`를 사용하세요.",
+    "zh": "请使用 `/discodex status`。",
+    "ja": "`/discodex status` を使用してください。"
+  },
+  "commands.could_not_read_the_current_conversation_status_a4f36a29": {
+    "en": "Could not read the current conversation status.",
+    "ko": "현재 대화 상태를 조회하지 못했습니다.",
+    "zh": "无法读取当前对话状态。",
+    "ja": "現在の会話状態を取得できませんでした。"
+  },
+  "commands.asked_the_current_response_to_stop_cc19104e": {
+    "en": "Asked the current response to stop.",
+    "ko": "현재 진행 중인 응답의 중단을 요청했습니다.",
+    "zh": "已请求中断当前回复。",
+    "ja": "現在の応答に中断を要求しました。"
+  },
+  "commands.left_the_voice_call_fb14decf": {
+    "en": "Left the voice call.",
+    "ko": "음성 통화를 종료했습니다.",
+    "zh": "已退出语音通话。",
+    "ja": "音声通話から退出しました。"
+  },
+  "commands.requested_compaction_of_the_current_conversation_efa9704c": {
+    "en": "Requested compaction of the current conversation.",
+    "ko": "현재 대화의 문맥 압축을 요청했습니다.",
+    "zh": "已请求压缩当前对话的上下文。",
+    "ja": "現在の会話のコンテキスト圧縮を要求しました。"
+  },
+  "commands.unavailable_9a54161b": {
+    "en": "Unavailable",
+    "ko": "사용할 수 없음",
+    "zh": "不可用",
+    "ja": "利用できません"
+  },
+  "commands.unavailable_in_this_server_eb964050": {
+    "en": "Unavailable in this server",
+    "ko": "이 서버에서 사용할 수 없음",
+    "zh": "在此服务器中不可用",
+    "ja": "このサーバーでは利用できません"
+  },
+  "commands.codex_default_3029befd": {
+    "en": "Codex default",
+    "ko": "Codex 기본 설정",
+    "zh": "Codex 默认设置",
+    "ja": "Codex の既定設定"
+  },
+  "commands.ultra_codex_proactive_orchestration_agy_default_5b74f52a": {
+    "en": "Ultra (Codex proactive orchestration; AGY default effort)",
+    "ko": "Ultra (Codex 선제적 오케스트레이션; AGY 기본 추론 강도)",
+    "zh": "Ultra（Codex 主动编排；AGY 默认推理强度）",
+    "ja": "Ultra（Codex プロアクティブなオーケストレーション、AGY 既定の推論強度）"
+  },
+  "commands.not_reported_0a1fa855": {
+    "en": "Not reported",
+    "ko": "확인할 수 없음",
+    "zh": "未报告",
+    "ja": "未取得"
+  },
+  "commands.native_feature_switches_apply_after_the_discodex_1ea6deb2": {
+    "en": "Native feature switches apply after the Discodex worker restarts. Antigravity settings apply on the next model selection or AGY session start.",
+    "ko": "네이티브 기능 스위치는 Discodex 워커 재시작 후 적용됩니다. Antigravity 설정은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
+    "zh": "原生功能开关在 Discodex 工作进程重启后生效。Antigravity 设置在下次模型选择或 AGY 会话启动时生效。",
+    "ja": "ネイティブ機能の切り替えは Discodex ワーカーの再起動後に適用されます。Antigravity 設定は次のモデル選択または AGY セッション開始時に適用されます。"
+  },
+  "commands.account_unavailable_dfa33901": {
+    "en": "Account unavailable",
+    "ko": "계정을 조회할 수 없음",
+    "zh": "无法查询账号",
+    "ja": "アカウントを取得できません"
+  },
+  "commands.add_id_d1e7598c": {
+    "en": "Add ID",
+    "ko": "ID 추가",
+    "zh": "添加 ID",
+    "ja": "ID を追加"
+  },
+  "commands.remove_id_b4666e69": {
+    "en": "Remove ID",
+    "ko": "ID 제거",
+    "zh": "移除 ID",
+    "ja": "ID を削除"
+  },
+  "commands.allow_id_0e9d741b": {
+    "en": "Allow ID",
+    "ko": "ID 허용",
+    "zh": "允许 ID",
+    "ja": "ID を許可"
+  },
+  "commands.block_id_396144c0": {
+    "en": "Block ID",
+    "ko": "ID 차단",
+    "zh": "屏蔽 ID",
+    "ja": "ID をブロック"
+  },
+  "commands.add_channel_id_aea94df4": {
+    "en": "Add channel ID",
+    "ko": "채널 ID 추가",
+    "zh": "添加频道 ID",
+    "ja": "チャンネル ID を追加"
+  },
+  "commands.remove_channel_id_72d40c77": {
+    "en": "Remove channel ID",
+    "ko": "채널 ID 제거",
+    "zh": "移除频道 ID",
+    "ja": "チャンネル ID を削除"
+  },
+  "commands.not_reported_eb1c723f": {
+    "en": "not reported",
+    "ko": "보고되지 않음",
+    "zh": "未报告",
+    "ja": "未報告"
+  },
+  "commands.no_model_ids_configured_a4c9e21b": {
+    "en": "No model IDs configured",
+    "ko": "설정한 모델 ID 없음",
+    "zh": "未配置模型 ID",
+    "ja": "モデル ID 未設定"
+  },
+  "commands.channel_id_7e46e03a": {
+    "en": "Channel ID",
+    "ko": "채널 ID",
+    "zh": "频道 ID",
+    "ja": "チャンネル ID"
+  },
+  "commands.account_id_cb6e9f3a": {
+    "en": "Account ID",
+    "ko": "계정 ID",
+    "zh": "账号 ID",
+    "ja": "アカウント ID"
+  },
+  "commands.update_notification_preference_saved_manual_upda_807290ea": {
+    "en": "Update notification preference saved. Manual updates remain available.",
+    "ko": "업데이트 알림 설정을 저장했습니다. 수동 업데이트는 계속 사용할 수 있습니다.",
+    "zh": "更新通知设置已保存。仍可手动更新。",
+    "ja": "更新通知の設定を保存しました。手動更新は引き続き利用できます。"
+  },
+  "commands.that_id_is_already_in_this_list_70f3b901": {
+    "en": "That ID is already in this list.",
+    "ko": "해당 ID가 이미 목록에 있습니다.",
+    "zh": "该 ID 已在列表中。",
+    "ja": "その ID はすでに一覧にあります。"
+  },
+  "commands.that_id_is_not_in_this_list_15844bf5": {
+    "en": "That ID is not in this list.",
+    "ko": "해당 ID가 이 목록에 없습니다.",
+    "zh": "该 ID 不在此列表中。",
+    "ja": "その ID はこの一覧にありません。"
+  },
+  "commands.could_not_read_settings_23412011": {
+    "en": "Could not read settings.",
+    "ko": "조회하지 못했습니다.",
+    "zh": "无法读取设置。",
+    "ja": "設定を取得できませんでした。"
+  },
+  "commands.read_only_bcb1d1ea": {
+    "en": "Read only",
+    "ko": "읽기 전용 (Read Only)",
+    "zh": "只读",
+    "ja": "読み取り専用"
+  },
+  "commands.full_access_6238ce12": {
+    "en": "Full access",
+    "ko": "전체 접근 (Full Access)",
+    "zh": "完全访问",
+    "ja": "フルアクセス"
+  },
+  "commands.workspace_8128b964": {
+    "en": "Workspace",
+    "ko": "작업 공간 (Workspace)",
+    "zh": "工作区",
+    "ja": "ワークスペース"
+  },
+  "commands.not_reported_by_codex_9ba3ffef": {
+    "en": "Not reported by Codex",
+    "ko": "Codex에서 보고하지 않음",
+    "zh": "Codex 未报告",
+    "ja": "Codex から報告なし"
+  },
+  "commands.user_8116d237": {
+    "en": "User",
+    "ko": "사용자",
+    "zh": "用户",
+    "ja": "ユーザー"
+  },
+  "commands.automatic_review_auto_review_25c10795": {
+    "en": "Automatic review (auto_review)",
+    "ko": "자동 검토 (auto_review)",
+    "zh": "自动审查 (auto_review)",
+    "ja": "自動レビュー (auto_review)"
+  },
+  "commands.no_profile_selected_25f65a7d": {
+    "en": "No profile selected",
+    "ko": "선택된 프로필 없음",
+    "zh": "未选择配置",
+    "ja": "プロファイル未選択"
+  },
+  "commands.current_permission_profile_9e74fa66": {
+    "en": "Current permission profile",
+    "ko": "현재 권한 프로필",
+    "zh": "当前权限配置",
+    "ja": "現在の権限プロファイル"
+  },
+  "commands.could_not_read_the_available_models_c7cb825b": {
+    "en": "Could not read the available models.",
+    "ko": "사용 가능한 모델 목록을 읽지 못했습니다.",
+    "zh": "无法读取可用模型列表。",
+    "ja": "利用可能なモデル一覧を取得できませんでした。"
+  },
+  "commands.no_models_are_available_648adafd": {
+    "en": "No models are available.",
+    "ko": "사용 가능한 모델이 없습니다.",
+    "zh": "没有可用模型。",
+    "ja": "利用可能なモデルはありません。"
+  },
+  "commands.could_not_read_the_available_permission_profiles_0dd5ae6c": {
+    "en": "Could not read the available permission profiles.",
+    "ko": "사용 가능한 권한 프로필 목록을 읽지 못했습니다.",
+    "zh": "无法读取可用权限配置列表。",
+    "ja": "利用可能な権限プロファイル一覧を取得できませんでした。"
+  },
+  "commands.no_permission_profiles_are_available_af94b34d": {
+    "en": "No permission profiles are available.",
+    "ko": "사용 가능한 권한 프로필이 없습니다.",
+    "zh": "没有可用权限配置。",
+    "ja": "利用可能な権限プロファイルはありません。"
+  },
+  "commands.this_request_has_no_choices_that_can_be_handled_5a27bdcf": {
+    "en": "This request has no choices that can be handled in Discord.",
+    "ko": "이 요청은 Discord에서 처리할 수 있는 선택 항목을 제공하지 않습니다.",
+    "zh": "此请求没有可在 Discord 中处理的选项。",
+    "ja": "このリクエストには Discord で処理できる選択肢がありません。"
+  },
+  "commands.settings.home.model": {
+    "en": "Model",
+    "ko": "모델",
+    "zh": "模型",
+    "ja": "モデル"
+  },
+  "commands.settings.home.subagent_model": {
+    "en": "Default subagent model",
+    "ko": "기본 하위 에이전트 모델",
+    "zh": "默认子代理模型",
+    "ja": "既定のサブエージェントモデル"
+  },
+  "commands.settings.home.effort": {
+    "en": "Reasoning effort",
+    "ko": "추론 강도",
+    "zh": "推理强度",
+    "ja": "推論の強さ"
+  },
+  "commands.settings.home.fast": {
+    "en": "Fast mode",
+    "ko": "Fast 모드",
+    "zh": "Fast 模式",
+    "ja": "Fastモード"
+  },
+  "commands.settings.home.updates": {
+    "en": "Update notifications",
+    "ko": "업데이트 알림",
+    "zh": "更新通知",
+    "ja": "更新通知"
+  },
+  "commands.settings.home.permissions": {
+    "en": "Permission profile",
+    "ko": "권한 프로필",
+    "zh": "权限配置",
+    "ja": "権限プロファイル"
+  },
+  "commands.settings.home.approval_policy": {
+    "en": "Approval policy",
+    "ko": "승인 방식",
+    "zh": "审批策略",
+    "ja": "承認ポリシー"
+  },
+  "commands.settings.home.input": {
+    "en": "Input delivery",
+    "ko": "입력 전달 방식",
+    "zh": "输入传递方式",
+    "ja": "入力の送信方法"
+  },
+  "commands.settings.home.message_access": {
+    "en": "Message reception policy",
+    "ko": "메시지 수신 정책",
+    "zh": "消息接收策略",
+    "ja": "メッセージ受信ポリシー"
+  },
+  "commands.settings.home.voice": {
+    "en": "Voice profile",
+    "ko": "음성 프로필",
+    "zh": "语音配置",
+    "ja": "音声プロファイル"
+  },
+  "commands.settings.home.native_features": {
+    "en": "Advanced settings",
+    "ko": "고급 설정",
+    "zh": "高级设置",
+    "ja": "詳細設定"
+  },
+  "commands.model.provider_unknown": {
+    "en": "Unknown",
+    "ko": "알 수 없음",
+    "zh": "未知",
+    "ja": "不明"
+  },
+  "commands.plugin.fallback_name": {
+    "en": "Codex plugin",
+    "ko": "Codex 플러그인",
+    "zh": "Codex 插件",
+    "ja": "Codex プラグイン"
+  },
+  "commands.plugin.fallback_app_setup": {
+    "en": "App setup",
+    "ko": "앱 설정",
+    "zh": "应用设置",
+    "ja": "アプリの設定"
+  },
+  "commands.discord_error_label": {
+    "en": "Discord error",
+    "ko": "Discord 오류",
+    "zh": "Discord 错误",
+    "ja": "Discord エラー"
+  },
+  "commands.settings_default_pending": {
+    "en": "The conversation-default update was queued and is waiting for native confirmation.",
+    "ko": "대화 기본값 변경 요청을 전달했으며 Native 확인을 기다리고 있습니다.",
+    "zh": "对话默认设置更新请求已排队，正在等待 Native 确认。",
+    "ja": "会話の既定値更新をキューに追加しました。Native の確認を待っています。"
+  },
+  "commands.model_default_confirmed_but_saved_selection_failed": {
+    "en": "The conversation model change was confirmed, but saving the selected model preference failed.",
+    "ko": "대화 모델 변경은 확인됐지만 선택한 모델 기본 설정을 저장하지 못했습니다.",
+    "zh": "已确认对话模型更改，但保存所选模型偏好失败。",
+    "ja": "会話モデルの変更は確認されましたが、選択したモデル設定を保存できませんでした。"
+  },
+  "commands.setting_was_confirmed_but_settings_panel_could_not_be_updated": {
+    "en": "The setting was confirmed, but the settings panel could not be updated.",
+    "ko": "설정 적용은 확인됐지만 설정 패널을 갱신하지 못했습니다.",
+    "zh": "已确认设置生效，但无法更新设置面板。",
+    "ja": "設定の適用は確認されましたが、設定パネルを更新できませんでした。"
+  },
+  "commands.model_catalog_unavailable": {
+    "en": "The model catalog is unavailable.",
+    "ko": "모델 카탈로그를 사용할 수 없습니다.",
+    "zh": "模型目录当前不可用。",
+    "ja": "モデルカタログを利用できません。"
+  },
+  "commands.model_provider_unavailable": {
+    "en": "The current model provider is unavailable.",
+    "ko": "현재 모델 공급자를 확인할 수 없습니다.",
+    "zh": "无法确定当前模型提供商。",
+    "ja": "現在のモデルプロバイダーを確認できません。"
+  },
+  "commands.model_list_unreadable": {
+    "en": "The model list could not be read.",
+    "ko": "모델 목록을 읽을 수 없습니다.",
+    "zh": "无法读取模型列表。",
+    "ja": "モデル一覧を読み取れませんでした。"
+  },
+  "commands.current_model_unavailable": {
+    "en": "The current model could not be determined.",
+    "ko": "현재 모델을 확인할 수 없습니다.",
+    "zh": "无法确定当前模型。",
+    "ja": "現在のモデルを確認できません。"
+  },
+  "commands.current_model_missing_from_catalog": {
+    "en": "The current model is not listed in the model catalog.",
+    "ko": "현재 모델이 모델 카탈로그에 없습니다.",
+    "zh": "当前模型未列在模型目录中。",
+    "ja": "現在のモデルがモデルカタログにありません。"
+  },
+  "commands.effort_unavailable_for_model": {
+    "en": "Reasoning effort `{value}` is not listed for the current model. Check `/discodex models` for available options.",
+    "ko": "현재 모델의 추론 강도 목록에 `{value}`가 없습니다. `/discodex models`에서 사용할 수 있는 옵션을 확인하세요.",
+    "zh": "当前模型未列出推理强度 `{value}`。请查看 `/discodex models` 中的可用选项。",
+    "ja": "現在のモデルでは推論強度 `{value}` が一覧にありません。`/discodex models` で利用可能な項目を確認してください。"
+  },
+  "commands.tier_unavailable_for_model": {
+    "en": "Service tier `{value}` is not listed for the current model. Check `/discodex models` for available options.",
+    "ko": "현재 모델의 서비스 등급 목록에 `{value}`가 없습니다. `/discodex models`에서 사용할 수 있는 옵션을 확인하세요.",
+    "zh": "当前模型未列出服务层级 `{value}`。请查看 `/discodex models` 中的可用选项。",
+    "ja": "現在のモデルではサービス階層 `{value}` が一覧にありません。`/discodex models` で利用可能な項目を確認してください。"
+  },
+  "commands.choose_native_feature_first": {
+    "en": "Choose a native feature first.",
+    "ko": "먼저 Native 기능을 선택하세요.",
+    "zh": "请先选择一项 Native 功能。",
+    "ja": "先に Native 機能を選択してください。"
+  },
+  "commands.choose_setting_first": {
+    "en": "Choose a setting first.",
+    "ko": "먼저 설정을 선택하세요.",
+    "zh": "请先选择一项设置。",
+    "ja": "先に設定を選択してください。"
+  },
+  "commands.message_access_settings_have_a_separate_menu": {
+    "en": "Message access settings are handled by their own menu.",
+    "ko": "메시지 접근 설정은 별도의 메뉴에서 처리합니다.",
+    "zh": "消息访问设置由单独的菜单处理。",
+    "ja": "メッセージアクセス設定は専用メニューで管理します。"
+  },
+  "commands.voice_no_longer_available": {
+    "en": "That voice is no longer available.",
+    "ko": "해당 음성을 더 이상 사용할 수 없습니다.",
+    "zh": "该语音已不可用。",
+    "ja": "その音声は利用できなくなりました。"
+  }
+}

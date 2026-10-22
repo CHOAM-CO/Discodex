@@ -205,7 +205,7 @@ async fn dm_download_selects_private_message_attachment_and_uses_existing_downlo
     })).await.unwrap_err();
     assert_eq!(
         mismatch.to_string(),
-        "message link belongs to a different server or channel"
+        "The message link belongs to a different server or channel."
     );
     server.verify().await;
 }
@@ -229,7 +229,7 @@ async fn dm_selector_rejects_a_server_channel_returned_by_discord() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "dm_id does not identify a direct-message conversation"
+        "dm_id does not identify a direct-message conversation."
     );
     server.verify().await;
 }

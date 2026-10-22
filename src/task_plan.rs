@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 
 pub const DISCORD_MESSAGE_LIMIT: usize = 2_000;
 pub const DISCORD_EMBED_DESCRIPTION_LIMIT: usize = 4_096;
@@ -36,12 +36,15 @@ impl TaskPlan {
         let explanation = match params.get("explanation") {
             None | Some(Value::Null) => None,
             Some(Value::String(value)) => Some(value.clone()),
-            Some(_) => bail!("plan explanation must be a string or null"),
+            Some(_) => bail!(
+                "{}",
+                Language::English.message(MessageKey::TaskPlanExplanationType)
+            ),
         };
         let raw_steps = params
             .get("plan")
             .and_then(Value::as_array)
-            .context("plan must be an array")?;
+            .context(Language::English.message(MessageKey::TaskPlanArrayRequired))?;
         let steps = raw_steps
             .iter()
             .enumerate()
@@ -51,7 +54,12 @@ impl TaskPlan {
                     "pending" => PlanStatus::Pending,
                     "inProgress" => PlanStatus::InProgress,
                     "completed" => PlanStatus::Completed,
-                    _ => bail!("unknown task plan status at step {}", index + 1),
+                    _ => bail!(
+                        "{}",
+                        Language::English
+                            .message(MessageKey::TaskPlanUnknownStatus)
+                            .replace("{step}", &(index + 1).to_string())
+                    ),
                 };
                 Ok(PlanStep { step, status })
             })
@@ -65,7 +73,7 @@ impl TaskPlan {
     }
 
     pub fn render(&self, language: Language) -> String {
-        let title = language.text("Task plan", "작업 계획", "任务计划", "作業計画");
+        let title = language.message(MessageKey::TaskPlanTitle);
         let mut output = title.to_owned();
         if let Some(explanation) = self.explanation.as_deref().filter(|text| !text.is_empty()) {
             output.push('\n');
@@ -73,18 +81,11 @@ impl TaskPlan {
         }
         for item in &self.steps {
             let (mark, label) = match (language, item.status) {
-                (Language::English, PlanStatus::Pending) => ("○", "Pending"),
-                (Language::English, PlanStatus::InProgress) => ("▶", "In progress"),
-                (Language::English, PlanStatus::Completed) => ("✅", "Completed"),
-                (Language::Korean, PlanStatus::Pending) => ("○", "대기"),
-                (Language::Korean, PlanStatus::InProgress) => ("▶", "진행 중"),
-                (Language::Korean, PlanStatus::Completed) => ("✅", "완료"),
-                (Language::Chinese, PlanStatus::Pending) => ("○", "待处理"),
-                (Language::Chinese, PlanStatus::InProgress) => ("▶", "进行中"),
-                (Language::Chinese, PlanStatus::Completed) => ("✅", "已完成"),
-                (Language::Japanese, PlanStatus::Pending) => ("○", "未着手"),
-                (Language::Japanese, PlanStatus::InProgress) => ("▶", "進行中"),
-                (Language::Japanese, PlanStatus::Completed) => ("✅", "完了"),
+                (_, PlanStatus::Pending) => ("○", language.message(MessageKey::TaskPlanPending)),
+                (_, PlanStatus::InProgress) => {
+                    ("▶", language.message(MessageKey::TaskPlanInProgress))
+                }
+                (_, PlanStatus::Completed) => ("✅", language.message(MessageKey::TaskPlanDone)),
             };
             output.push('\n');
             output.push_str(mark);
@@ -109,12 +110,8 @@ impl TaskPlan {
             .filter(|step| step.status == PlanStatus::Completed)
             .count();
         let total = self.steps.len();
-        let (title, completed_label) = match language {
-            Language::English => ("Task plan", "completed"),
-            Language::Korean => ("작업 계획", "완료"),
-            Language::Chinese => ("任务计划", "已完成"),
-            Language::Japanese => ("作業計画", "完了"),
-        };
+        let title = language.message(MessageKey::TaskPlanTitle);
+        let completed_label = language.message(MessageKey::TaskPlanCompleted);
         let title = format!("{title} · {completed}/{total} {completed_label}");
         let color = if completed == total {
             PLAN_COMPLETED_COLOR

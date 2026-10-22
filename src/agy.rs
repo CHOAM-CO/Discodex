@@ -19,6 +19,51 @@ use tokio::{
     task::JoinHandle,
 };
 
+/// Canonical tokens for the documented AGY CLI protocol and argv contract.
+pub(crate) mod protocol {
+    pub const EVENT: &str = "event";
+    pub const INIT: &str = "init";
+    pub const RESULT: &str = "result";
+    pub const STEP_UPDATE: &str = "step_update";
+    pub const CONVERSATION_ID: &str = "conversation_id";
+    pub const STATUS: &str = "status";
+    pub const RESPONSE: &str = "response";
+    pub const ERROR: &str = "error";
+    pub const STEP_INDEX: &str = "step_index";
+    pub const STATE: &str = "state";
+    pub const SUBAGENT_INFO: &str = "subagent_info";
+    pub const STEP_TYPE: &str = "step_type";
+    pub const AGENT_RESPONSE: &str = "agent_response";
+    pub const TEXT_DELTA: &str = "text_delta";
+    pub const TOOL: &str = "tool";
+    pub const TOOL_NAME: &str = "tool_name";
+    pub const TOOL_INFO: &str = "tool_info";
+    pub const INPUT_FORMAT_ARG: &str = "--input-format";
+    pub const OUTPUT_FORMAT_ARG: &str = "--output-format";
+    pub const MODEL_ARG: &str = "--model";
+    pub const EFFORT_ARG: &str = "--effort";
+    pub const AGENT_ARG: &str = "--agent";
+    pub const STREAM_JSON: &str = "stream-json";
+    pub const MODEL_ROW_SEPARATOR: char = '\t';
+    pub const EFFORT_CHOICES_OPEN: char = '(';
+    pub const EFFORT_CHOICES_CLOSE: char = ')';
+    pub const EFFORT_CHOICES_SEPARATORS: [char; 2] = ['|', ','];
+    pub const MODELS_COMMAND: &str = "models";
+    pub const HELP_ARG: &str = "--help";
+    pub const EFFORT_NAME: &str = "effort";
+    pub const LOGIN_REQUIRED_DIAGNOSTIC: &str =
+        "Please sign in to view available models. Launch the CLI without arguments to sign in.";
+    pub const AUTH_BROWSER_URL_PROMPT: &str = "Open the URL below in your browser:";
+    pub const AUTH_BROWSER_URL_PROMPT_FALLBACK: &str =
+        "Your browser should open automatically. If not:";
+    pub const AUTH_CODE_PROMPT: &str =
+        "After authenticating, copy the code displayed in the browser and paste it below:";
+    pub const AUTH_CODE_PROMPT_FALLBACK: &str =
+        "If you aren't automatically redirected, paste the authorization code below:";
+    pub const AUTH_ERROR_PREFIX: &str = "Got an error:";
+    pub const AUTH_RETURN_PROMPT: &str = "Press any key to go back.";
+}
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
@@ -75,60 +120,75 @@ fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
 }
 
 /// Parse one documented `stream-json` line without discarding unknown fields.
-pub fn parse_event(value: Value) -> Event {
-    match value.get("event").and_then(Value::as_str) {
-        Some("init") => Event::Init {
-            conversation_id: string_at(&value, &["conversation_id"]).map(str::to_owned),
-            init: value.get("init").cloned().unwrap_or(Value::Null),
+pub fn parse_event(value: Value) -> Result<Event> {
+    match value.get(protocol::EVENT).and_then(Value::as_str) {
+        Some(protocol::INIT) => match value.get(protocol::INIT) {
+            Some(init) => Ok(Event::Init {
+                conversation_id: string_at(&value, &[protocol::CONVERSATION_ID]).map(str::to_owned),
+                init: init.clone(),
+            }),
+            None => bail!("AGY stream-json init event omitted its required payload"),
         },
-        Some("result") => {
-            let result = value.get("result").cloned().unwrap_or(Value::Null);
-            Event::Result {
-                conversation_id: string_at(&result, &["conversation_id"]).map(str::to_owned),
-                status: string_at(&result, &["status"]).map(str::to_owned),
-                response: string_at(&result, &["response"]).map(str::to_owned),
-                error: string_at(&result, &["error"]).map(str::to_owned),
+        Some(protocol::RESULT) => {
+            let Some(result) = value.get(protocol::RESULT).cloned() else {
+                bail!("AGY stream-json result event omitted its required payload");
+            };
+            let Some(status) = string_at(&result, &[protocol::STATUS]) else {
+                bail!("AGY stream-json result payload omitted its required status");
+            };
+            Ok(Event::Result {
+                conversation_id: string_at(&result, &[protocol::CONVERSATION_ID])
+                    .map(str::to_owned),
+                status: Some(status.to_owned()),
+                response: string_at(&result, &[protocol::RESPONSE]).map(str::to_owned),
+                error: string_at(&result, &[protocol::ERROR]).map(str::to_owned),
                 result,
-            }
+            })
         }
-        Some("step_update") => {
-            let step = value.get("step_update").cloned().unwrap_or(Value::Null);
-            let conversation_id = string_at(&step, &["conversation_id"]).map(str::to_owned);
-            let step_index = step.get("step_index").and_then(Value::as_u64);
-            let state = string_at(&step, &["state"]).map(str::to_owned);
+        Some(protocol::STEP_UPDATE) => {
+            let Some(step) = value.get(protocol::STEP_UPDATE).cloned() else {
+                bail!("AGY stream-json step_update event omitted its required payload");
+            };
+            let conversation_id = string_at(&step, &[protocol::CONVERSATION_ID]).map(str::to_owned);
+            let step_index = step.get(protocol::STEP_INDEX).and_then(Value::as_u64);
+            let state = string_at(&step, &[protocol::STATE]).map(str::to_owned);
             // The docs describe subagent metadata on a step but do not
             // guarantee a stable step_type value for it.
-            if let Some(subagent_info) = step.get("subagent_info").cloned() {
-                return Event::SubagentStep {
+            if let Some(subagent_info) = step.get(protocol::SUBAGENT_INFO).cloned() {
+                return Ok(Event::SubagentStep {
                     conversation_id,
                     step_index,
                     state,
                     subagent_info: Some(subagent_info),
                     raw: step,
-                };
+                });
             }
-            match string_at(&step, &["step_type"]) {
-                Some("agent_response") => Event::TextDelta {
+            let Some(step_type) = string_at(&step, &[protocol::STEP_TYPE]) else {
+                bail!("AGY stream-json step_update payload omitted its required step_type");
+            };
+            match step_type {
+                protocol::AGENT_RESPONSE => match string_at(&step, &[protocol::TEXT_DELTA]) {
+                    Some(text) => Ok(Event::TextDelta {
+                        conversation_id,
+                        step_index,
+                        state,
+                        text: text.to_owned(),
+                        raw: step,
+                    }),
+                    None => bail!("AGY agent_response step omitted its required text_delta"),
+                },
+                protocol::TOOL => Ok(Event::ToolStep {
                     conversation_id,
                     step_index,
                     state,
-                    text: string_at(&step, &["text_delta"])
-                        .unwrap_or_default()
-                        .to_owned(),
+                    tool_name: string_at(&step, &[protocol::TOOL_NAME]).map(str::to_owned),
+                    tool_info: step.get(protocol::TOOL_INFO).cloned(),
                     raw: step,
-                },
-                Some("tool") => Event::ToolStep {
-                    conversation_id,
-                    step_index,
-                    state,
-                    tool_name: string_at(&step, &["tool_name"]).map(str::to_owned),
-                    tool_info: step.get("tool_info").cloned(),
-                    raw: step,
-                },
-                _ => Event::Other(value),
+                }),
+                _ => Ok(Event::Other(value)),
             }
         }
-        _ => Event::Other(value),
+        _ => Ok(Event::Other(value)),
     }
 }
 
@@ -169,25 +229,8 @@ impl TemporaryAgent {
         let agents_root = workspace.join(".agents");
         let definitions_root = agents_root.join("agents");
         for directory in [&agents_root, &definitions_root] {
-            match fs::create_dir(directory) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let metadata = fs::symlink_metadata(directory).with_context(|| {
-                        format!("inspect AGY agent directory {}", directory.display())
-                    })?;
-                    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                        bail!(
-                            "AGY agent path is not a regular directory: {}",
-                            directory.display()
-                        );
-                    }
-                }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("create AGY agent directory {}", directory.display())
-                    });
-                }
-            }
+            fs::create_dir_all(directory)
+                .with_context(|| format!("create AGY agent directory {}", directory.display()))?;
         }
 
         let directory = match tempfile::Builder::new()
@@ -365,7 +408,8 @@ fn format_premature_exit(exit_code: Option<i32>, stderr: &str) -> String {
     let status = exit_code
         .map(|code| format!("exit code {code}"))
         .unwrap_or_else(|| "termination status unavailable".to_owned());
-    let diagnostic = stderr.trim_end();
+    let diagnostic = sanitize_agy_diagnostic(stderr);
+    let diagnostic = diagnostic.trim_end();
     if diagnostic.is_empty() {
         format!("AGY exited before terminal result ({status})")
     } else {
@@ -379,6 +423,7 @@ fn format_prompt_io_error(
     status: &str,
     stderr: &str,
 ) -> anyhow::Error {
+    let stderr = sanitize_agy_diagnostic(stderr);
     let stderr = stderr.trim_end();
     let stderr = if stderr.is_empty() {
         "<empty>".to_owned()
@@ -387,6 +432,10 @@ fn format_prompt_io_error(
         tail.chars().rev().collect::<String>()
     };
     anyhow::anyhow!("{operation}: {error} (AGY {status}; stderr: {stderr})")
+}
+
+fn sanitize_agy_diagnostic(detail: &str) -> String {
+    crate::discord::sanitize_discord_diagnostic(detail)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -407,7 +456,7 @@ pub fn parse_models(output: &str) -> Vec<ModelOption> {
     output
         .lines()
         .filter_map(|line| {
-            let (id, label) = line.split_once('\t')?;
+            let (id, label) = line.split_once(protocol::MODEL_ROW_SEPARATOR)?;
             let id = id.trim();
             let label = label.trim();
             if id.is_empty() || label.is_empty() {
@@ -425,12 +474,18 @@ pub fn parse_models(output: &str) -> Vec<ModelOption> {
 /// follows the installed CLI instead of deriving choices from model names.
 pub fn parse_efforts(help: &str) -> Vec<String> {
     help.lines()
-        .find(|line| line.contains("--effort"))
-        .and_then(|line| line.split_once('(').map(|(_, tail)| tail))
-        .and_then(|tail| tail.split_once(')').map(|(choices, _)| choices))
+        .find(|line| line.contains(protocol::EFFORT_ARG))
+        .and_then(|line| {
+            line.split_once(protocol::EFFORT_CHOICES_OPEN)
+                .map(|(_, tail)| tail)
+        })
+        .and_then(|tail| {
+            tail.split_once(protocol::EFFORT_CHOICES_CLOSE)
+                .map(|(choices, _)| choices)
+        })
         .map(|choices| {
             choices
-                .split(['|', ','])
+                .split(protocol::EFFORT_CHOICES_SEPARATORS)
                 .map(str::trim)
                 .filter(|choice| !choice.is_empty())
                 .map(str::to_owned)
@@ -467,9 +522,7 @@ pub fn managed_executable(state_dir: &Path) -> Result<PathBuf> {
 
 impl Runtime {
     pub fn for_config(config: &crate::config::Config, share_settings: bool) -> Result<Self> {
-        let mut environment: HashMap<String, String> = std::env::vars_os()
-            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-            .collect();
+        let mut environment = HashMap::new();
         // The managed package is updated only through Discodex's verified
         // manifest installer, so disable the CLI's self-replacing updater.
         environment.insert("AGY_CLI_DISABLE_AUTO_UPDATE".to_owned(), "true".to_owned());
@@ -519,10 +572,7 @@ impl Runtime {
 
     fn command(&self) -> Command {
         let mut command = Command::new(&self.executable);
-        command
-            .args(&self.arguments)
-            .env_clear()
-            .envs(&self.environment);
+        command.args(&self.arguments).envs(&self.environment);
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
         command
@@ -549,15 +599,15 @@ async fn cli_output(runtime: &Runtime, args: &[&str]) -> Result<std::process::Ou
 /// alternatives. Both commands are metadata-only; no model prompt is sent.
 pub async fn discover_catalog(runtime: &Runtime) -> Result<Catalog> {
     let (models_output, help_output) = tokio::join!(
-        cli_output(runtime, &["models"]),
-        cli_output(runtime, &["--help"]),
+        cli_output(runtime, &[protocol::MODELS_COMMAND]),
+        cli_output(runtime, &[protocol::HELP_ARG]),
     );
     let models_output = models_output?;
     let help_output = help_output?;
     let models_stdout = String::from_utf8_lossy(&models_output.stdout);
-    let models_stderr = String::from_utf8_lossy(&models_output.stderr);
+    let models_stderr = sanitize_agy_diagnostic(&String::from_utf8_lossy(&models_output.stderr));
     let help_stdout = String::from_utf8_lossy(&help_output.stdout);
-    let help_stderr = String::from_utf8_lossy(&help_output.stderr);
+    let help_stderr = sanitize_agy_diagnostic(&String::from_utf8_lossy(&help_output.stderr));
     if !models_output.status.success() {
         bail!("AGY model listing failed: {}", models_stderr.trim());
     }
@@ -602,10 +652,10 @@ fn session_command_with_agent(
     let mut command = runtime.command();
     command
         .current_dir(cwd)
-        .arg("--input-format")
-        .arg("stream-json")
-        .arg("--output-format")
-        .arg("stream-json")
+        .arg(protocol::INPUT_FORMAT_ARG)
+        .arg(protocol::STREAM_JSON)
+        .arg(protocol::OUTPUT_FORMAT_ARG)
+        .arg(protocol::STREAM_JSON)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -624,13 +674,13 @@ fn session_command_with_agent(
             );
     }
     if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-        command.arg("--model").arg(model);
+        command.arg(protocol::MODEL_ARG).arg(model);
     }
     if let Some(effort) = effort.and_then(agy_cli_effort) {
-        command.arg("--effort").arg(effort);
+        command.arg(protocol::EFFORT_ARG).arg(effort);
     }
     if let Some(agent) = agent.filter(|value| !value.trim().is_empty()) {
-        command.arg("--agent").arg(agent);
+        command.arg(protocol::AGENT_ARG).arg(agent);
     }
     command
 }
@@ -738,7 +788,8 @@ impl Session {
                 match next_line {
                     Ok(Some(line)) => {
                         let parsed = serde_json::from_str::<Value>(&line)
-                            .map(parse_event)
+                            .context("decode AGY stream-json event")
+                            .and_then(parse_event)
                             .context("parse AGY stream-json event");
                         if sender.send(parsed).is_err() {
                             return;
@@ -765,6 +816,7 @@ impl Session {
                 };
                 match next_line {
                     Ok(Some(line)) => {
+                        let line = sanitize_agy_diagnostic(&line);
                         tracing::debug!(target: "discodex::agy", "{line}");
                         let mut captured = stderr_capture.lock().await;
                         captured.push_str(&line);
@@ -1135,7 +1187,7 @@ mod tests {
         let command = session_command(
             &runtime,
             cwd,
-            Some("gemini-4-argon-high"),
+            Some("example-argon-high"),
             Some("ultra"),
             Some(&context),
         );
@@ -1150,7 +1202,7 @@ mod tests {
                 "--output-format",
                 "stream-json",
                 "--model",
-                "gemini-4-argon-high",
+                "example-argon-high",
             ]
             .map(OsStr::new)
         );
@@ -1217,7 +1269,7 @@ mod tests {
         let command = session_command_with_agent(
             &runtime,
             Path::new("fixture-workspace"),
-            Some("gemini-4-argon-high"),
+            Some("example-argon-high"),
             Some("ultra"),
             None,
             Some(name),
@@ -1233,7 +1285,7 @@ mod tests {
         );
         assert!(
             args.windows(2)
-                .any(|args| args == [OsStr::new("--model"), OsStr::new("gemini-4-argon-high")])
+                .any(|args| args == [OsStr::new("--model"), OsStr::new("example-argon-high")])
         );
         assert!(!args.iter().any(|arg| arg == OsStr::new("--effort")));
     }
@@ -1252,6 +1304,7 @@ mod tests {
                     crate::agy_mcp::NATIVE_RUN_ENV.to_owned(),
                     "inherited run".to_owned(),
                 ),
+                ("HOME".to_owned(), "preserved home".to_owned()),
             ]),
         };
         for (model, effort) in [(None, None), (Some("  "), Some(""))] {
@@ -1270,7 +1323,11 @@ mod tests {
             );
             assert_eq!(
                 command.get_envs().collect::<BTreeMap<_, _>>(),
-                BTreeMap::new()
+                BTreeMap::from([
+                    (OsStr::new(crate::agy_mcp::NATIVE_ENDPOINT_ENV), None,),
+                    (OsStr::new(crate::agy_mcp::NATIVE_RUN_ENV), None),
+                    (OsStr::new("HOME"), Some(OsStr::new("preserved home"))),
+                ])
             );
         }
     }
@@ -1325,6 +1382,20 @@ mod tests {
     }
 
     #[test]
+    fn safe_stderr_retains_model_ids_and_public_urls_while_redacting_credentials() {
+        let detail = sanitize_agy_diagnostic(
+            "model=synthetic-model-high api_key=synthetic-secret https://docs.example/cli?view=help",
+        );
+        assert!(detail.contains("synthetic-model-high"));
+        assert!(detail.contains("https://docs.example/cli?view=help"));
+        assert!(!detail.contains("synthetic-secret"));
+
+        let rendered = format_premature_exit(Some(2), "api_key=synthetic-secret");
+        assert!(!rendered.contains("synthetic-secret"));
+        assert!(rendered.contains("exit code 2"));
+    }
+
+    #[test]
     fn parses_model_rows_without_interpreting_model_names() {
         let models = parse_models(
             "Fetching available models...\nmodel-alpha\tModel Alpha (Low)\ncustom-model-z\tModel Z\n",
@@ -1347,7 +1418,7 @@ mod tests {
     fn parses_deltas_tool_steps_results_and_preserves_unknowns() {
         let delta = parse_event(
             json!({"event":"step_update","step_update":{"conversation_id":"c","step_index":2,"state":"ACTIVE","step_type":"agent_response","text_delta":"hi"}}),
-        );
+        ).unwrap();
         assert_eq!(
             delta,
             Event::TextDelta {
@@ -1361,7 +1432,7 @@ mod tests {
 
         let tool = parse_event(
             json!({"event":"step_update","step_update":{"conversation_id":"tool-conversation","step_index":7,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"call_id":"tool-call-7","parameters":{"command":"printf ok"},"output":"ok"}}}),
-        );
+        ).unwrap();
         assert_eq!(
             tool,
             Event::ToolStep {
@@ -1391,20 +1462,56 @@ mod tests {
 
         let result = parse_event(
             json!({"event":"result","result":{"conversation_id":"c","status":"ERROR","error":"unsupported"}}),
-        );
+        ).unwrap();
         assert!(
             matches!(result, Event::Result { status: Some(status), error: Some(error), .. } if status == "ERROR" && error == "unsupported")
         );
 
         let subagent = parse_event(
             json!({"event":"step_update","step_update":{"step_type":"tool","subagent_info":{"subagents":[{"conversation_id":"child"}]}}}),
-        );
+        ).unwrap();
         assert!(
             matches!(subagent, Event::SubagentStep { subagent_info: Some(info), .. } if info.pointer("/subagents/0/conversation_id").and_then(Value::as_str) == Some("child"))
         );
 
         let future = json!({"event":"future_event","payload":1});
-        assert_eq!(parse_event(future.clone()), Event::Other(future));
+        assert_eq!(parse_event(future.clone()).unwrap(), Event::Other(future));
+        let future_step = json!({"event":"step_update","step_update":{"step_type":"future_step"}});
+        assert_eq!(
+            parse_event(future_step.clone()).unwrap(),
+            Event::Other(future_step)
+        );
+
+        let malformed_delta = json!({
+            "event":"step_update",
+            "step_update":{"step_type":"agent_response","conversation_id":"c"}
+        });
+        let delta_error = parse_event(malformed_delta).unwrap_err();
+        assert_eq!(
+            delta_error.to_string(),
+            "AGY agent_response step omitted its required text_delta"
+        );
+        let malformed_result = json!({"event":"result"});
+        let result_error = parse_event(malformed_result).unwrap_err();
+        assert_eq!(
+            result_error.to_string(),
+            "AGY stream-json result event omitted its required payload"
+        );
+        let missing_status =
+            parse_event(json!({"event":"result","result":{"response":"done"}})).unwrap_err();
+        assert_eq!(
+            missing_status.to_string(),
+            "AGY stream-json result payload omitted its required status"
+        );
+        let missing_step_type = parse_event(json!({
+            "event":"step_update",
+            "step_update":{"conversation_id":"c"}
+        }))
+        .unwrap_err();
+        assert_eq!(
+            missing_step_type.to_string(),
+            "AGY stream-json step_update payload omitted its required step_type"
+        );
     }
 
     #[cfg(unix)]

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::ErrorKind;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +8,7 @@ use tokio::io::AsyncReadExt;
 use url::Url;
 
 use crate::config::Config;
-use crate::i18n::Language;
+use crate::i18n::MessageKey;
 
 // Discord create-message requests are limited to 25 MiB. Keep each individual
 // read bounded by the largest possible request; callers batch complete messages.
@@ -67,10 +66,10 @@ struct ReplyPlan {
     reference_definition_ranges: Vec<Range<usize>>,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum FileFailure {
     InvalidPath,
-    MissingOrUnreadable,
+    Io(String),
     NotRegularFile,
     RequestTooLarge,
 }
@@ -310,57 +309,37 @@ async fn read_canonical_file(
 }
 
 fn map_io_failure(error: std::io::Error) -> FileFailure {
-    match error.kind() {
-        ErrorKind::NotFound => FileFailure::MissingOrUnreadable,
-        _ => FileFailure::MissingOrUnreadable,
-    }
+    let message = error.to_string();
+    let detail = match error.raw_os_error() {
+        Some(code) => format!("{} (OS error {code})", message),
+        None => format!("{:?}: {message}", error.kind()),
+    };
+    FileFailure::Io(detail)
 }
 
 fn safe_upload_filename(filename: &str) -> String {
     safe_basename(Path::new(filename))
 }
 
-fn failure_text(language: Language, filename: &str, failure: FileFailure) -> String {
-    let reason = language.text(
-        match failure {
-            FileFailure::InvalidPath => "not a local file path",
-            FileFailure::MissingOrUnreadable => "file is missing or unreadable",
-            FileFailure::NotRegularFile => "not a regular file",
-            FileFailure::RequestTooLarge => "the file alone exceeds Discord's 25 MiB request limit",
-        },
-        match failure {
-            FileFailure::InvalidPath => "로컬 파일 경로가 아닙니다",
-            FileFailure::MissingOrUnreadable => "파일이 없거나 읽을 수 없습니다",
-            FileFailure::NotRegularFile => "일반 파일이 아닙니다",
-            FileFailure::RequestTooLarge => {
-                "파일 하나만으로 Discord의 25 MiB 요청 제한을 초과합니다"
-            }
-        },
-        match failure {
-            FileFailure::InvalidPath => "不是本地文件路径",
-            FileFailure::MissingOrUnreadable => "文件不存在或无法读取",
-            FileFailure::NotRegularFile => "不是普通文件",
-            FileFailure::RequestTooLarge => "单个文件就超过了 Discord 25 MiB 的请求上限",
-        },
-        match failure {
-            FileFailure::InvalidPath => "ローカルファイルのパスではありません",
-            FileFailure::MissingOrUnreadable => "ファイルがないか、読み取れません",
-            FileFailure::NotRegularFile => "通常ファイルではありません",
-            FileFailure::RequestTooLarge => {
-                "ファイル単体でDiscordの25 MiBリクエスト上限を超えています"
-            }
-        },
-    );
+fn failure_text(config: &Config, filename: &str, failure: FileFailure) -> String {
+    let language = config.language;
+    let reason = match failure {
+        FileFailure::InvalidPath => language
+            .message(MessageKey::ReplyFilesInvalidPath)
+            .to_owned(),
+        FileFailure::Io(detail) => language.message(MessageKey::ReplyFilesIoFailure).replace(
+            "{detail}",
+            &crate::discord::sanitize_discord_error(config, &detail),
+        ),
+        FileFailure::NotRegularFile => language
+            .message(MessageKey::ReplyFilesNotRegular)
+            .to_owned(),
+        FileFailure::RequestTooLarge => language.message(MessageKey::ReplyFilesTooLarge).to_owned(),
+    };
     let safe = display_filename(filename);
     language
-        .text(
-            // These templates stay untranslated only at the language-neutral path layer.
-            "Could not attach {name}: {reason}.",
-            "{name}을(를) 첨부할 수 없습니다: {reason}.",
-            "无法附加 {name}：{reason}。",
-            "{name}を添付できません: {reason}。",
-        )
-        .replace("{reason}", reason)
+        .message(MessageKey::ReplyFilesAttachFailed)
+        .replace("{reason}", &reason)
         .replace("{name}", &safe)
 }
 
@@ -368,7 +347,7 @@ fn finish_reply(
     plan: ReplyPlan,
     outcomes: &[LinkOutcome],
     files: Vec<ReplyFile>,
-    language: Language,
+    config: &Config,
 ) -> PreparedReply {
     let mut content = String::new();
     let mut cursor = 0;
@@ -397,7 +376,7 @@ fn finish_reply(
             };
             content.push_str(&display_filename(&link.filename));
             if let Some(LinkOutcome::Failed(reason)) = outcomes.get(index) {
-                let item = failure_text(language, &link.filename, *reason);
+                let item = failure_text(config, &link.filename, reason.clone());
                 if !failures.contains(&item) {
                     failures.push(item);
                 }
@@ -426,7 +405,7 @@ pub(crate) async fn prepare_explicit_files(
             bail!(
                 "{}",
                 failure_text(
-                    config.language,
+                    config,
                     &safe_basename(Path::new(supplied)),
                     FileFailure::InvalidPath
                 )
@@ -435,7 +414,7 @@ pub(crate) async fn prepare_explicit_files(
         let name = safe_basename(&path);
         let canonical = canonical_candidate(config, &path)
             .await
-            .map_err(|issue| anyhow::anyhow!("{}", failure_text(config.language, &name, issue)))?;
+            .map_err(|issue| anyhow::anyhow!("{}", failure_text(config, &name, issue)))?;
         if accumulator.previous(&canonical).is_some() {
             continue;
         }
@@ -443,7 +422,7 @@ pub(crate) async fn prepare_explicit_files(
         match accumulator.accept(canonical, result) {
             LinkOutcome::File(_) => {}
             LinkOutcome::Failed(issue) => {
-                bail!("{}", failure_text(config.language, &name, issue));
+                bail!("{}", failure_text(config, &name, issue));
             }
         }
     }
@@ -493,12 +472,24 @@ pub(crate) async fn prepare_reply(config: &Config, text: &str) -> PreparedReply 
             }
         }
     }
-    finish_reply(plan, &outcomes, accumulator.files, config.language)
+    finish_reply(plan, &outcomes, accumulator.files, config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i18n::Language;
+
+    fn test_config(language: Language) -> Config {
+        let value = serde_json::json!({
+            "profile":"example", "name":"Example", "tokenEnv":"EXAMPLE_TOKEN",
+            "guildId":1, "homeChannelId":2, "transcriptChannelId":3,
+            "codexPath":"codex", "codexHome":"/tmp/codex",
+            "projectDir":"/tmp/project", "stateDir":"/tmp/state",
+            "credentialsFile":"/tmp/discord-token", "language":language
+        });
+        serde_json::from_value(value).unwrap()
+    }
 
     #[tokio::test]
     async fn explicit_and_markdown_attachments_accept_all_readable_file_paths() {
@@ -555,6 +546,31 @@ mod tests {
     }
 
     #[test]
+    fn io_failure_keeps_os_cause_and_redacts_only_secret_values() {
+        let failure = map_io_failure(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied; api_key=synthetic-secret",
+        ));
+        assert_eq!(
+            failure,
+            FileFailure::Io(
+                "PermissionDenied: permission denied; api_key=synthetic-secret".to_owned()
+            )
+        );
+        let message = failure_text(&test_config(Language::English), "report.txt", failure);
+        assert!(message.contains("permission denied"));
+        assert!(message.contains("PermissionDenied"));
+        assert!(message.contains("[secret redacted]"));
+        assert!(!message.contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn io_failure_keeps_available_os_error_code() {
+        let failure = map_io_failure(std::io::Error::from_raw_os_error(13));
+        assert!(matches!(failure, FileFailure::Io(detail) if detail.ends_with("(OS error 13)")));
+    }
+
+    #[test]
     fn markdown_planning_recognizes_local_link_forms_and_preserves_nonlinks() {
         let project = Path::new("project");
         let local_absolute = PathBuf::from(std::env::temp_dir()).join("reply file.pdf");
@@ -582,7 +598,7 @@ mod tests {
                 LinkOutcome::File(4),
             ],
             Vec::new(),
-            Language::English,
+            &test_config(Language::English),
         );
         assert!(!rendered.content.contains("[r]: docs/ref.md"));
         assert!(rendered.content.contains("`ref.md`"));
@@ -605,7 +621,12 @@ mod tests {
         ];
         assert_eq!(outcomes, [LinkOutcome::File(0), LinkOutcome::File(0)]);
         let files = accumulator.files;
-        let prepared = finish_reply(plan, &outcomes, files.clone(), Language::English);
+        let prepared = finish_reply(
+            plan,
+            &outcomes,
+            files.clone(),
+            &test_config(Language::English),
+        );
 
         assert_eq!(prepared.files, files);
         assert!(prepared.content.contains("`report.pdf`"));
@@ -672,20 +693,27 @@ mod tests {
     }
 
     #[test]
-    fn failed_read_reports_only_safe_filename_in_selected_language() {
+    fn failed_read_preserves_os_reason_and_safe_filename_in_selected_language() {
         let plan = plan_reply(
             "See [private name](<docs/missing file.txt>).",
             Path::new("private-root"),
         );
         let prepared = finish_reply(
             plan,
-            &[LinkOutcome::Failed(FileFailure::MissingOrUnreadable)],
+            &[LinkOutcome::Failed(FileFailure::Io(
+                "No such file or directory (OS error 2)".to_owned(),
+            ))],
             Vec::new(),
-            Language::Korean,
+            &test_config(Language::Korean),
         );
 
         assert!(prepared.content.contains("missing file.txt"));
         assert!(prepared.content.contains("첨부할 수 없습니다"));
+        assert!(
+            prepared
+                .content
+                .contains("No such file or directory (OS error 2)")
+        );
         assert!(!prepared.content.contains("private-root"));
         assert!(prepared.files.is_empty());
     }

@@ -335,7 +335,13 @@ impl Drop for PartialAttachment {
     fn drop(&mut self) {
         if self.armed {
             for path in &self.paths {
-                let _ = fs::remove_file(path);
+                if let Err(error) = fs::remove_file(path) {
+                    let detail = crate::discord::sanitize_discord_diagnostic(&format!(
+                        "remove temporary Discord attachment {}: {error}",
+                        path.display()
+                    ));
+                    tracing::warn!(%detail, "temporary attachment cleanup failed");
+                }
             }
         }
     }

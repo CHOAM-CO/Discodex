@@ -1,0 +1,26 @@
+{
+  "table.button_next": {
+    "en": "Next",
+    "ko": "다음",
+    "zh": "下一页",
+    "ja": "次へ"
+  },
+  "table.button_previous": {
+    "en": "Previous",
+    "ko": "이전",
+    "zh": "上一页",
+    "ja": "前へ"
+  },
+  "table.button_source": {
+    "en": "View source",
+    "ko": "원문 보기",
+    "zh": "查看原文",
+    "ja": "原文を表示"
+  },
+  "table.source_load_failed": {
+    "en": "Could not load the original table: {error}",
+    "ko": "표 원문을 불러오지 못했습니다: {error}",
+    "zh": "无法加载表格原文：{error}",
+    "ja": "表の原文を読み込めませんでした: {error}"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "worktree_tools.operation_unknown": {
+    "en": "That worktree operation is unknown. Inspect this task's worktree attachments before creating another checkout.",
+    "ko": "해당 worktree 작업을 찾을 수 없습니다. 새 checkout을 만들기 전에 이 작업의 worktree 첨부를 확인하세요.",
+    "zh": "找不到该 worktree 操作。创建另一个 checkout 前，请先检查此任务的 worktree 附件。",
+    "ja": "そのworktree操作は見つかりません。別のcheckoutを作成する前に、このタスクのworktree添付を確認してください。"
+  },
+  "worktree_tools.creation_interrupted": {
+    "en": "Worktree creation was interrupted: {detail}. Inspect managed worktrees before retrying.",
+    "ko": "Worktree 생성이 중단되었습니다: {detail}. 다시 시도하기 전에 관리 중인 worktree를 확인하세요.",
+    "zh": "Worktree 创建已中断：{detail}。重试前请检查受管理的 worktree。",
+    "ja": "Worktreeの作成が中断されました: {detail}。再試行する前に管理対象worktreeを確認してください。"
+  },
+  "worktree_tools.checkout_retained_owner_failed": {
+    "en": "The checkout remains available, but ownership binding failed ({detail}). Do not create a duplicate.",
+    "ko": "Checkout은 남아 있지만 소유권 연결에 실패했습니다({detail}). 중복 checkout을 만들지 마세요.",
+    "zh": "Checkout 仍然保留，但所有权绑定失败（{detail}）。请勿创建重复项。",
+    "ja": "checkoutは保持されていますが、所有権の関連付けに失敗しました（{detail}）。重複して作成しないでください。"
+  },
+  "worktree_tools.checkout_retained_registration_failed": {
+    "en": "The checkout remains available, but attachment registration failed ({detail}). Do not create a duplicate.",
+    "ko": "Checkout은 남아 있지만 첨부 등록에 실패했습니다({detail}). 중복 checkout을 만들지 마세요.",
+    "zh": "Checkout 仍然保留，但附件注册失败（{detail}）。请勿创建重复项。",
+    "ja": "checkoutは保持されていますが、添付の登録に失敗しました（{detail}）。重複して作成しないでください。"
+  },
+  "worktree_tools.creation_uncertain": {
+    "en": "The worktree creation outcome is uncertain: {detail}. Inspect this task's attachments and managed worktrees before retrying.",
+    "ko": "Worktree 생성 결과를 확인할 수 없습니다: {detail}. 다시 시도하기 전에 이 작업의 첨부와 관리 중인 worktree를 확인하세요.",
+    "zh": "无法确定 worktree 创建结果：{detail}。重试前请检查此任务的附件和受管理的 worktree。",
+    "ja": "worktreeの作成結果を確認できません: {detail}。再試行する前に、このタスクの添付と管理対象worktreeを確認してください。"
+  },
+  "worktree_tools.creation_already_running": {
+    "en": "Creation is already running. Poll its status; do not repeat creation.",
+    "ko": "생성이 이미 진행 중입니다. 상태를 조회하고 다시 생성하지 마세요.",
+    "zh": "创建操作正在进行。请查询其状态，不要重复创建。",
+    "ja": "作成はすでに進行中です。状態を確認し、作成を繰り返さないでください。"
+  },
+  "worktree_tools.creation_running": {
+    "en": "Creation is running. Poll its status before using paths; do not repeat creation.",
+    "ko": "생성이 진행 중입니다. 경로를 사용하기 전에 상태를 조회하고 다시 생성하지 마세요.",
+    "zh": "创建操作正在进行。使用路径前请查询状态，不要重复创建。",
+    "ja": "作成は進行中です。パスを使用する前に状態を確認し、作成を繰り返さないでください。"
+  },
+  "worktree_tools.operation_failed": {
+    "en": "Worktree operation failed: {detail}",
+    "ko": "Worktree 작업에 실패했습니다: {detail}",
+    "zh": "Worktree 操作失败：{detail}",
+    "ja": "Worktree操作に失敗しました: {detail}"
+  },
+  "worktree_tools.default_branch_unknown": {
+    "en": "Could not determine the project's default branch.",
+    "ko": "프로젝트의 기본 브랜치를 확인하지 못했습니다.",
+    "zh": "无法确定项目的默认分支。",
+    "ja": "プロジェクトのデフォルトブランチを特定できませんでした。"
+  }
+}

@@ -10,6 +10,20 @@ import tarfile
 import subprocess
 import tomllib
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def product_resource():
+    return json.loads((ROOT / "resources/product.json").read_text(encoding="utf-8"))
+
+
+def platform_resource(target: str):
+    product = product_resource()
+    for platform in product["platforms"]:
+        if platform["target"] == target:
+            return product, platform
+    raise ValueError("runtime manifest target is not in the product platform catalog")
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as source:
@@ -17,8 +31,9 @@ def digest(path: Path) -> str:
 
 
 def build_manifest(*, version, commit, target, archive, archive_sha256, package, files):
+    product, _platform = platform_resource(target)
     return {
-        "formatVersion": 1,
+        "formatVersion": product["product"]["runtimeManifestFormatVersion"],
         "workerVersion": version,
         "codexCommit": commit,
         "target": target,
@@ -84,16 +99,22 @@ def extract_archive(archive: Path, package: Path) -> None:
                 output.write(stream.read())
             try:
                 os.chmod(destination, member.mode & 0o777)
-            except OSError:
-                pass
+            except OSError as error:
+                raise OSError(
+                    error.errno,
+                    f"set runtime archive permissions for {destination}: {error.strerror}",
+                    destination,
+                ) from error
 
 
 def rebind_manifest_values(
     *, source, version, commit, target, archive_name, actual_archive_sha256, actual_files
 ):
     """Validate runtime release values and bind the archive to this worker."""
-    expected_archive = f"discodex-runtime-{target}.tar.gz"
-    if source.get("formatVersion") != 1:
+    product, platform = platform_resource(target)
+    metadata = product["product"]
+    expected_archive = metadata["runtimeArchiveTemplate"].replace("{target}", target)
+    if source.get("formatVersion") != metadata["runtimeManifestFormatVersion"]:
         raise ValueError("unsupported runtime manifest format")
     old_version = source.get("workerVersion")
     if not isinstance(old_version, str) or not old_version:
@@ -129,7 +150,7 @@ def rebind_manifest_values(
             or "\\" in name
             or path.is_absolute()
             or any(part in ("", ".", "..") for part in name.split("/"))
-            or name == "discodex-runtime.json"
+            or name == metadata["runtimeManifestFile"]
         ):
             raise ValueError("runtime manifest contains an invalid package path")
         if (
@@ -138,20 +159,12 @@ def rebind_manifest_values(
             or any(char not in "0123456789abcdefABCDEF" for char in checksum)
         ):
             raise ValueError("runtime manifest contains an invalid package checksum")
-    suffix = ".exe" if "windows" in target else ""
+    extension = platform["extension"]
     required = {
-        f"bin/codex{suffix}",
-        f"bin/codex-code-mode-host{suffix}",
-        f"codex-path/rg{suffix}",
-        "codex-package.json",
+        path.replace("{extension}", extension)
+        for path in product["runtime"]["commonFiles"]
     }
-    if "linux" in target:
-        required.add("codex-resources/bwrap")
-    if "windows" in target:
-        required.update({
-            "codex-resources/codex-command-runner.exe",
-            "codex-resources/codex-windows-sandbox-setup.exe",
-        })
+    required.update(product["runtime"]["platformFiles"].get(platform["os"], []))
     if not required.issubset(files):
         raise ValueError("runtime manifest is missing required package components")
     if files != actual_files:
@@ -179,8 +192,11 @@ def main() -> None:
     parser.add_argument("--reuse-manifest", type=Path)
     parser.add_argument("--extract-archive", type=Path)
     args = parser.parse_args()
-    root = Path(__file__).resolve().parent.parent
-    archive = root / f"discodex-runtime-{args.target}.tar.gz"
+    root = ROOT
+    product = product_resource()
+    metadata = product["product"]
+    archive_name = metadata["runtimeArchiveTemplate"].replace("{target}", args.target)
+    archive = root / archive_name
     with (root / "Cargo.toml").open("rb") as source:
         version = tomllib.load(source)["package"]["version"]
     commit = subprocess.check_output(
@@ -210,7 +226,8 @@ def main() -> None:
             package=package,
             files={package / path: checksum for path, checksum in package_files(package).items()},
         )
-    (root / f"discodex-runtime-{args.target}.json").write_text(
+    manifest_name = metadata["runtimeManifestAssetTemplate"].replace("{target}", args.target)
+    (root / manifest_name).write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
 

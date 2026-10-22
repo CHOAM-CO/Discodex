@@ -7,6 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'product.generated.ps1')
 if ($Update) {
     $updateScript = Join-Path $PSScriptRoot 'update.ps1'
     & $updateScript -Config $Config -MigrateAdhoc:$MigrateAdhoc
@@ -14,58 +15,52 @@ if ($Update) {
 }
 
 if ([string]::IsNullOrWhiteSpace($env:DISCODEX_LANGUAGE)) {
-    $choice = Read-Host 'Choose language: [en] English (default), [ko] 한국어, [zh] 简体中文, [ja] 日本語'
+    $choice = Read-Host (Get-DiscodexMessage 'install.language_prompt' 'en')
     if ([string]::IsNullOrWhiteSpace($choice)) { $choice = 'en' }
     $env:DISCODEX_LANGUAGE = $choice.Trim().ToLowerInvariant()
 } else {
     $env:DISCODEX_LANGUAGE = $env:DISCODEX_LANGUAGE.Trim().ToLowerInvariant()
 }
-if ($env:DISCODEX_LANGUAGE -notin @('en', 'ko', 'zh', 'ja')) {
-    throw 'Set DISCODEX_LANGUAGE to en, ko, zh, or ja.'
+if ($env:DISCODEX_LANGUAGE -notin $script:DiscodexProduct.SupportedLanguages) {
+    throw (Get-DiscodexMessage 'install.language_environment_error' 'en')
 }
 
-$messages = switch ($env:DISCODEX_LANGUAGE) {
-    'ko' { @{ Windows = '이 설치 프로그램은 Windows 전용입니다.'; Architecture = '감지한 환경 {0}에 사용할 Discodex 사전 빌드 릴리스가 없습니다.'; Download = '공식 Discodex 릴리스를 다운로드할 수 없습니다.'; Refuse = '기존 {0} 파일을 덮어쓰지 않습니다. 소유 설치를 통해 재설치·제거하거나, 기존 설치 제거 후 파일을 정리하세요.'; Install = 'discodex install이 종료 코드 {0}을 반환했습니다.' } }
-    'zh' { @{ Windows = '此安装程序仅适用于 Windows。'; Architecture = '没有适用于检测到的环境 {0} 的 Discodex 预构建版本。'; Download = '无法下载 Discodex 官方预构建版本。'; Refuse = '不会覆盖现有文件 {0}。请使用该安装执行重新安装或卸载，之后再清理文件。'; Install = 'discodex install 返回退出代码 {0}。' } }
-    'ja' { @{ Windows = 'このインストーラーは Windows 専用です。'; Architecture = '検出された環境 {0} 用の Discodex ビルド済みリリースはありません。'; Download = 'Discodex 公式ビルド済みリリースをダウンロードできません。'; Refuse = '既存ファイル {0} は上書きしません。既存のインストールから再インストールまたは削除し、その後ファイルを整理してください。'; Install = 'discodex install が終了コード {0} を返しました。' } }
-    default { @{ Windows = 'This installer is for Windows.'; Architecture = 'No prebuilt Discodex release is available for detected environment {0}.'; Download = 'Could not download the official Discodex release.'; Refuse = 'Refusing to replace {0}. Use the existing installation to reinstall or uninstall, then remove the file after uninstall.'; Install = 'discodex install returned exit code {0}.' } }
-}
-
-if ($env:OS -ne 'Windows_NT') { throw $messages.Windows }
+if ($env:OS -ne 'Windows_NT') { throw (Get-DiscodexMessage 'install.windows_only' $env:DISCODEX_LANGUAGE) }
 $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
-$target = switch ($architecture) {
-    'X64' { 'x86_64-pc-windows-msvc' }
-    'Arm64' { 'aarch64-pc-windows-msvc' }
-    default { throw ($messages.Architecture -f $architecture) }
+$targetInfo = $script:DiscodexProduct.Platforms[$architecture]
+if ($null -eq $targetInfo) {
+    throw ((Get-DiscodexMessage 'install.unsupported_platform' $env:DISCODEX_LANGUAGE) -f 'Windows', $architecture)
 }
+$target = $targetInfo.Target
 
-$dataRoot = Join-Path $env:LOCALAPPDATA 'discodex'
-$binRoot = Join-Path $dataRoot 'bin'
+$dataRoot = Join-Path $env:LOCALAPPDATA $script:DiscodexProduct.DataDirectory
+$binRoot = Join-Path $dataRoot $script:DiscodexProduct.BinaryDirectory
 New-Item -ItemType Directory -Force -Path $binRoot | Out-Null
-$installed = Join-Path $binRoot 'discodex.exe'
-if (Test-Path -LiteralPath $installed) { throw ($messages.Refuse -f $installed) }
+$installed = Join-Path $binRoot ($script:DiscodexProduct.Name + $targetInfo.Extension)
+if (Test-Path -LiteralPath $installed) { throw ((Get-DiscodexMessage 'install.refuse_replace' $env:DISCODEX_LANGUAGE) -f $installed) }
 
-$asset = "discodex-$target.exe"
-$baseUrl = 'https://github.com/CHOAM-CO/Discodex/releases/latest/download'
-$tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('discodex-install-' + [Guid]::NewGuid().ToString('N'))
-$staged = Join-Path $binRoot ('.discodex.installing-' + [Guid]::NewGuid().ToString('N') + '.exe')
+$asset = $targetInfo.Asset
+$baseUrl = $script:DiscodexProduct.ReleaseDownloadRoot + '/latest/download'
+$installId = [Guid]::NewGuid().ToString('N')
+$tempDirectory = Join-Path ([IO.Path]::GetTempPath()) $script:DiscodexProduct.InstallTempTemplate.Replace('{id}', $installId)
+$staged = Join-Path $binRoot ($script:DiscodexProduct.InstallStagingTemplate.Replace('{id}', $installId) + $targetInfo.Extension)
 New-Item -ItemType Directory -Path $tempDirectory | Out-Null
+$operationFailure = $null
+$cliFailure = $null
 try {
     $binaryPath = Join-Path $tempDirectory $asset
     $checksumPath = Join-Path $tempDirectory ($asset + '.sha256')
     try {
         Invoke-WebRequest -Uri "$baseUrl/$asset" -OutFile $binaryPath
         Invoke-WebRequest -Uri "$baseUrl/$asset.sha256" -OutFile $checksumPath
-    } catch {
-        throw $messages.Download
-    }
+    } catch { throw }
 
     $checksumText = [IO.File]::ReadAllText($checksumPath).Trim()
     $expected = ($checksumText -split '\s+')[0]
-    if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw 'The release checksum file is invalid.' }
+    if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw (Get-DiscodexMessage 'install.invalid_checksum' $env:DISCODEX_LANGUAGE) }
     $actual = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash
     if (-not [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'The downloaded release binary failed SHA256 verification.'
+        throw (Get-DiscodexMessage 'install.checksum_mismatch' $env:DISCODEX_LANGUAGE)
     }
 
     Copy-Item -LiteralPath $binaryPath -Destination $staged
@@ -73,9 +68,40 @@ try {
     # The prebuilt installer selects shared/separate Codex data and optional AGY
     # settings. It downloads owned runtimes and offers cancellable AGY sign-in;
     # no global AGY installation or build toolchain is needed on this host.
-    & $installed install
-    if ($LASTEXITCODE -ne 0) { throw ($messages.Install -f $LASTEXITCODE) }
-} finally {
-    Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    $stderrPath = Join-Path $tempDirectory 'installer.stderr'
+    & $installed install 2> $stderrPath
+    $exitCode = $LASTEXITCODE
+    $cliStderr = [IO.File]::ReadAllText($stderrPath)
+    if ($exitCode -ne 0) {
+        $cliFailure = [pscustomobject]@{ ExitCode = $exitCode; Stderr = $cliStderr }
+    }
+} catch {
+    $operationFailure = $_
+}
+
+$cleanupFailures = @()
+foreach ($path in @($staged, $tempDirectory)) {
+    if (-not (Test-Path -LiteralPath $path)) { continue }
+    try {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+    } catch {
+        $cleanupFailures += $_.Exception.Message
+    }
+}
+if ($cliFailure -and $cleanupFailures.Count -gt 0) {
+    $message = (Get-DiscodexMessage 'install.discodex_failed' $env:DISCODEX_LANGUAGE) -f $cliFailure.ExitCode
+    [Console]::Error.WriteLine("{0} stderr: {1} Cleanup failed: {2}" -f $message, $cliFailure.Stderr, ($cleanupFailures -join '; '))
+    exit $cliFailure.ExitCode
+}
+if ($cliFailure) {
+    $message = (Get-DiscodexMessage 'install.discodex_failed' $env:DISCODEX_LANGUAGE) -f $cliFailure.ExitCode
+    [Console]::Error.WriteLine("{0} stderr: {1}" -f $message, $cliFailure.Stderr)
+    exit $cliFailure.ExitCode
+}
+if ($operationFailure -and $cleanupFailures.Count -gt 0) {
+    throw ("{0} Cleanup failed: {1}" -f $operationFailure.Exception.Message, ($cleanupFailures -join '; '))
+}
+if ($operationFailure) { throw $operationFailure }
+if ($cleanupFailures.Count -gt 0) {
+    throw ("Installer cleanup failed: {0}" -f ($cleanupFailures -join '; '))
 }

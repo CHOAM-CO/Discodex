@@ -1,6 +1,8 @@
 use std::process::Command;
+use std::{collections::BTreeMap, path::Path};
 
 fn main() {
+    generate_message_resources();
     println!("cargo:rerun-if-env-changed=DISCODEX_BUILD_COMMIT");
     println!("cargo:rerun-if-changed=.git/HEAD");
     if let Ok(head) = std::fs::read_to_string(".git/HEAD") {
@@ -53,6 +55,91 @@ fn main() {
         "the Codex submodule must provide a full commit SHA"
     );
     println!("cargo:rustc-env=DISCODEX_CODEX_COMMIT={codex_commit}");
+}
+
+fn generate_message_resources() {
+    let root = Path::new("resources/messages");
+    println!("cargo:rerun-if-changed={}", root.display());
+    let mut messages = BTreeMap::<String, BTreeMap<String, String>>::new();
+    if root.exists() {
+        for entry in std::fs::read_dir(root).expect("read message resource directory") {
+            let path = entry.expect("read message resource entry").path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            println!("cargo:rerun-if-changed={}", path.display());
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let file: BTreeMap<String, BTreeMap<String, String>> = serde_json::from_str(&content)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            for (key, translations) in file {
+                assert!(
+                    key.split('.').count() >= 2
+                        && key.split('.').all(|part| !part.is_empty()
+                            && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')),
+                    "invalid message key {key:?} in {}",
+                    path.display()
+                );
+                assert!(
+                    ["en", "ko", "zh", "ja"]
+                        .iter()
+                        .all(|locale| translations.contains_key(*locale)),
+                    "message {key:?} in {} must define en, ko, zh and ja",
+                    path.display()
+                );
+                assert!(
+                    messages.insert(key.clone(), translations).is_none(),
+                    "duplicate message key {key:?}"
+                );
+            }
+        }
+    }
+
+    let mut generated =
+        String::from("#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\npub enum MessageKey {\n");
+    let mut variants = BTreeMap::new();
+    for key in messages.keys() {
+        let variant = message_variant(key);
+        assert!(
+            variants.insert(variant.clone(), key).is_none(),
+            "message keys collide as MessageKey::{variant}; rename one resource key"
+        );
+        generated.push_str(&format!("    {variant},\n"));
+    }
+    generated.push_str("}\nimpl MessageKey {\n    pub const fn text(self, language: Language) -> &'static str {\n        match (self, language) {\n");
+    for (key, translations) in &messages {
+        let variant = message_variant(key);
+        for (locale, language) in [
+            ("en", "English"),
+            ("ko", "Korean"),
+            ("zh", "Chinese"),
+            ("ja", "Japanese"),
+        ] {
+            let value = serde_json::to_string(&translations[locale])
+                .expect("serialize message translation");
+            generated.push_str(&format!(
+                "            (Self::{variant}, Language::{language}) => {value},\n"
+            ));
+        }
+    }
+    generated.push_str("        }\n    }\n}\n");
+    let out = Path::new(&std::env::var_os("OUT_DIR").expect("OUT_DIR is set"))
+        .join("message_resources.rs");
+    std::fs::write(out, generated).expect("write generated message resources");
+}
+
+fn message_variant(key: &str) -> String {
+    key.split(|character: char| character == '.' || character == '_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut characters = part.chars();
+            let Some(first) = characters.next() else {
+                return String::new();
+            };
+            first.to_ascii_uppercase().to_string() + characters.as_str()
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn codex_git(args: &[&str]) -> String {

@@ -22,6 +22,26 @@ const NAMES: [&str; 3] = [
     "get_worktree_creation_status",
     "list_worktrees",
 ];
+fn tool_language() -> crate::i18n::Language {
+    std::env::var("DISCODEX_LANGUAGE")
+        .ok()
+        .and_then(|value| value.parse::<crate::i18n::Language>().ok())
+        .unwrap_or_default()
+}
+
+fn localized_detail(key: crate::i18n::MessageKey, detail: &str) -> String {
+    localized_detail_with_language(key, detail, tool_language())
+}
+
+fn localized_detail_with_language(
+    key: crate::i18n::MessageKey,
+    detail: &str,
+    language: crate::i18n::Language,
+) -> String {
+    let detail = crate::discord::sanitize_discord_diagnostic(detail);
+    language.message(key).replace("{detail}", &detail)
+}
+
 pub(crate) fn handles(name: &str) -> bool {
     NAMES.contains(&name)
 }
@@ -96,11 +116,21 @@ impl WorktreeTools {
             "get_worktree_creation_status" => {
                 let a: StatusArgs = serde_json::from_value(args)?;
                 let operations = self.operations.lock().await;
-                let op=operations.get(&a.operation_id).filter(|op|op.thread_id==ctx.thread_id)
-                    .ok_or_else(||anyhow!("Unknown operation. Inspect this task's worktree attachments before creating another checkout."))?;
+                let op = operations
+                    .get(&a.operation_id)
+                    .filter(|op| op.thread_id == ctx.thread_id)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            tool_language()
+                                .message(crate::i18n::MessageKey::WorktreeToolsOperationUnknown)
+                        )
+                    })?;
                 match &op.result {
                     Some(Ok(v)) => Ok(v.clone()),
-                    Some(Err(e)) => bail!("{e}"),
+                    Some(Err(e)) => bail!(
+                        "{}",
+                        localized_detail(crate::i18n::MessageKey::WorktreeToolsOperationFailed, e)
+                    ),
                     None => Ok(json!({"type":"pending","operationId":a.operation_id})),
                 }
             }
@@ -197,7 +227,7 @@ impl WorktreeTools {
             .find(|(_, op)| op.thread_id == ctx.thread_id && op.result.is_none())
         {
             return Ok(
-                json!({"type":"pending","operationId":id,"message":"Creation is already running. Poll status; do not repeat creation."}),
+                json!({"type":"pending","operationId":id,"message":tool_language().message(crate::i18n::MessageKey::WorktreeToolsCreationAlreadyRunning)}),
             );
         }
         let id = Uuid::new_v4().to_string();
@@ -220,22 +250,30 @@ impl WorktreeTools {
             let supervisor_registry = Arc::clone(&registry);
             let supervisor_id = op_id.clone();
             let worker = tokio::spawn(async move {
-                let created = tokio::task::spawn_blocking(move || backend.create(&root, &cwd, a.revision.as_deref(), &worker_owner)).await
-                    .map_err(|e| format!("Worktree creation was interrupted: {e}. Inspect managed worktrees before retrying."))
-                    .and_then(|r| r.map_err(|e| format!("{e:#}")));
+                let created = tokio::task::spawn_blocking(move || {
+                    backend.create(&root, &cwd, a.revision.as_deref(), &worker_owner)
+                })
+                .await
+                .map_err(|e| {
+                    localized_detail(
+                        crate::i18n::MessageKey::WorktreeToolsCreationInterrupted,
+                        &e.to_string(),
+                    )
+                })
+                .and_then(|r| r.map_err(|e| format!("{e:#}")));
                 let result = match created {
                     Ok(w) => {
                         let payload =
                             json!({"root":w.root,"workspaceRoot":w.cwd,"sourceCwd":w.source_cwd});
                         if let Some(error) = w.owner_error {
                             Ok(
-                                json!({"type":"registrationFailed","worktree":payload,"message":format!("Checkout retained; ownership binding failed ({error}). Do not create a duplicate.")}),
+                                json!({"type":"registrationFailed","worktree":payload,"message":localized_detail(crate::i18n::MessageKey::WorktreeToolsCheckoutRetainedOwnerFailed, &error)}),
                             )
                         } else {
                             let key = w.root.to_string_lossy().into_owned();
                             match rpc_call("thread/attachment/add".to_owned(),json!({"threadId":owner,"attachmentType":"worktree","identityKey":key,"payload":payload})).await{
                             Ok(_)=>Ok(json!({"type":"created","worktree":payload})),
-                            Err(e)=>Ok(json!({"type":"registrationFailed","worktree":payload,"message":format!("Checkout retained; attachment registration failed ({e}). Do not create a duplicate.")}))
+                            Err(e)=>Ok(json!({"type":"registrationFailed","worktree":payload,"message":localized_detail(crate::i18n::MessageKey::WorktreeToolsCheckoutRetainedRegistrationFailed, &e.to_string())}))
                         }
                         }
                     }
@@ -243,13 +281,18 @@ impl WorktreeTools {
                 };
                 result
             });
-            let result = worker.await.unwrap_or_else(|e| Err(format!("Worktree creation outcome is uncertain: {e}. Inspect this task's attachments and managed worktrees before retrying.")));
+            let result = worker.await.unwrap_or_else(|e| {
+                Err(localized_detail(
+                    crate::i18n::MessageKey::WorktreeToolsCreationUncertain,
+                    &e.to_string(),
+                ))
+            });
             if let Some(op) = supervisor_registry.lock().await.get_mut(&supervisor_id) {
                 op.result = Some(result);
             }
         });
         Ok(
-            json!({"type":"pending","operationId":id,"message":"Creation is running. Poll status before using paths; do not repeat creation."}),
+            json!({"type":"pending","operationId":id,"message":tool_language().message(crate::i18n::MessageKey::WorktreeToolsCreationRunning)}),
         )
     }
 }
@@ -434,7 +477,10 @@ fn select_default_base(refs: &[(String, String)]) -> Result<String> {
             return Ok(candidate.to_owned());
         }
     }
-    bail!("Could not determine the project's default branch.")
+    bail!(
+        "{}",
+        tool_language().message(crate::i18n::MessageKey::WorktreeToolsDefaultBranchUnknown)
+    )
 }
 fn owner_record_matches(value: &Value, thread: &str) -> bool {
     value.get("version").and_then(Value::as_u64) == Some(1)
@@ -607,6 +653,18 @@ where
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
+
+    #[test]
+    fn localized_worktree_diagnostic_keeps_context_and_redacts_credentials() {
+        assert_eq!(
+            localized_detail_with_language(
+                crate::i18n::MessageKey::WorktreeToolsOperationFailed,
+                "git failed with password=fixture-secret",
+                crate::i18n::Language::Korean,
+            ),
+            "Worktree 작업에 실패했습니다: git failed with password=[secret redacted]"
+        );
+    }
 
     fn context(
         thread_id: &str,

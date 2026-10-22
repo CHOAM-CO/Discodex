@@ -46,7 +46,7 @@ impl CatalogCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Catalog>>,
     {
-        let previous = self.load_record()?;
+        let (previous, cache_warning) = self.load_record()?;
         if let Some(record) = previous.as_ref()
             && record.context_key == self.context_key
         {
@@ -57,7 +57,7 @@ impl CatalogCache {
             {
                 return Ok(CatalogLookup {
                     catalog: record.catalog.clone(),
-                    warning: None,
+                    warning: cache_warning,
                 });
             }
             if !force
@@ -67,10 +67,11 @@ impl CatalogCache {
             {
                 return Ok(CatalogLookup {
                     catalog: record.catalog.clone(),
-                    warning: Some(
+                    warning: Some(join_warnings(
+                        cache_warning,
                         "AGY model refresh recently failed; using the last successful catalog."
                             .to_owned(),
-                    ),
+                    )),
                 });
             }
         }
@@ -85,10 +86,13 @@ impl CatalogCache {
                 })?;
                 Ok(CatalogLookup {
                     catalog: Some(discovered),
-                    warning: None,
+                    warning: cache_warning,
                 })
             }
-            Err(error) if force => Err(error),
+            Err(error) if force => match cache_warning {
+                Some(warning) => Err(error.context(warning)),
+                None => Err(error),
+            },
             Err(error) => {
                 let prior_catalog = previous
                     .as_ref()
@@ -105,26 +109,26 @@ impl CatalogCache {
                 })?;
                 Ok(CatalogLookup {
                     catalog: prior_catalog,
-                    warning: Some(format!("AGY model discovery failed: {error:#}")),
+                    warning: Some(join_warnings(
+                        cache_warning,
+                        format!("AGY model discovery failed: {error:#}"),
+                    )),
                 })
             }
         }
     }
 
-    fn load_record(&self) -> Result<Option<CacheRecord>> {
+    fn load_record(&self) -> Result<(Option<CacheRecord>, Option<String>)> {
         let bytes = match std::fs::read(&self.path) {
             Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!("read AGY model catalog cache at {}", self.path.display())
                 });
             }
         };
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            return Ok(None);
-        };
-        Ok(decode_record(&value).ok())
+        Ok(decode_record_bytes(&bytes))
     }
 
     fn save(&self, record: &CacheRecord) -> Result<()> {
@@ -151,6 +155,36 @@ impl CatalogCache {
             )
         })?;
         Ok(())
+    }
+}
+
+fn decode_record_bytes(bytes: &[u8]) -> (Option<CacheRecord>, Option<String>) {
+    let value = match serde_json::from_slice::<Value>(bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                None,
+                Some(format!(
+                    "AGY model catalog cache is invalid JSON ({error}); refreshing."
+                )),
+            );
+        }
+    };
+    match decode_record(&value) {
+        Ok(record) => (Some(record), None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "AGY model catalog cache is invalid ({error:#}); refreshing."
+            )),
+        ),
+    }
+}
+
+fn join_warnings(previous: Option<String>, next: String) -> String {
+    match previous {
+        Some(previous) => format!("{previous} {next}"),
+        None => next,
     }
 }
 
@@ -281,6 +315,13 @@ mod tests {
             .unwrap();
         assert_eq!(again.catalog, Some(catalog("first")));
         assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn corrupt_cache_bytes_are_reported_as_a_miss() {
+        let (record, warning) = decode_record_bytes(b"not a catalog");
+        assert!(record.is_none());
+        assert!(warning.unwrap().contains("invalid JSON"));
     }
 
     #[tokio::test]
@@ -440,35 +481,16 @@ mod tests {
         assert_eq!(calls, 1);
     }
 
-    #[tokio::test]
-    async fn malformed_cache_schema_is_a_miss() {
-        let directory = tempfile::tempdir().unwrap();
-        let cache = CatalogCache::new(directory.path(), "profile-a/shared".into());
-        std::fs::write(
-            directory.path().join(CACHE_FILE),
-            br#"{"contextKey":"profile-a/shared","catalog":{}}"#,
-        )
-        .unwrap();
-        let refreshed = cache
-            .get_or_refresh(100, false, || async { Ok(catalog("recovered")) })
-            .await
-            .unwrap();
-        assert_eq!(refreshed.catalog, Some(catalog("recovered")));
-    }
+    #[test]
+    fn malformed_cache_record_values_are_reported_as_misses() {
+        let (malformed, malformed_warning) =
+            decode_record_bytes(br#"{"contextKey":"synthetic","catalog":{}}"#);
+        assert!(malformed.is_none());
+        assert!(malformed_warning.unwrap().contains("invalid ("));
 
-    #[tokio::test]
-    async fn unsupported_cache_version_is_a_miss() {
-        let directory = tempfile::tempdir().unwrap();
-        let cache = CatalogCache::new(directory.path(), "profile-a/shared".into());
-        std::fs::write(
-            directory.path().join(CACHE_FILE),
-            br#"{"version":99,"contextKey":"profile-a/shared","catalog":null}"#,
-        )
-        .unwrap();
-        let refreshed = cache
-            .get_or_refresh(100, false, || async { Ok(catalog("recovered")) })
-            .await
-            .unwrap();
-        assert_eq!(refreshed.catalog, Some(catalog("recovered")));
+        let (unsupported, unsupported_warning) =
+            decode_record_bytes(br#"{"version":99,"contextKey":"synthetic","catalog":null}"#);
+        assert!(unsupported.is_none());
+        assert!(unsupported_warning.unwrap().contains("unsupported version"));
     }
 }

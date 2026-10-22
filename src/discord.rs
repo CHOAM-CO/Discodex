@@ -1,3 +1,4 @@
+use crate::i18n::MessageKey;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs,
@@ -318,55 +319,32 @@ impl ApprovalResults {
                     item_type,
                     item.get("status").and_then(serde_json::Value::as_str),
                 ) {
-                    ("fileChange", Some("completed")) => language.text(
-                        "File changes completed.",
-                        "파일 변경이 완료되었습니다.",
-                        "文件更改已完成。",
-                        "ファイル変更が完了しました。",
-                    ),
-                    ("fileChange", Some("declined")) => language.text(
-                        "File changes were declined.",
-                        "파일 변경이 거부되었습니다.",
-                        "文件更改已被拒绝。",
-                        "ファイル変更が拒否されました。",
-                    ),
-                    ("fileChange", Some("failed")) => language.text(
-                        "File changes failed.",
-                        "파일 변경에 실패했습니다.",
-                        "文件更改失败。",
-                        "ファイル変更に失敗しました。",
-                    ),
+                    ("fileChange", Some("completed")) => {
+                        language.message(MessageKey::DiscordCoreFileChangesCompleted)
+                    }
+                    ("fileChange", Some("declined")) => {
+                        language.message(MessageKey::DiscordCoreFileChangesDeclined)
+                    }
+                    ("fileChange", Some("failed")) => {
+                        language.message(MessageKey::DiscordCoreFileChangesFailed)
+                    }
                     ("commandExecution", Some("completed"))
                         if item
                             .get("exitCode")
                             .and_then(serde_json::Value::as_i64)
                             .is_some_and(|code| code != 0) =>
                     {
-                        language.text(
-                            "Command execution failed.",
-                            "명령 실행에 실패했습니다.",
-                            "命令执行失败。",
-                            "コマンドの実行に失敗しました。",
-                        )
+                        language.message(MessageKey::DiscordCoreCommandExecutionFailed)
                     }
-                    ("commandExecution", Some("completed")) => language.text(
-                        "Command execution completed.",
-                        "명령 실행이 완료되었습니다.",
-                        "命令执行已完成。",
-                        "コマンドの実行が完了しました。",
-                    ),
-                    ("commandExecution", Some("declined")) => language.text(
-                        "Command execution was declined.",
-                        "명령 실행이 거부되었습니다.",
-                        "命令执行已被拒绝。",
-                        "コマンドの実行が拒否されました。",
-                    ),
-                    ("commandExecution", Some("failed")) => language.text(
-                        "Command execution failed.",
-                        "명령 실행에 실패했습니다.",
-                        "命令执行失败。",
-                        "コマンドの実行に失敗しました。",
-                    ),
+                    ("commandExecution", Some("completed")) => {
+                        language.message(MessageKey::DiscordCoreCommandExecutionCompleted)
+                    }
+                    ("commandExecution", Some("declined")) => {
+                        language.message(MessageKey::DiscordCoreCommandExecutionDeclined)
+                    }
+                    ("commandExecution", Some("failed")) => {
+                        language.message(MessageKey::DiscordCoreCommandExecutionFailed)
+                    }
                     _ => return Vec::new(),
                 };
                 self.item_targets.remove(&key);
@@ -400,12 +378,7 @@ impl ApprovalResults {
                     None,
                     Some((thread_id, turn_id)),
                     language
-                        .text(
-                            "The task with an approval request was interrupted.",
-                            "승인 요청이 있던 작업의 실행이 중단되었습니다.",
-                            "包含审批请求的任务已中断。",
-                            "承認リクエストを含むタスクが中断されました。",
-                        )
+                        .message(MessageKey::DiscordCoreTaskApprovalRequestInterrupted)
                         .to_owned(),
                 )
             }
@@ -454,19 +427,14 @@ fn approval_execution_content(
     for (field, label) in [
         (
             "exitCode",
-            language.text("Exit code", "종료 코드", "退出代码", "終了コード"),
+            language.message(MessageKey::DiscordCoreExitCode),
         ),
         (
             "error",
-            language.text(
-                "Native error",
-                "네이티브 오류",
-                "原生错误",
-                "ネイティブエラー",
-            ),
+            language.message(MessageKey::DiscordCoreNativeError),
         ),
-        ("reason", language.text("Reason", "사유", "原因", "理由")),
-        ("message", language.text("Details", "상세", "详情", "詳細")),
+        ("reason", language.message(MessageKey::DiscordCoreReason)),
+        ("message", language.message(MessageKey::DiscordCoreDetails)),
     ] {
         if let Some(value) = item.get(field).filter(|value| !value.is_null()) {
             let value = value
@@ -491,7 +459,7 @@ fn approval_execution_content(
         {
             content.push_str(&format!(
                 "\n{}:\n{output}",
-                language.text("Command output", "명령 출력", "命令输出", "コマンド出力")
+                language.message(MessageKey::DiscordCoreCommandOutput)
             ));
         }
     }
@@ -611,7 +579,17 @@ impl EventHandler for Handler {
         };
         *state.bot_user_id.lock().await = Some(ready.user.id);
         match commands::register_guild_commands(&ctx.http, &state.config).await {
-            Err(error) => error!(%error, "failed to register guild commands"),
+            Err(error) => {
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                error!(%detail, "failed to register guild commands");
+                report_discord_failure(
+                    &ctx.http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
+            }
             Ok(()) => {
                 if let Err(error) = crate::legacy_commands::remove_retired_commands(
                     &ctx.http,
@@ -619,7 +597,7 @@ impl EventHandler for Handler {
                 )
                 .await
                 {
-                    error!(%error, "failed to remove retired Discord commands");
+                    error!(error = %sanitize_discord_error_chain(&state.config, &error), "failed to remove retired Discord commands");
                 }
             }
         }
@@ -686,7 +664,7 @@ impl EventHandler for Handler {
                             parent
                         }
                         Err(error) => {
-                            warn!(%error, "could not resolve message channel parent");
+                            warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not resolve message channel parent");
                             None
                         }
                     }
@@ -751,39 +729,72 @@ impl EventHandler for Handler {
                     Ok(attachments_pending) => {
                         let notice = notify_voice_inbox(&state, &msg, call_id, &thread_id).await;
                         if let Err(error) = notice {
-                            warn!(%error, message_id = %msg.id, "could not notify active voice call about queued inbox message");
+                            let detail =
+                                safe_error_detail(&state.config, Some(format!("{error:#}")))
+                                    .unwrap_or_else(|| "error details unavailable".to_owned());
+                            warn!(%detail, message_id = %msg.id, "could not notify active voice call about queued inbox message");
+                            let content = failure_detail(
+                                state.config.language,
+                                MessageKey::DiscordCoreFailureVoiceInbox,
+                                &detail,
+                            );
+                            if let Err(delivery_error) =
+                                send_failure_notice(&ctx.http, msg.channel_id, &content).await
+                            {
+                                let delivery_detail = sanitize_discord_error(
+                                    &state.config,
+                                    &format!("{delivery_error:#}"),
+                                );
+                                error!(failure = %detail, delivery_error = %delivery_detail, message_id = %msg.id, "failed to report voice inbox notification failure");
+                            }
                         }
                         if attachments_pending {
-                            let content = state.config.language.text(
-                                "Your message was saved, but one or more attachments could not be downloaded yet.",
-                                "메시지는 저장했지만 첨부 파일을 아직 다운로드하지 못했습니다.",
-                                "消息已保存，但有一个或多个附件暂时无法下载。",
-                                "メッセージは保存されましたが、添付ファイルをまだダウンロードできませんでした。",
+                            let content = state.config.language.message(
+                                MessageKey::DiscordCoreMessageSavedOneMoreAttachmentsCould,
                             );
-                            let _ = target
+                            if let Err(error) = target
                                 .channel_id
                                 .send_message(&ctx.http, assistant_reply_message(&target, content))
-                                .await;
+                                .await
+                            {
+                                let detail =
+                                    sanitize_discord_error(&state.config, &format!("{error:#}"));
+                                warn!(%detail, message_id = %msg.id, "could not report pending voice inbox attachments");
+                            }
                         }
                     }
                     Err(error) => {
-                        warn!(%error, message_id = %msg.id, "could not persist voice inbox message");
-                        let content = state.config.language.text(
-                            "Could not save this message to the voice inbox. Please try again.",
-                            "이 메시지를 음성 받은편지함에 저장하지 못했습니다. 다시 시도해 주세요.",
-                            "无法将此消息保存到语音收件箱。请重试。",
-                            "このメッセージを音声受信トレイに保存できませんでした。もう一度お試しください。",
+                        let detail = safe_error_detail(&state.config, Some(format!("{error:#}")))
+                            .unwrap_or_else(|| "error details unavailable".to_owned());
+                        warn!(%detail, message_id = %msg.id, "could not persist voice inbox message");
+                        let content = failure_detail(
+                            state.config.language,
+                            MessageKey::DiscordCoreFailureVoiceInbox,
+                            &detail,
                         );
-                        let _ = target
+                        if let Err(delivery_error) = target
                             .channel_id
-                            .send_message(&ctx.http, assistant_reply_message(&target, content))
-                            .await;
+                            .send_message(&ctx.http, assistant_reply_message(&target, &content))
+                            .await
+                        {
+                            let delivery_detail = sanitize_discord_error(
+                                &state.config,
+                                &format!("{delivery_error:#}"),
+                            );
+                            error!(failure = %detail, delivery_error = %delivery_detail, message_id = %msg.id, "failed to report voice inbox persistence failure");
+                        }
                     }
                 }
                 if let Err(error) =
                     submit_next_queued_input(&state, &state.native.thread_id()).await
                 {
-                    warn!(%error, "failed to dispatch voice inbox item after a call transition");
+                    report_discord_failure(
+                        &ctx.http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &format!("{error:#}"),
+                    )
+                    .await;
                 }
                 return;
             }
@@ -826,50 +837,29 @@ impl EventHandler for Handler {
         match submission {
             Ok(()) => {}
             Err(error) => {
-                warn!(%error, message_id = %msg.id, "failed to submit Discord input to Codex");
+                let raw_detail = format!("{error:#}");
+                let detail = sanitize_discord_error(&state.config, &raw_detail);
+                warn!(%detail, message_id = %msg.id, "failed to submit Discord input to Codex");
                 if let Some(checks) = &state.installation_checks {
-                    checks.text_error(&state.native.thread_id(), &format!("{error:#}"));
+                    checks.text_error(&state.native.thread_id(), &detail);
                 }
-                let (channel, builder) = if matches!(
-                    route,
-                    crate::voice_input::InputRoute::Voice { .. }
-                ) {
-                    (
-                        target.channel_id,
-                        assistant_reply_message(
-                            &target,
-                            if message_attachments.is_empty() {
-                                state.config.language.text(
-                                    "Could not send text to this call. Check whether the call is still active.",
-                                    "이 통화에 텍스트를 전달하지 못했습니다. 통화가 계속 중인지 확인해 주세요.",
-                                    "无法向此通话发送文本。请确认通话是否仍在进行。",
-                                    "この通話にテキストを送信できませんでした。通話が継続中か確認してください。"
-                                )
-                            } else {
-                                state.config.language.text(
-                                    "Could not send this message and its attachments to the call. Check whether the call is still active.",
-                                    "이 메시지와 첨부 파일을 통화에 전달하지 못했습니다. 통화가 계속 중인지 확인해 주세요.",
-                                    "无法向此通话发送消息及附件。请确认通话是否仍在进行。",
-                                    "このメッセージと添付ファイルを通話に送信できませんでした。通話が継続中か確認してください。"
-                                )
-                            },
-                        ),
-                    )
-                } else {
-                    conversation_reply_message_localized(
-                        &target,
-                        ChannelId::new(state.config.home_channel_id),
-                        state.config.guild_id,
-                        state.config.language.text(
-                            "Could not send input to Codex.",
-                            "Codex에 입력을 전달하지 못했습니다.",
-                            "无法向 Codex 发送输入。",
-                            "Codex に入力を送信できませんでした。",
-                        ),
-                        &state.config.language,
-                    )
-                };
-                let _ = channel.send_message(&ctx.http, builder).await;
+                let content = failure_detail(
+                    state.config.language,
+                    MessageKey::DiscordCoreFailureCodexInput,
+                    &detail,
+                );
+                let (channel, builder) = conversation_reply_message_localized(
+                    &target,
+                    ChannelId::new(state.config.home_channel_id),
+                    state.config.guild_id,
+                    &content,
+                    &state.config.language,
+                );
+                if let Err(delivery_error) = channel.send_message(&ctx.http, builder).await {
+                    let delivery_detail =
+                        sanitize_discord_error(&state.config, &format!("{delivery_error:#}"));
+                    error!(failure = %detail, delivery_error = %delivery_detail, discord_message_id = %msg.id, "failed to report Discord input failure");
+                }
             }
         }
     }
@@ -882,12 +872,8 @@ impl EventHandler for Handler {
             .map(|state| state.config.language)
             .unwrap_or_default();
         if state.as_ref().is_some_and(|state| state.updates.applying()) {
-            let text = language.text(
-                "Discodex is updating. Please retry this command after it reconnects. Chat messages are saved.",
-                "Discodex 업데이트 중입니다. 다시 연결되면 명령을 재시도해 주세요. 채팅 메시지는 보관합니다.",
-                "Discodex 正在更新，请重新连接后重试命令。聊天消息会被保存。",
-                "Discodexを更新中です。再接続後にコマンドを再試行してください。チャットメッセージは保存されます。"
-            );
+            let text =
+                language.message(MessageKey::DiscordCoreDiscodexUpdatingPleaseRetryCommandAfter);
             let response = serenity::all::CreateInteractionResponse::Message(
                 serenity::all::CreateInteractionResponseMessage::new()
                     .content(text)
@@ -896,13 +882,19 @@ impl EventHandler for Handler {
             );
             match interaction {
                 serenity::all::Interaction::Command(command) => {
-                    let _ = command.create_response(&ctx, response).await;
+                    if let Err(error) = command.create_response(&ctx, response).await {
+                        warn!(error = %state.as_ref().map_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")), |state| sanitize_discord_error_chain(&state.config, &error)), "could not report that Discodex is updating");
+                    }
                 }
                 serenity::all::Interaction::Component(component) => {
-                    let _ = component.create_response(&ctx, response).await;
+                    if let Err(error) = component.create_response(&ctx, response).await {
+                        warn!(error = %state.as_ref().map_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")), |state| sanitize_discord_error_chain(&state.config, &error)), "could not report that Discodex is updating");
+                    }
                 }
                 serenity::all::Interaction::Modal(modal) => {
-                    let _ = modal.create_response(&ctx, response).await;
+                    if let Err(error) = modal.create_response(&ctx, response).await {
+                        warn!(error = %state.as_ref().map_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")), |state| sanitize_discord_error_chain(&state.config, &error)), "could not report that Discodex is updating");
+                    }
                 }
                 _ => {}
             }
@@ -911,94 +903,160 @@ impl EventHandler for Handler {
         match interaction {
             serenity::all::Interaction::Command(command) => {
                 if let Err(error) = commands::handle(&ctx, &command).await {
-                    error!(%error, "Discord command failed");
-                    let builder = serenity::builder::EditInteractionResponse::new()
-                        .content(language.text(
-                            "Could not process the Codex command.",
-                            "Codex 명령을 처리하지 못했습니다.",
-                            "无法处理 Codex 命令。",
-                            "Codex コマンドを処理できませんでした。",
-                        ))
-                        .allowed_mentions(empty_mentions());
-                    if command.edit_response(&ctx, builder).await.is_err() {
-                        let _ = command
+                    let detail = state
+                        .as_ref()
+                        .and_then(|state| {
+                            safe_error_detail(&state.config, Some(format!("{error:#}")))
+                        })
+                        .unwrap_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")));
+                    error!(%detail, "Discord command failed");
+                    let content =
+                        failure_detail(language, MessageKey::DiscordCoreFailureDetails, &detail);
+                    if let Err(edit_error) = command
+                        .edit_response(
+                            &ctx,
+                            serenity::builder::EditInteractionResponse::new()
+                                .content(&content)
+                                .allowed_mentions(empty_mentions()),
+                        )
+                        .await
+                    {
+                        let edit_detail = state.as_ref().map_or_else(
+                            || sanitize_discord_diagnostic(&format!("{edit_error:#}")),
+                            |state| {
+                                sanitize_discord_error(&state.config, &format!("{edit_error:#}"))
+                            },
+                        );
+                        warn!(failure = %detail, edit_error = %edit_detail, "could not deliver Discord command failure by editing interaction");
+                        if let Err(fallback_error) = command
                             .create_response(
                                 &ctx,
                                 serenity::all::CreateInteractionResponse::Message(
                                     serenity::all::CreateInteractionResponseMessage::new()
-                                        .content(language.text(
-                                            "Could not process the Codex command.",
-                                            "Codex 명령을 처리하지 못했습니다.",
-                                            "无法处理 Codex 命令。",
-                                            "Codex コマンドを処理できませんでした。",
-                                        ))
+                                        .content(&content)
                                         .allowed_mentions(empty_mentions())
                                         .ephemeral(true),
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            let fallback_detail = state.as_ref().map_or_else(
+                                || sanitize_discord_diagnostic(&format!("{fallback_error:#}")),
+                                |state| {
+                                    sanitize_discord_error(
+                                        &state.config,
+                                        &format!("{fallback_error:#}"),
+                                    )
+                                },
+                            );
+                            error!(failure = %detail, edit_error = %edit_detail, fallback_error = %fallback_detail, "could not deliver Discord command failure");
+                        }
                     }
                 }
             }
             serenity::all::Interaction::Component(component) => {
                 if let Err(error) = commands::handle_component(&ctx, &component).await {
-                    error!(%error, "Discord component failed");
-                    let builder = serenity::builder::EditInteractionResponse::new()
-                        .content(language.text(
-                            "Could not respond to the Codex request.",
-                            "Codex 요청에 응답하지 못했습니다.",
-                            "无法响应 Codex 请求。",
-                            "Codex リクエストに応答できませんでした。",
-                        ))
-                        .allowed_mentions(empty_mentions());
-                    if component.edit_response(&ctx, builder).await.is_err() {
-                        let _ = component
+                    let detail = state
+                        .as_ref()
+                        .and_then(|state| {
+                            safe_error_detail(&state.config, Some(format!("{error:#}")))
+                        })
+                        .unwrap_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")));
+                    error!(%detail, "Discord component failed");
+                    let content =
+                        failure_detail(language, MessageKey::DiscordCoreFailureDetails, &detail);
+                    if let Err(edit_error) = component
+                        .edit_response(
+                            &ctx,
+                            serenity::builder::EditInteractionResponse::new()
+                                .content(&content)
+                                .allowed_mentions(empty_mentions()),
+                        )
+                        .await
+                    {
+                        let edit_detail = state.as_ref().map_or_else(
+                            || sanitize_discord_diagnostic(&format!("{edit_error:#}")),
+                            |state| {
+                                sanitize_discord_error(&state.config, &format!("{edit_error:#}"))
+                            },
+                        );
+                        warn!(failure = %detail, edit_error = %edit_detail, "could not deliver Discord component failure by editing interaction");
+                        if let Err(fallback_error) = component
                             .create_response(
                                 &ctx,
                                 serenity::all::CreateInteractionResponse::Message(
                                     serenity::all::CreateInteractionResponseMessage::new()
-                                        .content(language.text(
-                                            "Could not respond to the Codex request.",
-                                            "Codex 요청에 응답하지 못했습니다.",
-                                            "无法响应 Codex 请求。",
-                                            "Codex リクエストに応答できませんでした。",
-                                        ))
+                                        .content(&content)
                                         .allowed_mentions(empty_mentions())
                                         .ephemeral(true),
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            let fallback_detail = state.as_ref().map_or_else(
+                                || sanitize_discord_diagnostic(&format!("{fallback_error:#}")),
+                                |state| {
+                                    sanitize_discord_error(
+                                        &state.config,
+                                        &format!("{fallback_error:#}"),
+                                    )
+                                },
+                            );
+                            error!(failure = %detail, edit_error = %edit_detail, fallback_error = %fallback_detail, "could not deliver Discord component failure");
+                        }
                     }
                 }
             }
             serenity::all::Interaction::Modal(modal) => {
                 if let Err(error) = commands::handle_modal(&ctx, &modal).await {
-                    error!(%error, "Discord modal failed");
-                    let builder = serenity::builder::EditInteractionResponse::new()
-                        .content(language.text(
-                            "Could not process the Codex input.",
-                            "Codex 입력을 처리하지 못했습니다.",
-                            "无法处理 Codex 输入。",
-                            "Codex の入力を処理できませんでした。",
-                        ))
-                        .allowed_mentions(empty_mentions());
-                    if modal.edit_response(&ctx, builder).await.is_err() {
-                        let _ = modal
+                    let detail = state
+                        .as_ref()
+                        .and_then(|state| {
+                            safe_error_detail(&state.config, Some(format!("{error:#}")))
+                        })
+                        .unwrap_or_else(|| sanitize_discord_diagnostic(&format!("{error:#}")));
+                    error!(%detail, "Discord modal failed");
+                    let content =
+                        failure_detail(language, MessageKey::DiscordCoreFailureDetails, &detail);
+                    if let Err(edit_error) = modal
+                        .edit_response(
+                            &ctx,
+                            serenity::builder::EditInteractionResponse::new()
+                                .content(&content)
+                                .allowed_mentions(empty_mentions()),
+                        )
+                        .await
+                    {
+                        let edit_detail = state.as_ref().map_or_else(
+                            || sanitize_discord_diagnostic(&format!("{edit_error:#}")),
+                            |state| {
+                                sanitize_discord_error(&state.config, &format!("{edit_error:#}"))
+                            },
+                        );
+                        warn!(failure = %detail, edit_error = %edit_detail, "could not deliver Discord modal failure by editing interaction");
+                        if let Err(fallback_error) = modal
                             .create_response(
                                 &ctx,
                                 serenity::all::CreateInteractionResponse::Message(
                                     serenity::all::CreateInteractionResponseMessage::new()
-                                        .content(language.text(
-                                            "Could not process the Codex input.",
-                                            "Codex 입력을 처리하지 못했습니다.",
-                                            "无法处理 Codex 输入。",
-                                            "Codex の入力を処理できませんでした。",
-                                        ))
+                                        .content(&content)
                                         .allowed_mentions(empty_mentions())
                                         .ephemeral(true),
                                 ),
                             )
-                            .await;
+                            .await
+                        {
+                            let fallback_detail = state.as_ref().map_or_else(
+                                || sanitize_discord_diagnostic(&format!("{fallback_error:#}")),
+                                |state| {
+                                    sanitize_discord_error(
+                                        &state.config,
+                                        &format!("{fallback_error:#}"),
+                                    )
+                                },
+                            );
+                            error!(failure = %detail, edit_error = %edit_detail, fallback_error = %fallback_detail, "could not deliver Discord modal failure");
+                        }
                     }
                 }
             }
@@ -1036,6 +1094,7 @@ pub async fn run(
     let mut queued_inputs = load_queue(&config.state_dir.join("discord-inputs.json"))?;
     let changed_queue = recover_submitting_inputs(&mut queued_inputs);
     let mut changed_queue = changed_queue;
+    let mut startup_voice_recovery_error = None;
     if queued_inputs.iter().any(|item| {
         item.voice_inbox
             .as_ref()
@@ -1052,11 +1111,13 @@ pub async fn run(
             Ok(history) if complete_thread_history_matches(&history, &thread_id) => {
                 changed_queue |= reconcile_voice_inbox_from_history(&mut queued_inputs, &history);
             }
-            Ok(_) => warn!(
-                "native returned incomplete or mismatched startup history; preserving unread inbox messages"
-            ),
+            Ok(_) => {
+                startup_voice_recovery_error = Some(
+                    "Native thread history was incomplete or belonged to a different conversation; unread voice inbox messages were preserved".to_owned(),
+                );
+            }
             Err(error) => {
-                warn!(%error, "could not reconcile pending voice inbox lookups at startup")
+                startup_voice_recovery_error = Some(sanitize_discord_error_chain(&config, &error));
             }
         }
         changed_queue |= clear_voice_inbox_runtime_flags(&mut queued_inputs, &thread_id);
@@ -1132,12 +1193,12 @@ pub async fn run(
             }
             if name == "voice_join" {
                 let _activity = state.updates.try_activity().ok_or_else(|| {
-                    anyhow::anyhow!(state.config.language.text(
-                        "Discodex is updating. Retry after it reconnects.",
-                        "Discodex 업데이트 중입니다. 다시 연결된 후 재시도해 주세요.",
-                        "Discodex 正在更新，请在重新连接后重试。",
-                        "Discodexを更新中です。再接続後に再試行してください。"
-                    ))
+                    anyhow::anyhow!(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::DiscordCoreDiscodexUpdatingRetryAfterReconnects)
+                    )
                 })?;
                 let channel = tools.resolve_voice_channel(&arguments).await?;
                 let result = state
@@ -1168,6 +1229,16 @@ pub async fn run(
 
     let event_http = Arc::new(serenity::http::Http::new(&token));
     let cleanup_http = event_http.clone();
+    if let Some(detail) = startup_voice_recovery_error {
+        warn!(%detail, "could not reconcile pending voice inbox lookups at startup");
+        report_discord_failure(
+            &event_http,
+            &state.config,
+            ChannelId::new(state.config.home_channel_id),
+            &detail,
+        )
+        .await;
+    }
     let (event_stop_tx, event_stop_rx) = tokio::sync::oneshot::channel();
     let mut events = native.subscribe_bridge_events()?;
     let event_state = state.clone();
@@ -1176,20 +1247,40 @@ pub async fn run(
         // The startup resume happened before this subscriber existed. Obtain an
         // authoritative idle/active observation before recovering a saved queue.
         if let Err(error) = event_state.native.refresh_thread_state().await {
-            warn!(%error, "could not observe startup turn state for queued input");
+            let detail = sanitize_discord_error_chain(&event_state.config, &error);
+            warn!(%detail, "could not observe startup turn state for queued input");
+            report_discord_failure(
+                &event_http,
+                &event_state.config,
+                ChannelId::new(event_state.config.home_channel_id),
+                &detail,
+            )
+            .await;
         }
         if let Err(error) = crate::async_questions::recover(&event_http, &event_state).await {
-            warn!(%error, "could not recover saved async question cards");
+            let detail = sanitize_discord_error_chain(&event_state.config, &error);
+            warn!(%detail, "could not recover saved async question cards");
+            report_discord_failure(
+                &event_http,
+                &event_state.config,
+                ChannelId::new(event_state.config.home_channel_id),
+                &detail,
+            )
+            .await;
         }
         loop {
             tokio::select! {
                 _ = &mut event_stop_rx => break,
                 _ = event_state.voice.input_gate.ready.notified() => {
                     if let Err(error) = submit_next_queued_input(&event_state, &event_state.native.thread_id()).await {
-                        warn!(%error, "failed to dispatch queued input after voice ended");
+                        let detail = sanitize_discord_error_chain(&event_state.config, &error);
+                        warn!(%detail, "failed to dispatch queued input after voice ended");
+                        report_discord_failure(&event_http, &event_state.config, ChannelId::new(event_state.config.home_channel_id), &detail).await;
                     }
                     if let Err(error) = crate::async_questions::recover(&event_http, &event_state).await {
-                        warn!(%error, "could not update async question cards after voice ended");
+                        let detail = sanitize_discord_error_chain(&event_state.config, &error);
+                        warn!(%detail, "could not update async question cards after voice ended");
+                        report_discord_failure(&event_http, &event_state.config, ChannelId::new(event_state.config.home_channel_id), &detail).await;
                     }
                 }
                 result = events.recv() => match result {
@@ -1240,10 +1331,13 @@ pub async fn run(
     let _ = typing_stop_tx.send(());
     if !event_task_finished {
         if let Err(error) = event_task.await {
-            error!(%error, "native event consumer failed during shutdown");
+            error!(error = %sanitize_discord_error_chain(&state.config, &error), "native event consumer failed during shutdown");
         }
     }
-    let _ = typing_task.await;
+    if let Err(error) = typing_task.await {
+        let detail = sanitize_discord_error(&state.config, &format!("{error:#}"));
+        error!(%detail, "Discord typing indicator task failed during shutdown");
+    }
     state.updates.wait_for_handlers().await;
     commands::close_pending_requests(cleanup_http.as_ref(), &state).await;
     let voice_cleanup = state.voice.leave(GuildId::new(state.config.guild_id)).await;
@@ -1423,7 +1517,7 @@ async fn run_typing_indicator(
                             next_refresh.insert(channel_id, completed_at + TYPING_REFRESH_INTERVAL);
                         }
                         Ok(Err(error)) => {
-                            warn!(%error, %channel_id, "failed to refresh Discord typing indicator");
+                            warn!(error = %sanitize_discord_error_chain(&state.config, &error), %channel_id, "failed to refresh Discord typing indicator");
                             next_refresh.insert(channel_id, completed_at + TYPING_RETRY_INTERVAL);
                         }
                         Err(_) => {
@@ -1578,7 +1672,7 @@ async fn enqueue_voice_inbox(
     match download_pending_voice_attachments(state, msg.id.get()).await {
         Ok(pending) => Ok(pending),
         Err(error) => {
-            warn!(%error, message_id = %msg.id, "voice inbox message persisted; attachment download will be retried later");
+            warn!(error = %sanitize_discord_error_chain(&state.config, &error), message_id = %msg.id, "voice inbox message persisted; attachment download will be retried later");
             Ok(true)
         }
     }
@@ -1590,10 +1684,12 @@ async fn download_pending_voice_attachments(
 ) -> anyhow::Result<bool> {
     match download_pending_voice_attachments_inner(state, message_id).await {
         Ok(pending) => Ok(pending),
-        Err(error) => {
-            let _ = clear_attachment_download_reservation(state, message_id).await;
-            Err(error)
-        }
+        Err(error) => match clear_attachment_download_reservation(state, message_id).await {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(error.context(format!(
+                "also failed to clear attachment retry reservation: {cleanup_error:#}"
+            ))),
+        },
     }
 }
 
@@ -1679,14 +1775,15 @@ async fn download_pending_voice_attachments_inner(
             }
             Err(error) => {
                 had_error = true;
+                let detail = sanitize_discord_error(&state.config, &format!("{error:#}"));
                 if let Some(candidate) = entry
                     .pending_attachments
                     .iter_mut()
                     .find(|candidate| candidate.attachment_id == source.attachment_id)
                 {
-                    candidate.last_error = Some("download failed; retry later".to_owned());
+                    candidate.last_error = Some(detail.clone());
                 }
-                warn!(%error, message_id, attachment_id = source.attachment_id, "voice inbox attachment download failed; preserving retry descriptor");
+                warn!(%detail, message_id, attachment_id = source.attachment_id, "voice inbox attachment download failed; preserving retry descriptor");
             }
         }
         save_queue(&state.queue_path, &staged)?;
@@ -1887,7 +1984,7 @@ async fn read_voice_inbox(
     drop(phase);
     for id in &ids {
         if let Err(error) = download_pending_voice_attachments(state, *id).await {
-            warn!(%error, message_id = id, "could not retry pending voice inbox attachment download");
+            warn!(error = %sanitize_discord_error_chain(&state.config, &error), message_id = id, "could not retry pending voice inbox attachment download");
         }
     }
     let queue = state.queued_inputs.lock().await;
@@ -2271,12 +2368,10 @@ async fn submit_voice_input(
     if !voice_input_matches(&phase, call_id, thread_id, target.channel_id.get()) {
         bail!(
             "{}",
-            state.config.language.text(
-                "The voice call that received this message has ended or changed.",
-                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-                "接收此消息的语音通话已结束或发生变化。",
-                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
         );
     }
     record_input(
@@ -2387,12 +2482,10 @@ async fn submit_input_for_thread(
     {
         bail!(
             "{}",
-            state.config.language.text(
-                "The voice call that received this message has ended or changed.",
-                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-                "接收此消息的语音通话已结束或发生变化。",
-                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
         );
     }
     if should_queue_input_for_voice_phase(&phase, voice_attachment.is_some()) {
@@ -2441,12 +2534,10 @@ async fn submit_input_for_thread(
     {
         bail!(
             "{}",
-            state.config.language.text(
-                "The voice call that received this message has ended or changed.",
-                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-                "接收此消息的语音通话已结束或发生变化。",
-                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
         );
     }
     if recovery.is_some() {
@@ -2486,12 +2577,10 @@ async fn submit_input_for_thread(
     {
         bail!(
             "{}",
-            state.config.language.text(
-                "The voice call that received this message has ended or changed.",
-                "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
-                "接收此消息的语音通话已结束或发生变化。",
-                "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreVoiceCallThatReceivedMessageEnded)
         );
     }
     if let Some(turn_id) = active.clone() {
@@ -2821,12 +2910,8 @@ fn queued_input_submission_text(item: &QueuedInput, language: crate::i18n::Langu
         .iter()
         .map(|attachment| attachment.filename.clone())
         .collect::<Vec<_>>();
-    let message = language.text(
-        "Some attachments were unavailable at dispatch; the message body is preserved.",
-        "일부 첨부 파일을 전송하지 못했지만 메시지 본문은 보존되어 있습니다.",
-        "部分附件在发送时不可用；消息正文已保留。",
-        "送信時に利用できない添付ファイルがありました。メッセージ本文は保持されています。",
-    );
+    let message =
+        language.message(MessageKey::DiscordCoreSomeAttachmentsUnavailableDispatchMessageBody);
     if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&item.text) {
         if let Some(object) = value.as_object_mut() {
             object.insert(
@@ -2862,7 +2947,7 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
     };
     if let Some(message_id) = retry_message {
         if let Err(error) = download_pending_voice_attachments(state, message_id).await {
-            warn!(%error, message_id, "post-call attachment retry failed; message body will still be dispatched with unavailable attachment status");
+            warn!(error = %sanitize_discord_error_chain(&state.config, &error), message_id, "post-call attachment retry failed; message body will still be dispatched with unavailable attachment status");
         }
     }
     let phase = state.voice.input_gate.state.lock().await;
@@ -2903,9 +2988,15 @@ async fn submit_next_queued_input(state: &BridgeState, thread_id: &str) -> anyho
             let mut queue = state.queued_inputs.lock().await;
             transition_input_delivery(&mut queue, item.message_id, QueueDelivery::Unknown, None);
             if let Err(save_error) = save_queue(&state.queue_path, &queue) {
-                warn!(%save_error, "failed to persist unknown next-turn delivery");
+                let detail = sanitize_discord_error_chain(&state.config, &save_error);
+                warn!(%detail, "failed to persist unknown next-turn delivery");
+                return Err(error.context(format!(
+                    "also failed to persist the unknown delivery state: {detail}"
+                )));
             }
-            warn!(%error, discord_message_id = item.message_id, "queued Discord input delivery is unknown and will not be retried automatically");
+            let detail = sanitize_discord_error_chain(&state.config, &error);
+            warn!(%detail, discord_message_id = item.message_id, "queued Discord input delivery is unknown and will not be retried automatically");
+            return Err(error.context("queued Discord input delivery outcome is unknown; it will not be retried automatically"));
         }
     }
     Ok(())
@@ -3346,9 +3437,17 @@ async fn handle_native_event(
         .unwrap_or(serde_json::Value::Null);
     if envelope.get("method").is_some() && envelope.get("id").is_some() {
         if let Err(error) = commands::publish_server_request(http, state, envelope).await {
-            error!(%error, "failed to publish native request in Discord");
+            let detail = sanitize_discord_error_chain(&state.config, &error);
+            error!(%detail, "failed to publish native request in Discord");
+            report_discord_failure(
+                http,
+                &state.config,
+                ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
             if let Some(checks) = &state.installation_checks {
-                checks.request_error(&method, &params, &format!("{error:#}"));
+                checks.request_error(&method, &params, &detail);
             }
         }
         return;
@@ -3368,8 +3467,16 @@ async fn handle_native_event(
         // The captured target is the published request card: text-owned cards live in
         // HOME, while voice-owned cards remain in their transcript thread.
         if let Err(error) = target.channel_id.send_message(http, message).await {
-            warn!(%error, "failed to publish native approval execution result");
-            approval_post_error = Some(format!("{error:#}"));
+            let detail = sanitize_discord_error_chain(&state.config, &error);
+            warn!(%detail, "failed to publish native approval execution result");
+            report_discord_failure(
+                http,
+                &state.config,
+                ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
+            approval_post_error = Some(detail);
         }
     }
     if approval_post_attempted {
@@ -3398,9 +3505,17 @@ async fn handle_native_event(
     }
     match method.as_str() {
         "discodex/thread-state" => {
-            apply_thread_snapshot(state, &params).await;
+            apply_thread_snapshot(http, state, &params).await;
             if let Err(error) = crate::async_questions::recover(http, state).await {
-                warn!(%error, "could not reconcile saved async question answers");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                warn!(%detail, "could not reconcile saved async question answers");
+                report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
         "discodex/connection-closed" => {
@@ -3420,16 +3535,40 @@ async fn handle_native_event(
                 );
             }
             if let Err(error) = commands::mark_connection_closed(http, state, &params).await {
-                warn!(%error, "failed to close pending Discord requests after native connection close");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                warn!(%detail, "failed to close pending Discord requests after native connection close");
+                report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
         "serverRequest/resolved" => {
             if let Err(error) = commands::mark_request_resolved(http, state, &params).await {
-                warn!(%error, "failed to close resolved native request in Discord");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                warn!(%detail, "failed to close resolved native request in Discord");
+                report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
         "error" => {
-            warn!(native_error = ?params, "native reported an error notification");
+            let detail = safe_error_detail(&state.config, native_error_detail(&params));
+            warn!(native_error = ?detail, "native reported an error notification");
+            let content = failure_notice(state.config.language, detail.as_deref());
+            if let Err(error) =
+                send_failure_notice(http, ChannelId::new(state.config.home_channel_id), &content)
+                    .await
+            {
+                error!(error = %sanitize_discord_error_chain(&state.config, &error), native_error = ?detail, "failed to publish native error notification");
+            }
         }
         "turn/started" => {
             let turn_id = params
@@ -3459,7 +3598,15 @@ async fn handle_native_event(
         }
         "turn/plan/updated" => {
             if let Err(error) = publish_task_plan_update(http, state, &params).await {
-                warn!(%error, "failed to publish native task plan update");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                warn!(%detail, "failed to publish native task plan update");
+                report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
         "turn/completed" => {
@@ -3472,33 +3619,38 @@ async fn handle_native_event(
                 .get("threadId")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
+            let turn = params.get("turn").unwrap_or(&serde_json::Value::Null);
+            let mut detail = safe_error_detail(&state.config, native_error_detail(turn));
+            let mut failure_published = false;
             if let Some(turn_id) = turn_id {
-                let turn = params.get("turn").unwrap_or(&serde_json::Value::Null);
                 if turn_failed(turn) {
-                    warn!(native_thread_id = thread_id, native_turn_id = turn_id, native_error = ?turn.get("error"), "native turn failed");
+                    warn!(native_thread_id = thread_id, native_turn_id = turn_id, native_error = ?detail, "native turn failed");
                 }
                 let failure_reply = take_failed_turn_reply(
                     &mut *state.turn_failure_targets.lock().await,
                     thread_id,
                     turn_id,
                     turn,
+                    detail.as_deref(),
+                    state.config.language,
                 );
-                if let Some((target, _message)) = failure_reply {
-                    let content = state.config.language.text(
-                        "Codex could not complete the task. Please try again.",
-                        "Codex가 작업을 완료하지 못했습니다. 다시 시도해 주세요.",
-                        "Codex 无法完成此任务。请重试。",
-                        "Codex はタスクを完了できませんでした。もう一度お試しください。",
-                    );
+                if let Some((target, content)) = failure_reply {
                     let (channel, message) = conversation_reply_message_localized(
                         &target,
                         ChannelId::new(state.config.home_channel_id),
                         state.config.guild_id,
-                        content,
+                        &content,
                         &state.config.language,
                     );
                     if let Err(error) = channel.send_message(http, message).await {
-                        warn!(%error, discord_message_id = %target.message_id, "failed to publish native turn failure");
+                        let delivery_detail = sanitize_discord_error_chain(&state.config, &error);
+                        error!(error = %delivery_detail, discord_message_id = %target.message_id, native_error = ?detail, "failed to publish native turn failure");
+                        let original = detail.as_deref().unwrap_or("Codex turn failed");
+                        detail = Some(format!(
+                            "{original}; Discord delivery failed: {delivery_detail}"
+                        ));
+                    } else {
+                        failure_published = true;
                     }
                 }
                 let mut current = state.current_turn.lock().await;
@@ -3531,20 +3683,64 @@ async fn handle_native_event(
                         if let Err(error) =
                             finish_voice_inbox_turn(state, &key, turn_completed).await
                         {
-                            warn!(%error, native_thread_id = thread_id, native_turn_id = turn_id, "failed to persist voice inbox lookup outcome");
+                            let detail = sanitize_discord_error_chain(&state.config, &error);
+                            warn!(%detail, native_thread_id = thread_id, native_turn_id = turn_id, "failed to persist voice inbox lookup outcome");
+                            report_discord_failure(
+                                http,
+                                &state.config,
+                                ChannelId::new(state.config.home_channel_id),
+                                &detail,
+                            )
+                            .await;
                         }
                     }
                 }
                 if was_active {
                     if let Err(error) = reconcile_voice_inbox_at_idle(state, thread_id).await {
-                        warn!(%error, "failed to reconcile voice inbox reads at turn completion");
+                        let detail = sanitize_discord_error_chain(&state.config, &error);
+                        warn!(%detail, "failed to reconcile voice inbox reads at turn completion");
+                        report_discord_failure(
+                            http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
                     }
                     if let Err(error) = submit_next_queued_input(state, thread_id).await {
-                        warn!(%error, "failed to dispatch next-turn input after completion");
+                        let detail = sanitize_discord_error_chain(&state.config, &error);
+                        warn!(%detail, "failed to dispatch next-turn input after completion");
+                        report_discord_failure(
+                            http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
                     }
                     if let Err(error) = crate::async_questions::recover(http, state).await {
-                        warn!(%error, "could not update async question cards after completion");
+                        let detail = sanitize_discord_error_chain(&state.config, &error);
+                        warn!(%detail, "could not update async question cards after completion");
+                        report_discord_failure(
+                            http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
                     }
+                }
+            }
+            if turn_failed(turn) && !failure_published {
+                let content = failure_notice(state.config.language, detail.as_deref());
+                if let Err(error) = send_failure_notice(
+                    http,
+                    ChannelId::new(state.config.home_channel_id),
+                    &content,
+                )
+                .await
+                {
+                    error!(error = %sanitize_discord_error_chain(&state.config, &error), native_thread_id = thread_id, native_error = ?detail, "failed to publish native turn failure without a source target");
                 }
             }
         }
@@ -3605,11 +3801,28 @@ async fn handle_native_event(
                                 thread_id,
                                 &state.queue_path,
                             ) {
-                                warn!(%error, "failed to persist native-consumed input acceptance");
+                                drop(queue);
+                                let detail = sanitize_discord_error_chain(&state.config, &error);
+                                warn!(%detail, "failed to persist native-consumed input acceptance");
+                                report_discord_failure(
+                                    http,
+                                    &state.config,
+                                    ChannelId::new(state.config.home_channel_id),
+                                    &detail,
+                                )
+                                .await;
                             }
                         }
                         if let Err(error) = crate::async_questions::recover(http, state).await {
-                            warn!(%error, "could not update accepted async question card");
+                            let detail = sanitize_discord_error_chain(&state.config, &error);
+                            warn!(%detail, "could not update accepted async question card");
+                            report_discord_failure(
+                                http,
+                                &state.config,
+                                ChannelId::new(state.config.home_channel_id),
+                                &detail,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -3636,7 +3849,17 @@ async fn handle_native_event(
                             return;
                         }
                         Ok(None) => {}
-                        Err(error) => warn!(%error, "could not resolve native voice item owner"),
+                        Err(error) => {
+                            let detail = sanitize_discord_error_chain(&state.config, &error);
+                            warn!(%detail, "could not resolve native voice item owner");
+                            report_discord_failure(
+                                http,
+                                &state.config,
+                                ChannelId::new(state.config.home_channel_id),
+                                &detail,
+                            )
+                            .await;
+                        }
                     }
                     if let Some(item_id) = item.get("id").and_then(serde_json::Value::as_str) {
                         let target = consumed_reply_target(
@@ -3665,7 +3888,15 @@ async fn handle_native_event(
                         finish_voice_inbox_read(state, outcome.call_id, &outcome.requested_ids, &[])
                             .await
                     {
-                        warn!(%error, "failed to release failed voice inbox lookup");
+                        let detail = sanitize_discord_error_chain(&state.config, &error);
+                        warn!(%detail, "failed to release failed voice inbox lookup");
+                        report_discord_failure(
+                            http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
                     }
                 } else if let (Some(thread_id), Some(turn_id), Some(generation)) =
                     (thread_id, turn_id, generation)
@@ -3690,7 +3921,15 @@ async fn handle_native_event(
                     }
                     let result = publish_async_item(http, state, &params, &item).await;
                     if let Err(error) = result {
-                        error!(%error, native_item_id = ?item.get("id"), "failed to publish async Codex item");
+                        let detail = sanitize_discord_error_chain(&state.config, &error);
+                        error!(%detail, native_item_id = ?item.get("id"), "failed to publish async Codex item");
+                        report_discord_failure(
+                            http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
                     }
                     return;
                 }
@@ -3704,7 +3943,7 @@ async fn handle_native_event(
                 {
                     Ok(destination) => destination,
                     Err(error) => {
-                        warn!(%error, "could not resolve completed native voice item owner");
+                        warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not resolve completed native voice item owner");
                         None
                     }
                 };
@@ -3758,23 +3997,29 @@ async fn handle_native_event(
                             let had_files = prepared.has_files();
                             let builder = prepared.into_builder(builder);
                             if let Err(error) = channel.send_message(http, builder).await {
-                                warn!(%error, native_item_id = ?item_id, discord_message_id = %target.message_id, "failed to publish native assistant output");
-                                publish_error = Some(format!("{error:#}"));
+                                let detail =
+                                    sanitize_discord_error(&state.config, &format!("{error:#}"));
+                                warn!(%detail, native_item_id = ?item_id, discord_message_id = %target.message_id, "failed to publish native assistant output");
+                                publish_error = Some(detail);
                                 if had_files {
-                                    let notice = state.config.language.text(
-                                        "Could not confirm delivery of the attached files. Please try again.",
-                                        "파일 첨부 전송을 확인하지 못했습니다. 다시 요청해 주세요.",
-                                        "无法确认附件已发送，请重试。",
-                                        "添付ファイルの送信を確認できませんでした。もう一度お試しください。",
+                                    let notice = state.config.language.message(
+                                        MessageKey::DiscordCoreCouldNotConfirmDeliveryAttachedFiles,
                                     );
-                                    let _ = channel
+                                    if let Err(notice_error) = channel
                                         .send_message(
                                             http,
                                             CreateMessage::new()
                                                 .content(notice)
                                                 .allowed_mentions(empty_mentions()),
                                         )
-                                        .await;
+                                        .await
+                                    {
+                                        let notice_detail = sanitize_discord_error(
+                                            &state.config,
+                                            &format!("{notice_error:#}"),
+                                        );
+                                        error!(output_error = ?publish_error, %notice_detail, discord_message_id = %target.message_id, "could not report failed assistant output delivery");
+                                    }
                                 }
                                 break;
                             }
@@ -3801,33 +4046,58 @@ async fn handle_native_event(
                                 publish_error.as_deref(),
                             );
                         }
+                        if let Some(detail) = publish_error.as_deref() {
+                            report_discord_failure(
+                                http,
+                                &state.config,
+                                ChannelId::new(state.config.home_channel_id),
+                                &format!("Assistant response delivery failed: {detail}"),
+                            )
+                            .await;
+                        }
                     }
                 }
             }
         }
         "mcpServer/oauthLogin/completed" | "mcpServer/oauth/login/completed" => {
-            if let Some(completion) = crate::discord_plugins::oauth_completion(&envelope) {
-                let notice = commands::oauth_completion_text(&completion, state.config.language);
-                if let Err(error) = publish_home_notice(http, state, &notice).await {
-                    warn!(%error, "could not publish native OAuth completion");
+            match crate::discord_plugins::oauth_completion(&envelope) {
+                Ok(Some(completion)) => {
+                    let notice =
+                        commands::oauth_completion_text(&completion, state.config.language);
+                    let notice = sanitize_discord_error(&state.config, &notice);
+                    if let Err(error) = publish_home_notice(http, state, &notice).await {
+                        let detail = sanitize_discord_error(&state.config, &format!("{error:#}"));
+                        error!(%detail, "could not publish native OAuth completion");
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    report_discord_failure(
+                        http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &format!("{error:#}"),
+                    )
+                    .await;
                 }
             }
         }
         "thread/settings/updated" => {
-            let notice = state.config.language.text(
-                "Codex settings changed. Check the current values with /discodex status.",
-                "Codex 설정이 변경되었습니다. 현재값은 /discodex status에서 확인할 수 있습니다.",
-                "Codex 设置已更改。请使用 /discodex status 查看当前值。",
-                "Codex の設定が変更されました。/discodex status で現在の値を確認してください。",
-            );
-            let _ = ChannelId::new(state.config.home_channel_id)
+            let notice = state
+                .config
+                .language
+                .message(MessageKey::DiscordCoreCodexSettingsChangedCheckCurrentValues);
+            if let Err(error) = ChannelId::new(state.config.home_channel_id)
                 .send_message(
                     http,
                     CreateMessage::new()
                         .content(notice)
                         .allowed_mentions(empty_mentions()),
                 )
-                .await;
+                .await
+            {
+                error!(error = %sanitize_discord_error_chain(&state.config, &error), "could not publish native settings update notice");
+            }
         }
         _ => {}
     }
@@ -3900,7 +4170,11 @@ async fn publish_home_notice(
     Ok(())
 }
 
-async fn apply_thread_snapshot(state: &BridgeState, params: &serde_json::Value) {
+async fn apply_thread_snapshot(
+    http: &serenity::http::Http,
+    state: &BridgeState,
+    params: &serde_json::Value,
+) {
     let Some(thread_id) = params.get("threadId").and_then(serde_json::Value::as_str) else {
         return;
     };
@@ -3929,10 +4203,18 @@ async fn apply_thread_snapshot(state: &BridgeState, params: &serde_json::Value) 
     drop(current);
     if authoritative_idle {
         if let Err(error) = reconcile_voice_inbox_at_idle(state, thread_id).await {
-            warn!(%error, "failed to reconcile voice inbox reads at idle observation");
+            warn!(error = %sanitize_discord_error_chain(&state.config, &error), "failed to reconcile voice inbox reads at idle observation");
         }
         if let Err(error) = submit_next_queued_input(state, thread_id).await {
-            warn!(%error, "failed to dispatch next-turn input after idle observation");
+            let detail = sanitize_discord_error_chain(&state.config, &error);
+            warn!(%detail, "failed to dispatch next-turn input after idle observation");
+            report_discord_failure(
+                http,
+                &state.config,
+                ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
         }
     }
 }
@@ -4005,6 +4287,382 @@ fn bind_turn_failure_target(
     }
 }
 
+pub(crate) fn native_error_detail(value: &serde_json::Value) -> Option<String> {
+    let error = value
+        .get("error")
+        .filter(|value| !value.is_null())
+        .unwrap_or(value);
+    let status = error
+        .get("status")
+        .or_else(|| value.get("status"))
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string())
+        });
+    let code = error
+        .get("code")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string())
+        });
+    let message = ["message", "reason"]
+        .iter()
+        .find_map(|key| error.get(key).and_then(serde_json::Value::as_str))
+        .filter(|message| !message.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| error.as_str().map(str::to_owned));
+    let detail = match (code, message) {
+        (Some(code), Some(message)) => Some(format!("{code}: {message}")),
+        (Some(code), None) => Some(code),
+        (None, Some(message)) => Some(message),
+        (None, None) => None,
+    };
+    match (status, detail) {
+        (Some(status), Some(detail)) => Some(format!("status {status}; {detail}")),
+        (Some(status), None) => Some(format!("status {status}")),
+        (None, detail) => detail,
+    }
+}
+
+fn failure_notice(language: crate::i18n::Language, detail: Option<&str>) -> String {
+    match detail.map(str::trim).filter(|detail| !detail.is_empty()) {
+        Some(detail) => language
+            .message(MessageKey::DiscordCoreFailureDetails)
+            .replace("{error}", detail),
+        None => language
+            .message(MessageKey::DiscordCoreFailureDetailsUnavailable)
+            .to_owned(),
+    }
+}
+
+fn redact_exact_secret(detail: &str, secret: &str) -> String {
+    if secret.is_empty() {
+        detail.to_owned()
+    } else {
+        detail.replace(secret, "[secret redacted]")
+    }
+}
+
+fn sensitive_query_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "token"
+            | "access_token"
+            | "access-token"
+            | "refresh_token"
+            | "refresh-token"
+            | "id_token"
+            | "id-token"
+            | "auth"
+            | "authorization"
+            | "api_key"
+            | "api-key"
+            | "apikey"
+            | "clientsecret"
+            | "client_secret"
+            | "client-secret"
+            | "password"
+            | "secret"
+            | "signature"
+            | "sig"
+            | "hm"
+            | "x-amz-credential"
+            | "x-amz-signature"
+            | "x-amz-security-token"
+            | "x-goog-credential"
+            | "x-goog-signature"
+    )
+}
+
+const SENSITIVE_CREDENTIAL_LABELS: &[&str] = &[
+    "authorization",
+    "access_token",
+    "access-token",
+    "refresh_token",
+    "refresh-token",
+    "id_token",
+    "id-token",
+    "clientsecret",
+    "client_secret",
+    "client-secret",
+    "api_key",
+    "api-key",
+    "apikey",
+    "password",
+    "credential",
+    "secret",
+    "token",
+    "signature",
+    "sig",
+    "hm",
+];
+
+fn redact_url_secrets(raw: &str) -> String {
+    let Ok(mut url) = url::Url::parse(raw) else {
+        return raw.to_owned();
+    };
+    let mut changed = false;
+    if !url.username().is_empty() {
+        let _ = url.set_username("[secret redacted]");
+        changed = true;
+    }
+    if !url.password().unwrap_or_default().is_empty() {
+        let _ = url.set_password(Some("[secret redacted]"));
+        changed = true;
+    }
+    let query_pairs: Vec<_> = url
+        .query_pairs()
+        .map(|(key, value)| {
+            if sensitive_query_key(&key) && !value.is_empty() {
+                changed = true;
+                (key.into_owned(), "[secret redacted]".to_owned())
+            } else {
+                (key.into_owned(), value.into_owned())
+            }
+        })
+        .collect();
+    if changed && url.query().is_some() {
+        let mut query = url.query_pairs_mut();
+        query.clear();
+        for (key, value) in query_pairs {
+            query.append_pair(&key, &value);
+        }
+    }
+    if changed {
+        url.to_string()
+    } else {
+        raw.to_owned()
+    }
+}
+
+fn redact_embedded_urls(detail: &str) -> String {
+    let mut output = String::with_capacity(detail.len());
+    let mut rest = detail;
+    while let Some(start) = rest.find("https://").or_else(|| rest.find("http://")) {
+        output.push_str(&rest[..start]);
+        let candidate = &rest[start..];
+        let end = candidate
+            .find(|character: char| {
+                character.is_whitespace() || ['"', '\'', '<', '>'].contains(&character)
+            })
+            .unwrap_or(candidate.len());
+        let (url, tail) = candidate.split_at(end);
+        let trimmed_url = url.trim_end_matches([',', ';', '.', ')', ']', '}']);
+        let punctuation = &url[trimmed_url.len()..];
+        output.push_str(&redact_url_secrets(trimmed_url));
+        output.push_str(punctuation);
+        rest = tail;
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_authorization_values(detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    let mut output = String::with_capacity(detail.len());
+    let mut rest = detail;
+    let mut lower_rest = lower.as_str();
+    loop {
+        let header = lower_rest.find("authorization:");
+        let bearer = lower_rest.find("bearer ");
+        let (index, is_header) = match (header, bearer) {
+            (Some(header), Some(bearer)) if header <= bearer => (header, true),
+            (Some(_), Some(bearer)) => (bearer, false),
+            (Some(header), None) => (header, true),
+            (None, Some(bearer)) => (bearer, false),
+            (None, None) => break,
+        };
+        output.push_str(&rest[..index]);
+        if is_header {
+            let value_start = index + "authorization:".len();
+            let value_end = lower_rest[value_start..]
+                .find(['\r', '\n', ',', '}', '"'])
+                .map(|offset| value_start + offset)
+                .unwrap_or(rest.len());
+            output.push_str(&rest[index..value_start]);
+            let value = rest[value_start..value_end].trim_start();
+            let scheme_end = value.find(char::is_whitespace).unwrap_or(value.len());
+            let scheme = &value[..scheme_end];
+            if matches!(scheme.to_ascii_lowercase().as_str(), "bearer" | "basic")
+                && scheme_end < value.len()
+            {
+                output.push(' ');
+                output.push_str(scheme);
+                output.push_str(" [secret redacted]");
+            } else {
+                output.push_str(" [secret redacted]");
+            }
+            rest = &rest[value_end..];
+            lower_rest = &lower_rest[value_end..];
+        } else {
+            let value_start = index + "bearer ".len();
+            let value_end = lower_rest[value_start..]
+                .find(|character: char| {
+                    character.is_whitespace() || [',', '"', '\'', '}', ')'].contains(&character)
+                })
+                .map(|offset| value_start + offset)
+                .unwrap_or(rest.len());
+            output.push_str(&rest[index..value_start]);
+            output.push_str("[secret redacted]");
+            rest = &rest[value_end..];
+            lower_rest = &lower_rest[value_end..];
+        }
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_credential_assignments(detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    let mut output = String::with_capacity(detail.len());
+    let mut cursor = 0;
+    while cursor < detail.len() {
+        let candidate = SENSITIVE_CREDENTIAL_LABELS
+            .iter()
+            .filter_map(|label| {
+                lower[cursor..]
+                    .find(label)
+                    .map(|offset| (cursor + offset, *label))
+            })
+            .min_by_key(|(index, _)| *index);
+        let Some((start, label)) = candidate else {
+            output.push_str(&detail[cursor..]);
+            break;
+        };
+        let before_is_label = start > 0
+            && lower[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
+        let after_label = start + label.len();
+        if before_is_label {
+            output.push_str(&detail[cursor..after_label]);
+            cursor = after_label;
+            continue;
+        }
+        let mut value_start = after_label;
+        while lower
+            .as_bytes()
+            .get(value_start)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            value_start += 1;
+        }
+        if !matches!(lower.as_bytes().get(value_start), Some(b':' | b'=')) {
+            output.push_str(&detail[cursor..after_label]);
+            cursor = after_label;
+            continue;
+        }
+        value_start += 1;
+        while lower
+            .as_bytes()
+            .get(value_start)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            value_start += 1;
+        }
+        let quote = lower
+            .as_bytes()
+            .get(value_start)
+            .copied()
+            .filter(|byte| matches!(byte, b'"' | b'\''));
+        if quote.is_some() {
+            value_start += 1;
+        }
+        let value_end = if let Some(quote) = quote {
+            detail[value_start..]
+                .find(char::from(quote))
+                .map(|offset| value_start + offset)
+                .unwrap_or(detail.len())
+        } else {
+            detail[value_start..]
+                .find(|character: char| {
+                    character.is_whitespace() || [',', ';', '}', ')'].contains(&character)
+                })
+                .map(|offset| value_start + offset)
+                .unwrap_or(detail.len())
+        };
+        output.push_str(&detail[cursor..value_start]);
+        output.push_str("[secret redacted]");
+        cursor = value_end;
+    }
+    output
+}
+
+pub(crate) fn sanitize_discord_diagnostic(detail: &str) -> String {
+    redact_embedded_urls(&redact_credential_assignments(
+        &redact_authorization_values(detail),
+    ))
+}
+
+pub(crate) fn sanitize_discord_error(config: &Config, detail: &str) -> String {
+    let detail = match config.token() {
+        Ok(token) if !token.is_empty() => redact_exact_secret(detail, &token),
+        _ => detail.to_owned(),
+    };
+    sanitize_discord_diagnostic(&detail)
+}
+
+/// Redact credential values from diagnostics emitted by the executable entrypoint.
+pub fn sanitize_diagnostic(config: &Config, detail: &str) -> String {
+    sanitize_discord_error(config, detail)
+}
+
+pub(crate) fn sanitize_discord_error_chain(
+    config: &Config,
+    error: &(impl std::fmt::Display + ?Sized),
+) -> String {
+    sanitize_discord_error(config, &format!("{error:#}"))
+}
+
+fn failure_detail(language: crate::i18n::Language, key: MessageKey, detail: &str) -> String {
+    language.message(key).replace("{error}", detail)
+}
+
+fn safe_error_detail(config: &Config, detail: Option<String>) -> Option<String> {
+    let detail = detail?;
+    Some(sanitize_discord_error(config, &detail))
+}
+
+pub(crate) async fn send_failure_notice(
+    http: &serenity::http::Http,
+    channel: ChannelId,
+    content: &str,
+) -> anyhow::Result<()> {
+    for chunk in commands::split_discord_content(content) {
+        channel
+            .send_message(
+                http,
+                CreateMessage::new()
+                    .content(chunk)
+                    .allowed_mentions(empty_mentions()),
+            )
+            .await
+            .context("publish failure details in Discord")?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn report_discord_failure(
+    http: &serenity::http::Http,
+    config: &Config,
+    channel: ChannelId,
+    detail: &str,
+) {
+    let detail = sanitize_discord_error(config, detail);
+    let content = failure_notice(config.language, Some(&detail));
+    if let Err(delivery_error) = send_failure_notice(http, channel, &content).await {
+        let delivery_detail = sanitize_discord_error(config, &format!("{delivery_error:#}"));
+        error!(%detail, delivery_error = %delivery_detail, channel_id = %channel, "failed to deliver failure details in Discord");
+    }
+}
+
 fn turn_failed(turn: &serde_json::Value) -> bool {
     turn.pointer("/status/type")
         .and_then(serde_json::Value::as_str)
@@ -4017,16 +4675,14 @@ fn take_failed_turn_reply(
     thread_id: &str,
     turn_id: &str,
     turn: &serde_json::Value,
-) -> Option<(ReplyTarget, CreateMessage)> {
+    detail: Option<&str>,
+    language: crate::i18n::Language,
+) -> Option<(ReplyTarget, String)> {
     let target = turn_targets.remove(&(thread_id.to_owned(), turn_id.to_owned()))?;
     if !turn_failed(turn) {
         return None;
     }
-    let message = assistant_reply_message(
-        &target,
-        "Codex could not complete the task. Please try again.",
-    );
-    Some((target, message))
+    Some((target, failure_notice(language, detail)))
 }
 
 pub(crate) fn source_message_url(guild_id: u64, target: &ReplyTarget) -> String {
@@ -4053,12 +4709,7 @@ fn with_source_link_localized(
     } else {
         format!(
             "{content}\n\n{}: {}",
-            language.text(
-                "Source message",
-                "원본 메시지",
-                "原始消息",
-                "元のメッセージ"
-            ),
+            language.message(MessageKey::DiscordCoreSourceMessage),
             source_message_url(guild_id, target)
         )
     }
@@ -5639,12 +6290,7 @@ mod tests {
                 assert!(text.chars().count() <= 2_000);
                 joined.push_str(text);
             }
-            let summary = language.text(
-                "Command execution failed.",
-                "명령 실행에 실패했습니다.",
-                "命令执行失败。",
-                "コマンドの実行に失敗しました。",
-            );
+            let summary = language.message(MessageKey::DiscordCoreCommandExecutionFailed);
             assert_eq!(
                 joined,
                 format!("{summary}\n{exit}: 7\n{output}:\n{native_output}")
@@ -5986,6 +6632,54 @@ mod tests {
     }
 
     #[test]
+    fn native_error_details_preserve_code_and_message_without_unrelated_fields() {
+        let error = serde_json::json!({
+            "error": {"status": 503, "code": -32001, "message": "Fictional error detail", "requestId": "synthetic-id"}
+        });
+        assert_eq!(
+            native_error_detail(&error).as_deref(),
+            Some("status 503; -32001: Fictional error detail")
+        );
+        assert_eq!(
+            failure_notice(
+                crate::i18n::Language::English,
+                native_error_detail(&error).as_deref()
+            ),
+            "Operation failed: status 503; -32001: Fictional error detail"
+        );
+        assert_eq!(
+            redact_exact_secret("token abc remains", "abc"),
+            "token [secret redacted] remains"
+        );
+        assert_eq!(
+            redact_authorization_values("Authorization: Basic hidden\nBearer abc.def still safe"),
+            "Authorization: Basic [secret redacted]\nBearer [secret redacted] still safe"
+        );
+        assert_eq!(
+            redact_embedded_urls(
+                "failed https://example.invalid/path?keep=visible&access_token=hidden, then retry"
+            ),
+            "failed https://example.invalid/path?keep=visible&access_token=%5Bsecret+redacted%5D, then retry"
+        );
+        assert_eq!(
+            redact_embedded_urls(
+                "failed https://cdn.example.invalid/file?keep=visible&hm=signature, retry"
+            ),
+            "failed https://cdn.example.invalid/file?keep=visible&hm=%5Bsecret+redacted%5D, retry"
+        );
+        assert_eq!(
+            redact_url_secrets("https://user:password@example.invalid/path"),
+            "https://%5Bsecret%20redacted%5D:%5Bsecret%20redacted%5D@example.invalid/path"
+        );
+        assert_eq!(
+            sanitize_discord_diagnostic(
+                r#"failed password="hidden value" api_key=abc123 path=/srv/app ordinary https://example.invalid/a?keep=yes"#
+            ),
+            r#"failed password="[secret redacted]" api_key=[secret redacted] path=/srv/app ordinary https://example.invalid/a?keep=yes"#
+        );
+    }
+
+    #[test]
     fn failed_turn_reply_keeps_consumed_source_and_is_published_only_once() {
         let first = ReplyTarget {
             source_guild: None,
@@ -6003,30 +6697,43 @@ mod tests {
         bind_turn_failure_target(&mut turn_targets, "thread", "turn-a", later);
         let failed = serde_json::json!({
             "status": "failed",
-            "error": {"message": "PRIVATE_INTERNAL_PAYLOAD", "requestId": "private-id"}
+            "error": {"status": "503 unavailable", "code": "E-42", "message": "Fictional upstream detail", "requestId": "synthetic-id"}
         });
-        let (target, message) =
-            take_failed_turn_reply(&mut turn_targets, "thread", "turn-a", &failed)
-                .expect("failed turn replies to its consumed input");
+        let detail = native_error_detail(&failed);
+        let (target, content) = take_failed_turn_reply(
+            &mut turn_targets,
+            "thread",
+            "turn-a",
+            &failed,
+            detail.as_deref(),
+            crate::i18n::Language::English,
+        )
+        .expect("failed turn replies to its consumed input");
         assert_eq!(target, first);
-        let payload = serde_json::to_value(message).expect("serialize public failure reply");
         assert_eq!(
-            payload["content"],
-            "Codex could not complete the task. Please try again."
+            content,
+            "Operation failed: status 503 unavailable; E-42: Fictional upstream detail"
         );
-        assert_eq!(payload["message_reference"]["message_id"], "76");
-        assert_eq!(payload["message_reference"]["channel_id"], "42");
-        assert_eq!(payload["allowed_mentions"]["parse"], serde_json::json!([]));
-        assert_eq!(payload["allowed_mentions"]["replied_user"], false);
-        assert!(!payload.to_string().contains("PRIVATE_INTERNAL_PAYLOAD"));
-        assert!(!payload.to_string().contains("private-id"));
-        assert!(take_failed_turn_reply(&mut turn_targets, "thread", "turn-a", &failed).is_none());
+        assert!(!content.contains("synthetic-id"));
+        assert!(
+            take_failed_turn_reply(
+                &mut turn_targets,
+                "thread",
+                "turn-a",
+                &failed,
+                detail.as_deref(),
+                crate::i18n::Language::English
+            )
+            .is_none()
+        );
         assert!(
             take_failed_turn_reply(
                 &mut turn_targets,
                 "thread",
                 "turn-b",
                 &serde_json::json!({"status": {"type": "completed"}}),
+                None,
+                crate::i18n::Language::English,
             )
             .is_none()
         );

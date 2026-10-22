@@ -1,3 +1,4 @@
+use crate::i18n::{Language, MessageKey};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -88,18 +89,34 @@ impl DiscordTools {
     }
 
     pub async fn invoke(&self, name: &str, args: Value) -> Result<Value> {
-        match name {
-            "discord_list_channels" => {
-                validate_keys(&args, &[])?;
-                self.list_channels().await
+        let result: Result<Value> = async {
+            match name {
+                "discord_list_channels" => {
+                    validate_keys(&args, &[], self.config.language)?;
+                    self.list_channels().await
+                }
+                "discord_list_users" => self.list_users(&args).await,
+                "discord_send_message" => self.send_message(&args).await,
+                "discord_get_messages" => self.get_messages(&args).await,
+                "discord_search_messages" => self.search_messages(&args).await,
+                "discord_download_attachment" => self.download_attachment(&args).await,
+                _ => bail!(
+                    "{}",
+                    localized_template(
+                        self.config.language,
+                        MessageKey::DiscordToolsUnknownTool,
+                        &[("tool", name.to_owned())]
+                    )
+                ),
             }
-            "discord_list_users" => self.list_users(&args).await,
-            "discord_send_message" => self.send_message(&args).await,
-            "discord_get_messages" => self.get_messages(&args).await,
-            "discord_search_messages" => self.search_messages(&args).await,
-            "discord_download_attachment" => self.download_attachment(&args).await,
-            _ => bail!("unknown Discord tool: {name}"),
         }
+        .await;
+        result.map_err(|error| {
+            anyhow::anyhow!(crate::discord::sanitize_discord_error_chain(
+                &self.config,
+                &error
+            ))
+        })
     }
 
     async fn guild(&self) -> Result<serenity::all::PartialGuild> {
@@ -142,26 +159,47 @@ impl DiscordTools {
     }
 
     fn save_pick(&self, pick: Pick) -> Result<String> {
-        let mut map = self
-            .selections
-            .lock()
-            .map_err(|_| anyhow::anyhow!("selection state lock poisoned"))?;
+        let mut map = self.selections.lock().map_err(|_| {
+            anyhow::anyhow!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsSelectionStateUnavailable)
+            )
+        })?;
         map.insert(pick)
     }
 
     fn get_pick(&self, key: &str) -> Result<Pick> {
         self.selections
             .lock()
-            .map_err(|_| anyhow::anyhow!("selection state lock poisoned"))?
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsSelectionStateUnavailable)
+                )
+            })?
             .lookup(key)
             .ok_or_else(|| {
-                anyhow::anyhow!("unknown selection; list current channels or users again")
+                anyhow::anyhow!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsUnknownSelection)
+                )
             })
     }
 
     async fn permissions(&self, channel: &GuildChannel) -> Result<Permissions> {
         if channel.guild_id.get() != self.config.guild_id {
-            bail!("channel is outside configured guild");
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsChannelOutsideGuild)
+            );
         }
         let guild = self.guild().await?;
         let bot_member = self
@@ -169,7 +207,13 @@ impl DiscordTools {
             .await
             .context("fetch current bot guild member")?;
         let channels = self.fresh_channels(&guild).await?;
-        let permissions = permissions_in(&guild, &bot_member, channel, &channels)?;
+        let permissions = permissions_in(
+            &guild,
+            &bot_member,
+            channel,
+            &channels,
+            self.config.language,
+        )?;
         Ok(permissions)
     }
 
@@ -186,7 +230,12 @@ impl DiscordTools {
                 .ok()
                 .filter(|id| *id != 0)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("thread_id must be a positive Discord channel ID string")
+                    anyhow::anyhow!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsThreadIdPositive)
+                    )
                 })?;
             let channel = self
                 .http
@@ -194,41 +243,87 @@ impl DiscordTools {
                 .await
                 .context("fetch selected Discord thread")?
                 .guild()
-                .ok_or_else(|| anyhow::anyhow!("thread_id does not identify a guild thread"))?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsThreadIdNotGuildThread)
+                    )
+                })?;
             if channel.guild_id.get() != self.config.guild_id {
-                bail!("thread is outside configured guild")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsThreadOutsideGuild)
+                )
             }
             if !thread(&channel) {
-                bail!("thread_id does not identify a thread")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsThreadNotThread)
+                )
             }
-            if !permissions_in(&guild, &bot_member, &channel, &all)?
+            if !permissions_in(&guild, &bot_member, &channel, &all, self.config.language)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
-                bail!("bot cannot view selected thread")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsThreadNotViewable)
+                )
             }
             return Ok(channel);
         }
         if let Some(key) = args.get("channel_choice").and_then(Value::as_str) {
             let Pick::Channel { id, name, parent } = self.get_pick(key)? else {
-                bail!("choice is not a channel")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChoiceNotChannel)
+                )
             };
-            let channel =
-                all.iter().find(|c| c.id == id).cloned().ok_or_else(|| {
-                    anyhow::anyhow!("channel choice is stale; list channels again")
-                })?;
+            let channel = all.iter().find(|c| c.id == id).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChannelChoiceStale)
+                )
+            })?;
             if channel.name != name || channel.parent_id != parent {
-                bail!("channel was renamed or moved; list channels again");
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChannelRenamedOrMoved)
+                );
             }
-            if !permissions_in(&guild, &bot_member, &channel, &all)?
+            if !permissions_in(&guild, &bot_member, &channel, &all, self.config.language)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
-                bail!("bot cannot view selected channel");
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChannelNotViewable)
+                );
             }
             return Ok(channel);
         }
-        let query = channel_name_query(required(args, "channel")?);
+        let query = channel_name_query(required(args, "channel", self.config.language)?);
         if query.trim().is_empty() {
-            bail!("channel must be a non-empty name")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsChannelNameRequired)
+            )
         }
         let (category, leaf) = query
             .split_once('/')
@@ -241,7 +336,7 @@ impl DiscordTools {
             .collect();
         let mut matches = Vec::new();
         for channel in matching_named_channels(&all, &categories, category, leaf, None) {
-            if !permissions_in(&guild, &bot_member, channel, &all)?
+            if !permissions_in(&guild, &bot_member, channel, &all, self.config.language)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
                 continue;
@@ -249,7 +344,14 @@ impl DiscordTools {
             matches.push(channel.clone());
         }
         match matches.as_slice() {
-            [] => bail!("no visible current channel matches {query:?} in configured guild"),
+            [] => bail!(
+                "{}",
+                localized_template(
+                    self.config.language,
+                    MessageKey::DiscordToolsNoChannelMatches,
+                    &[("query", format!("{query:?}"))]
+                )
+            ),
             [one] => Ok(one.clone()),
             many => {
                 let mut candidates = Vec::new();
@@ -257,7 +359,7 @@ impl DiscordTools {
                     let cat = c.parent_id.and_then(|id| categories.get(&id)).cloned();
                     candidates.push(json!({"name":cat.as_ref().map(|x|format!("{x}/{}",c.name)).unwrap_or_else(||c.name.clone()),"type":format!("{:?}",c.kind),"choice":self.save_pick(Pick::Channel{id:c.id,name:c.name.clone(),parent:c.parent_id})?}));
                 }
-                Ok(json!({"error":"ambiguous channel name","candidates":candidates}))
+                Ok(json!({"error":self.config.language.message(MessageKey::DiscordToolsAmbiguousChannelName),"candidates":candidates}))
                     .and_then(|v| Err(anyhow::anyhow!("{v}")))
             }
         }
@@ -265,7 +367,7 @@ impl DiscordTools {
 
     async fn resolve_message_channel(&self, args: &Value) -> Result<MessageChannel> {
         if let Some(dm_id) = args.get("dm_id") {
-            let id = selected_channel_id(dm_id, "dm_id")?;
+            let id = selected_channel_id(dm_id, "dm_id", self.config.language)?;
             let channel = self
                 .http
                 .get_channel(id)
@@ -273,7 +375,12 @@ impl DiscordTools {
                 .context("fetch selected DM")?;
             return match channel {
                 Channel::Private(channel) => Ok(MessageChannel::Dm(channel)),
-                _ => bail!("dm_id does not identify a direct-message conversation"),
+                _ => bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsDmIdNotDm)
+                ),
             };
         }
         self.resolve_channel(args).await.map(MessageChannel::Guild)
@@ -291,7 +398,11 @@ impl DiscordTools {
 
     async fn require_message_read_permissions(&self, channel: &MessageChannel) -> Result<()> {
         if let MessageChannel::Guild(channel) = channel {
-            require_read_permissions(channel.kind, self.permissions(channel).await?)?;
+            require_read_permissions(
+                channel.kind,
+                self.permissions(channel).await?,
+                self.config.language,
+            )?;
         }
         Ok(())
     }
@@ -312,11 +423,14 @@ impl DiscordTools {
     }
 
     fn resolve_dm_mention(&self, value: &Value, channel: &PrivateChannel) -> Result<UserId> {
-        let query = user_name_query(
-            value
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("user names must be strings"))?,
-        );
+        let query = user_name_query(value.as_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsUserNamesMustBeStrings)
+            )
+        })?);
         let recipient = &channel.recipient;
         if is_choice(query) {
             if let Pick::User { id, .. } = self.get_pick(query)? {
@@ -332,11 +446,18 @@ impl DiscordTools {
         ) {
             return Ok(recipient.id);
         }
-        bail!("no recipient in this DM matches {query:?}")
+        bail!(
+            "{}",
+            localized_template(
+                self.config.language,
+                MessageKey::DiscordToolsNoDmRecipientMatch,
+                &[("query", format!("{query:?}"))]
+            )
+        )
     }
 
     pub(crate) async fn resolve_voice_channel(&self, args: &Value) -> Result<GuildChannel> {
-        validate_voice_channel_selection(args)?;
+        validate_voice_channel_selection(args, self.config.language)?;
         let guild = self.guild().await?;
         let all = self.fresh_channels(&guild).await?;
         let bot_member = self
@@ -346,27 +467,51 @@ impl DiscordTools {
 
         if let Some(key) = args.get("channel_choice").and_then(Value::as_str) {
             let Pick::Channel { id, name, parent } = self.get_pick(key)? else {
-                bail!("choice is not a channel")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChoiceNotChannel)
+                )
             };
-            let channel = all
-                .iter()
-                .find(|channel| channel.id == id)
-                .ok_or_else(|| anyhow::anyhow!("channel choice is stale; list channels again"))?;
+            let channel = all.iter().find(|channel| channel.id == id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChannelChoiceStale)
+                )
+            })?;
             if channel.name != name || channel.parent_id != parent {
-                bail!("channel was renamed or moved; list channels again");
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChannelRenamedOrMoved)
+                );
             }
-            require_voice_channel(channel)?;
-            if !permissions_in(&guild, &bot_member, channel, &all)?
+            require_voice_channel(channel, self.config.language)?;
+            if !permissions_in(&guild, &bot_member, channel, &all, self.config.language)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
-                bail!("bot cannot view selected voice channel");
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsVoiceChannelNotViewable)
+                );
             }
             return Ok(channel.clone());
         }
 
-        let query = channel_name_query(required(args, "channel")?);
+        let query = channel_name_query(required(args, "channel", self.config.language)?);
         if query.trim().is_empty() {
-            bail!("channel must be a non-empty name");
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsChannelNameRequired)
+            );
         }
         let (category, leaf) = query
             .split_once('/')
@@ -381,7 +526,7 @@ impl DiscordTools {
         for channel in
             matching_named_channels(&all, &categories, category, leaf, Some(ChannelType::Voice))
         {
-            if !permissions_in(&guild, &bot_member, channel, &all)?
+            if !permissions_in(&guild, &bot_member, channel, &all, self.config.language)?
                 .contains(Permissions::VIEW_CHANNEL)
             {
                 continue;
@@ -389,7 +534,14 @@ impl DiscordTools {
             matches.push(channel.clone());
         }
         match matches.as_slice() {
-            [] => bail!("no visible current voice channel matches {query:?} in configured guild"),
+            [] => bail!(
+                "{}",
+                localized_template(
+                    self.config.language,
+                    MessageKey::DiscordToolsNoVoiceChannelMatches,
+                    &[("query", format!("{query:?}"))]
+                )
+            ),
             [one] => Ok(one.clone()),
             many => {
                 let mut candidates = Vec::new();
@@ -406,7 +558,7 @@ impl DiscordTools {
                 }
                 bail!(
                     "{}",
-                    json!({"error":"ambiguous voice channel name","candidates":candidates})
+                    json!({"error":self.config.language.message(MessageKey::DiscordToolsAmbiguousVoiceChannelName),"candidates":candidates})
                 );
             }
         }
@@ -426,7 +578,9 @@ impl DiscordTools {
             .collect();
         let mut out = Vec::new();
         for c in all.iter().filter(|c| c.kind != ChannelType::Category) {
-            if !permissions_in(&guild, &bot_member, c, &all)?.contains(Permissions::VIEW_CHANNEL) {
+            if !permissions_in(&guild, &bot_member, c, &all, self.config.language)?
+                .contains(Permissions::VIEW_CHANNEL)
+            {
                 continue;
             }
             let cat = c.parent_id.and_then(|id| cats.get(&id)).cloned();
@@ -450,18 +604,28 @@ impl DiscordTools {
     }
 
     async fn list_users(&self, args: &Value) -> Result<Value> {
-        validate_keys(args, &["limit", "page"])?;
+        validate_keys(args, &["limit", "page"], self.config.language)?;
         if args
             .get("page")
             .is_some_and(|v| v.as_str().is_none_or(|s| !is_choice(s)))
         {
-            bail!("page must be an opaque next_page string")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsPageTokenRequired)
+            )
         }
-        let limit = bounded(args, "limit", 50, 1, 1000)?;
+        let limit = bounded(args, "limit", 50, 1, 1000, self.config.language)?;
         let after = match args.get("page").and_then(Value::as_str) {
             Some(k) => match self.get_pick(k)? {
                 Pick::After(id) => Some(id),
-                _ => bail!("invalid member page token"),
+                _ => bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsMemberPageInvalid)
+                ),
             },
             None => None,
         };
@@ -469,7 +633,16 @@ impl DiscordTools {
         let page = guild
             .members(&*self.http, Some(limit), after)
             .await
-            .map_err(|e| anyhow::anyhow!("Discord could not list guild members ({e}); the application's privileged GUILD_MEMBERS intent may need enabling/approval in Developer Portal. No intent or permission was changed."))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{}",
+                    localized_template(
+                        self.config.language,
+                        MessageKey::DiscordToolsMemberListIntent,
+                        &[("error", e.to_string())]
+                    )
+                )
+            })?;
         let mut users = Vec::new();
         for m in &page {
             users.push(user_value(
@@ -495,7 +668,19 @@ impl DiscordTools {
         let mut after = None;
         let mut all = Vec::new();
         loop {
-            let page=guild.members(&*self.http,Some(1000),after).await.map_err(|e|anyhow::anyhow!("Discord could not resolve current guild members ({e}); privileged GUILD_MEMBERS intent may need enabling/approval in Developer Portal. No intent or permission was changed."))?;
+            let page = guild
+                .members(&*self.http, Some(1000), after)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "{}",
+                        localized_template(
+                            self.config.language,
+                            MessageKey::DiscordToolsMemberResolveIntent,
+                            &[("error", e.to_string())]
+                        )
+                    )
+                })?;
             if page.is_empty() {
                 break;
             }
@@ -510,22 +695,41 @@ impl DiscordTools {
     }
 
     fn resolve_user(&self, value: &Value, members: &[Member]) -> Result<Member> {
-        let raw_query = value
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("user names must be strings"))?;
+        let raw_query = value.as_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsUserNamesMustBeStrings)
+            )
+        })?;
         let query = user_name_query(raw_query);
         if is_choice(query) {
             if let Pick::User { id, label: old } = self.get_pick(query)? {
-                let member = members
-                    .iter()
-                    .find(|m| m.user.id == id)
-                    .ok_or_else(|| anyhow::anyhow!("selected user left the configured guild"))?;
+                let member = members.iter().find(|m| m.user.id == id).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsUserLeftGuild)
+                    )
+                })?;
                 if label(member) != old {
-                    bail!("user name changed; list users again")
+                    bail!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsUserNameChanged)
+                    )
                 }
                 return Ok(member.clone());
             }
-            bail!("choice token is not a user selection")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsChoiceNotUser)
+            )
         }
         let matches: Vec<Member> = members
             .iter()
@@ -533,7 +737,14 @@ impl DiscordTools {
             .cloned()
             .collect();
         match matches.as_slice() {
-            [] => bail!("no current guild member matches {query:?}; list users for current names"),
+            [] => bail!(
+                "{}",
+                localized_template(
+                    self.config.language,
+                    MessageKey::DiscordToolsNoMemberMatches,
+                    &[("query", format!("{query:?}"))]
+                )
+            ),
             [one] => Ok(one.clone()),
             many => {
                 let mut candidates = Vec::new();
@@ -542,7 +753,7 @@ impl DiscordTools {
                 }
                 bail!(
                     "{}",
-                    json!({"error":"ambiguous user name","candidates":candidates})
+                    json!({"error":self.config.language.message(MessageKey::DiscordToolsAmbiguousUserName),"candidates":candidates})
                 );
             }
         }
@@ -560,27 +771,43 @@ impl DiscordTools {
                 "mentions",
                 "files",
             ],
+            self.config.language,
         )?;
-        validate_channel_selection(args)?;
-        let file_paths = explicit_file_paths(args)?;
+        validate_channel_selection(args, self.config.language)?;
+        let file_paths = explicit_file_paths(args, self.config.language)?;
         let raw_content = args
             .get("content")
             .map(|value| {
-                value
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("content must be a string"))
+                value.as_str().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsContentMustBeString)
+                    )
+                })
             })
             .transpose()?
             .unwrap_or("");
         let files = crate::reply_files::prepare_explicit_files(&self.config, &file_paths).await?;
-        validate_send_payload(raw_content, files.len())?;
+        validate_send_payload(raw_content, files.len(), self.config.language)?;
         if args.get("mentions").is_some_and(|v| !v.is_array()) {
-            bail!("mentions must be an array")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsMentionsMustBeArray)
+            )
         }
         if let Some(names) = args.get("mentions").and_then(Value::as_array) {
             for name in names {
                 if name.as_str().is_none_or(|s| s.trim().is_empty()) {
-                    bail!("each mention must be a non-empty recipient/member name or choice")
+                    bail!(
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsMentionItemNonempty)
+                    )
                 }
             }
         }
@@ -588,7 +815,12 @@ impl DiscordTools {
         let perms = self.message_channel_permissions(&channel).await?;
         if let (MessageChannel::Guild(channel), Some(perms)) = (&channel, perms) {
             if !perms.contains(Permissions::VIEW_CHANNEL) {
-                bail!("bot lacks VIEW_CHANNEL")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsBotLacksViewChannel)
+                )
             }
             let needed = if thread(channel) {
                 Permissions::SEND_MESSAGES_IN_THREADS
@@ -596,7 +828,12 @@ impl DiscordTools {
                 Permissions::SEND_MESSAGES
             };
             if !perms.contains(needed) {
-                bail!("bot lacks permission to send in selected channel")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsBotLacksSendPermission)
+                )
             }
         }
         let mention_names = args.get("mentions").and_then(Value::as_array);
@@ -622,7 +859,12 @@ impl DiscordTools {
         if !files.is_empty()
             && perms.is_some_and(|perms| !perms.contains(Permissions::ATTACH_FILES))
         {
-            bail!("bot lacks ATTACH_FILES permission in selected channel")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsBotLacksAttachPermission)
+            )
         }
         let content = prepend_resolved_mentions(raw_content, &users);
         let prepared = if perms.is_none_or(|perms| perms.contains(Permissions::ATTACH_FILES)) {
@@ -664,7 +906,10 @@ impl DiscordTools {
                 }) {
                 Ok(sent) => sent,
                 Err(error) => {
-                    send_error = Some(error.to_string());
+                    send_error = Some(crate::discord::sanitize_discord_error(
+                        &self.config,
+                        &format!("{error:#}"),
+                    ));
                     break;
                 }
             };
@@ -820,36 +1065,52 @@ impl DiscordTools {
                 "around",
                 "offset",
             ],
+            self.config.language,
         )?;
-        validate_channel_selection(args)?;
-        let limit = requested_count(args, "limit", 50)?;
+        validate_channel_selection(args, self.config.language)?;
+        let limit = requested_count(args, "limit", 50, self.config.language)?;
         if limit == 0 {
-            bail!("limit must be at least 1")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsLimitAtLeastOne)
+            )
         }
-        let before_link = link_arg(args, "before")?;
-        let after_link = link_arg(args, "after")?;
-        let around_link = link_arg(args, "around")?;
+        let before_link = link_arg(args, "before", self.config.language)?;
+        let after_link = link_arg(args, "after", self.config.language)?;
+        let around_link = link_arg(args, "around", self.config.language)?;
         if [before_link, after_link, around_link]
             .iter()
             .filter(|v| v.is_some())
             .count()
             > 1
         {
-            bail!("choose at most one cursor: before, after, or around")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsOneHistoryCursor)
+            )
         }
-        let offset = requested_count(args, "offset", 0)?;
+        let offset = requested_count(args, "offset", 0, self.config.language)?;
         if offset > 0 && (after_link.is_some() || around_link.is_some()) {
-            bail!("offset cannot be combined with after or around")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsOffsetCursorConflict)
+            )
         }
         let c = self.resolve_message_channel(args).await?;
         let before = before_link
-            .map(|link| parse_message_link(link, c.guild_id(), c.id().get()))
+            .map(|link| parse_message_link(link, c.guild_id(), c.id().get(), self.config.language))
             .transpose()?;
         let after = after_link
-            .map(|link| parse_message_link(link, c.guild_id(), c.id().get()))
+            .map(|link| parse_message_link(link, c.guild_id(), c.id().get(), self.config.language))
             .transpose()?;
         let around = around_link
-            .map(|link| parse_message_link(link, c.guild_id(), c.id().get()))
+            .map(|link| parse_message_link(link, c.guild_id(), c.id().get(), self.config.language))
             .transpose()?;
         self.require_message_read_permissions(&c).await?;
         let mut offset = offset;
@@ -959,19 +1220,35 @@ impl DiscordTools {
                 "max_scan",
                 "limit",
             ],
+            self.config.language,
         )?;
-        validate_channel_selection(args)?;
-        let max = requested_count(args, "max_scan", 100)?;
+        validate_channel_selection(args, self.config.language)?;
+        let max = requested_count(args, "max_scan", 100, self.config.language)?;
         if max == 0 {
-            bail!("max_scan must be at least 1")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsMaxScanAtLeastOne)
+            )
         }
-        let result_limit = requested_count(args, "limit", 1000)?;
+        let result_limit = requested_count(args, "limit", 1000, self.config.language)?;
         if result_limit == 0 {
-            bail!("limit must be at least 1")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsLimitAtLeastOne)
+            )
         }
-        let query = required(args, "query")?;
+        let query = required(args, "query", self.config.language)?;
         if query.is_empty() {
-            bail!("query cannot be empty")
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsQueryRequired)
+            )
         }
         let c = self.resolve_message_channel(args).await?;
         self.require_message_read_permissions(&c).await?;
@@ -1032,26 +1309,47 @@ impl DiscordTools {
                 "filename",
                 "attachment_choice",
             ],
+            self.config.language,
         )?;
-        validate_channel_selection(args)?;
-        let link = required(args, "message_link")?;
+        validate_channel_selection(args, self.config.language)?;
+        let link = required(args, "message_link", self.config.language)?;
         let filename = match args.get("filename") {
             None => None,
             Some(Value::String(value)) if !value.trim().is_empty() => Some(value.as_str()),
-            Some(_) => bail!("filename must be a non-empty string"),
+            Some(_) => bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsFilenameNonempty)
+            ),
         };
         let choice = match args.get("attachment_choice") {
             None => None,
             Some(Value::String(value)) if is_choice(value) => Some(value.as_str()),
-            Some(_) => bail!("attachment_choice must be a returned opaque choice"),
+            Some(_) => bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsAttachmentChoiceInvalid)
+            ),
         };
         match (filename, choice) {
             (Some(_), None) | (None, Some(_)) => {}
-            (Some(_), Some(_)) => bail!("provide a filename or attachment_choice, not both"),
-            (None, None) => bail!("filename or attachment_choice is required"),
+            (Some(_), Some(_)) => bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsFilenameOrChoiceExclusive)
+            ),
+            (None, None) => bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::DiscordToolsFilenameOrChoiceRequired)
+            ),
         }
         let c = self.resolve_message_channel(args).await?;
-        let msg_id = parse_message_link(link, c.guild_id(), c.id().get())?;
+        let msg_id = parse_message_link(link, c.guild_id(), c.id().get(), self.config.language)?;
         self.require_message_read_permissions(&c).await?;
         let msg = c
             .id()
@@ -1066,24 +1364,44 @@ impl DiscordTools {
                 filename,
             } = self.get_pick(key)?
             else {
-                bail!("choice token is not an attachment selection")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsChoiceNotAttachment)
+                )
             };
             if message_id != msg.id {
-                bail!("attachment choice belongs to a different message")
+                bail!(
+                    "{}",
+                    self.config
+                        .language
+                        .message(MessageKey::DiscordToolsAttachmentChoiceOtherMessage)
+                )
             }
             attachments
                 .iter()
                 .find(|a| a.id.get() == attachment_id && a.filename == filename)
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "selected attachment changed or was removed; read the message again"
+                        "{}",
+                        self.config
+                            .language
+                            .message(MessageKey::DiscordToolsAttachmentChanged)
                     )
                 })?
         } else {
             let expected = filename.expect("validated filename");
             let mut matches = attachments.iter().filter(|a| a.filename == expected);
             let Some(one) = matches.next() else {
-                bail!("no attachment named {expected:?} in this message")
+                bail!(
+                    "{}",
+                    localized_template(
+                        self.config.language,
+                        MessageKey::DiscordToolsNoAttachmentNamed,
+                        &[("filename", format!("{expected:?}"))]
+                    )
+                )
             };
             if matches.next().is_some() {
                 let candidates = attachments.iter().filter(|a| a.filename == expected).map(|a| {
@@ -1091,7 +1409,7 @@ impl DiscordTools {
                 }).collect::<Result<Vec<_>>>()?;
                 bail!(
                     "{}",
-                    json!({"error":"attachment filename is ambiguous","candidates":candidates})
+                    json!({"error":self.config.language.message(MessageKey::DiscordToolsAmbiguousAttachmentFilename),"candidates":candidates})
                 );
             }
             one
@@ -1111,14 +1429,32 @@ impl DiscordTools {
     }
 }
 
-fn require_read_permissions(kind: ChannelType, permissions: Permissions) -> Result<()> {
+fn localized_template(language: Language, key: MessageKey, values: &[(&str, String)]) -> String {
+    let mut message = language.message(key).to_owned();
+    for (name, value) in values {
+        message = message.replace(&format!("{{{name}}}"), value);
+    }
+    message
+}
+
+fn require_read_permissions(
+    kind: ChannelType,
+    permissions: Permissions,
+    language: Language,
+) -> Result<()> {
     if !permissions.contains(Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY) {
-        bail!("bot needs VIEW_CHANNEL and READ_MESSAGE_HISTORY");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsNeedMessageReadPermissions)
+        );
     }
     if matches!(kind, ChannelType::Voice | ChannelType::Stage)
         && !permissions.contains(Permissions::CONNECT)
     {
-        bail!("bot needs CONNECT to read the selected voice channel");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsNeedVoiceConnect)
+        );
     }
     Ok(())
 }
@@ -1146,20 +1482,26 @@ fn message_cursors(
     json!({"next_before":before,"next_after":after,"next_cursor":next})
 }
 
-fn validate_send_payload(content: &str, file_count: usize) -> Result<()> {
+fn validate_send_payload(content: &str, file_count: usize, language: Language) -> Result<()> {
     if content.trim().is_empty() && file_count == 0 {
-        bail!("provide non-empty content or at least one file");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsMessageContentOrFileRequired)
+        );
     }
     Ok(())
 }
 
-fn explicit_file_paths(args: &Value) -> Result<Vec<String>> {
+fn explicit_file_paths(args: &Value, language: Language) -> Result<Vec<String>> {
     let Some(files) = args.get("files") else {
         return Ok(Vec::new());
     };
-    let files = files
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("files must be an array of local path strings"))?;
+    let files = files.as_array().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            language.message(MessageKey::DiscordToolsFilesArrayOfPathsRequired)
+        )
+    })?;
     files
         .iter()
         .enumerate()
@@ -1169,100 +1511,207 @@ fn explicit_file_paths(args: &Value) -> Result<Vec<String>> {
                 .filter(|path| !path.trim().is_empty())
                 .map(str::to_owned)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("files[{index}] must be a non-empty local path string")
+                    anyhow::anyhow!(
+                        "{}",
+                        localized_template(
+                            language,
+                            MessageKey::DiscordToolsFilePathNonempty,
+                            &[("index", index.to_string())]
+                        )
+                    )
                 })
         })
         .collect()
 }
 
-fn validate_keys(v: &Value, allowed: &[&str]) -> Result<()> {
-    let object = v
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("arguments must be a JSON object"))?;
+fn validate_keys(v: &Value, allowed: &[&str], language: Language) -> Result<()> {
+    let object = v.as_object().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            language.message(MessageKey::DiscordToolsArgumentsObjectRequired)
+        )
+    })?;
     for key in object.keys() {
         if !allowed.contains(&key.as_str()) {
-            bail!("unknown argument {key:?}")
+            bail!(
+                "{}",
+                localized_template(
+                    language,
+                    MessageKey::DiscordToolsUnknownArgument,
+                    &[("argument", format!("{key:?}"))]
+                )
+            )
         }
     }
     Ok(())
 }
-fn validate_channel_selection(v: &Value) -> Result<()> {
+fn validate_channel_selection(v: &Value, language: Language) -> Result<()> {
     let selectors = ["channel", "channel_choice", "thread_id", "dm_id"];
     if selectors.iter().filter(|key| v.get(*key).is_some()).count() != 1 {
-        bail!("provide exactly one of channel, channel_choice, thread_id, or dm_id");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsExactlyOneChannelSelector)
+        );
     }
     for key in ["thread_id", "dm_id"] {
         if let Some(id) = v.get(key) {
-            selected_channel_id(id, key)?;
+            selected_channel_id(id, key, language)?;
             return Ok(());
         }
     }
     if let Some(name) = v.get("channel") {
         if !name.as_str().is_some_and(|name| !name.trim().is_empty()) {
-            bail!("channel must be a non-empty name string");
+            bail!(
+                "{}",
+                language.message(MessageKey::DiscordToolsChannelNameStringRequired)
+            );
         }
     } else if !v
         .get("channel_choice")
         .and_then(Value::as_str)
         .is_some_and(is_choice)
     {
-        bail!("channel_choice must be an opaque choice string");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsChannelChoiceStringRequired)
+        );
     }
     Ok(())
 }
 
-fn selected_channel_id(value: &Value, key: &str) -> Result<ChannelId> {
+fn selected_channel_id(value: &Value, key: &str, language: Language) -> Result<ChannelId> {
     value
         .as_str()
         .and_then(|id| id.parse::<u64>().ok())
         .filter(|id| *id != 0)
         .map(ChannelId::new)
-        .ok_or_else(|| anyhow::anyhow!("{key} must be a positive Discord channel ID string"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                localized_template(
+                    language,
+                    MessageKey::DiscordToolsChannelIdPositive,
+                    &[("field", key.to_owned())]
+                )
+            )
+        })
 }
-fn required<'a>(v: &'a Value, k: &str) -> Result<&'a str> {
+fn required<'a>(v: &'a Value, k: &str, language: Language) -> Result<&'a str> {
     v.get(k)
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("{k} must be a non-empty string"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                localized_template(
+                    language,
+                    MessageKey::DiscordToolsFieldNonempty,
+                    &[("field", k.to_owned())]
+                )
+            )
+        })
 }
-fn bounded(v: &Value, k: &str, default: u64, min: u64, max: u64) -> Result<u64> {
+fn bounded(
+    v: &Value,
+    k: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+    language: Language,
+) -> Result<u64> {
     let Some(raw) = v.get(k) else {
         return Ok(default);
     };
-    let n = raw
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("{k} must be a non-negative integer"))?;
+    let n = raw.as_u64().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            localized_template(
+                language,
+                MessageKey::DiscordToolsFieldNonnegativeInteger,
+                &[("field", k.to_owned())]
+            )
+        )
+    })?;
     if !(min..=max).contains(&n) {
-        bail!("{k} must be between {min} and {max}")
+        bail!(
+            "{}",
+            localized_template(
+                language,
+                MessageKey::DiscordToolsFieldRange,
+                &[
+                    ("field", k.to_owned()),
+                    ("min", min.to_string()),
+                    ("max", max.to_string())
+                ]
+            )
+        )
     }
     Ok(n)
 }
-fn requested_count(v: &Value, key: &str, default: usize) -> Result<usize> {
+fn requested_count(v: &Value, key: &str, default: usize, language: Language) -> Result<usize> {
     let Some(raw) = v.get(key) else {
         return Ok(default);
     };
-    let value = raw
-        .as_u64()
-        .ok_or_else(|| anyhow::anyhow!("{key} must be a non-negative integer"))?;
-    usize::try_from(value).map_err(|_| anyhow::anyhow!("{key} is too large for this platform"))
+    let value = raw.as_u64().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            localized_template(
+                language,
+                MessageKey::DiscordToolsFieldNonnegativeInteger,
+                &[("field", key.to_owned())]
+            )
+        )
+    })?;
+    usize::try_from(value).map_err(|_| {
+        anyhow::anyhow!(
+            "{}",
+            localized_template(
+                language,
+                MessageKey::DiscordToolsFieldTooLarge,
+                &[("field", key.to_owned())]
+            )
+        )
+    })
 }
 
-fn link_arg<'a>(v: &'a Value, k: &str) -> Result<Option<&'a str>> {
+fn link_arg<'a>(v: &'a Value, k: &str, language: Language) -> Result<Option<&'a str>> {
     let Some(raw) = v.get(k) else { return Ok(None) };
     let link = raw
         .as_str()
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("{k} must be a Discord message link"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                localized_template(
+                    language,
+                    MessageKey::DiscordToolsDiscordMessageLinkRequired,
+                    &[("field", k.to_owned())]
+                )
+            )
+        })?;
     Ok(Some(link))
 }
-fn parse_message_link(link: &str, guild_id: u64, channel_id: u64) -> Result<MessageId> {
+fn parse_message_link(
+    link: &str,
+    guild_id: u64,
+    channel_id: u64,
+    language: Language,
+) -> Result<MessageId> {
     let path = link
         .strip_prefix("https://discord.com/channels/")
         .or_else(|| link.strip_prefix("https://discordapp.com/channels/"))
-        .ok_or_else(|| anyhow::anyhow!("message reference must be a Discord message link"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                language.message(MessageKey::DiscordToolsMessageReferenceLinkRequired)
+            )
+        })?;
     let parts: Vec<_> = path.split('/').collect();
     if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
-        bail!("message link must identify one server, channel, and message")
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsMessageLinkIdentity)
+        )
     }
     let linked_guild = if parts[0] == "@me" {
         Some(0)
@@ -1274,9 +1723,17 @@ fn parse_message_link(link: &str, guild_id: u64, channel_id: u64) -> Result<Mess
         .parse::<u64>()
         .ok()
         .filter(|id| *id > 0)
-        .ok_or_else(|| anyhow::anyhow!("message link does not contain a valid message"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                language.message(MessageKey::DiscordToolsMessageLinkInvalidMessage)
+            )
+        })?;
     if linked_guild != Some(guild_id) || linked_channel != Some(channel_id) {
-        bail!("message link belongs to a different server or channel")
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsMessageLinkWrongScope)
+        )
     }
     Ok(MessageId::new(message))
 }
@@ -1288,21 +1745,36 @@ fn message_link(guild_id: u64, channel_id: u64, message_id: u64) -> String {
     };
     format!("https://discord.com/channels/{scope}/{channel_id}/{message_id}")
 }
-fn validate_voice_channel_selection(v: &Value) -> Result<()> {
-    validate_keys(v, &["channel", "channel_choice"])?;
+fn validate_voice_channel_selection(v: &Value, language: Language) -> Result<()> {
+    validate_keys(v, &["channel", "channel_choice"], language)?;
     match (v.get("channel"), v.get("channel_choice")) {
         (Some(name), None) if name.as_str().is_some_and(|value| !value.trim().is_empty()) => Ok(()),
         (None, Some(choice)) if choice.as_str().is_some_and(is_choice) => Ok(()),
-        (Some(_), Some(_)) => bail!("provide exactly one of channel or channel_choice"),
-        (Some(_), None) => bail!("channel must be a non-empty name string"),
-        (None, Some(_)) => bail!("channel_choice must be an opaque choice string"),
-        (None, None) => bail!("channel or channel_choice is required"),
+        (Some(_), Some(_)) => bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsExactlyOneVoiceSelector)
+        ),
+        (Some(_), None) => bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsChannelNameStringRequired)
+        ),
+        (None, Some(_)) => bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsChannelChoiceStringRequired)
+        ),
+        (None, None) => bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsVoiceSelectorRequired)
+        ),
     }
 }
 
-fn require_voice_channel(channel: &GuildChannel) -> Result<()> {
+fn require_voice_channel(channel: &GuildChannel, language: Language) -> Result<()> {
     if channel.kind != ChannelType::Voice {
-        bail!("selected channel is not a voice channel");
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsNotVoiceChannel)
+        );
     }
     Ok(())
 }
@@ -1347,9 +1819,13 @@ fn permissions_in(
     member: &Member,
     channel: &GuildChannel,
     channels: &[GuildChannel],
+    language: Language,
 ) -> Result<Permissions> {
     if channel.guild_id != guild.id {
-        bail!("channel is outside configured guild")
+        bail!(
+            "{}",
+            language.message(MessageKey::DiscordToolsChannelOutsideGuild)
+        )
     }
     if thread(channel) {
         let parent = channel
@@ -1357,7 +1833,8 @@ fn permissions_in(
             .and_then(|id| channels.iter().find(|c| c.id == id))
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "thread parent is unavailable; permission check cannot be completed"
+                    "{}",
+                    language.message(MessageKey::DiscordToolsThreadParentUnavailable)
                 )
             })?;
         Ok(guild.user_permissions_in(parent, member))
@@ -1459,63 +1936,33 @@ pub fn tool_definitions(language: crate::i18n::Language) -> Vec<Value> {
     vec![
         def(
             "discord_list_channels",
-            language.text(
-                "List visible channels and active threads by human-readable name. Active threads include a thread_id for lookup; archived threads can also be queried by an ID obtained from message metadata.",
-                "현재 볼 수 있는 채널과 활성 스레드를 이름으로 나열합니다. 활성 스레드에는 조회용 thread_id가 포함됩니다. 메시지 정보에서 얻은 ID로 보관된 스레드도 조회할 수 있습니다.",
-                "按可读名称列出当前可见的频道和活跃线程。活跃线程提供用于查询的 thread_id；也可使用消息元数据中的 ID 查询已归档线程。",
-                "現在表示できるチャンネルとアクティブなスレッドを名前で一覧表示します。アクティブスレッドには検索用 thread_id を含めます。メッセージ情報から得たIDでアーカイブ済みスレッドも検索できます。"
-            ),
+            language.message(MessageKey::DiscordToolsListVisibleChannelsActiveThreadsHuman),
             json!({"type":"object","properties":{},"additionalProperties":false}),
         ),
         def(
             "discord_list_users",
-            language.text(
-                "List configured-guild users with opaque paging. Needs the application's privileged GUILD_MEMBERS intent.",
-                "설정된 서버의 사용자를 불투명 페이지 토큰으로 나열합니다. 애플리케이션에 privileged GUILD_MEMBERS intent가 필요합니다.",
-                "使用不透明分页令牌列出已配置服务器中的用户。需要应用启用特权 GUILD_MEMBERS intent。",
-                "不透明なページトークンを使って設定済みサーバーのユーザーを一覧表示します。アプリケーションに特権 GUILD_MEMBERS intent が必要です。"
-            ),
-            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":1000,"description":language.text("Users per page", "페이지당 사용자 수", "每页用户数", "ページあたりのユーザー数")},"page":{"type":"string","description":language.text("Opaque next-page token returned by the previous result", "이전 결과가 반환한 불투명 다음 페이지 토큰", "上次结果返回的不透明下一页令牌", "前の結果で返された不透明な次ページトークン")}},"additionalProperties":false}),
+            language.message(MessageKey::DiscordToolsListConfiguredGuildUsersOpaquePaging),
+            json!({"type":"object","properties":{"limit":{"type":"integer","minimum":1,"maximum":1000,"description":language.message(MessageKey::DiscordToolsUsersPerPage)},"page":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueNextPageTokenReturnedPrevious)}},"additionalProperties":false}),
         ),
         def(
             "discord_send_message",
-            language.text(
-                "Use this tool to reply to a live message received from another channel or thread in that same source channel or thread, or to send a separate message requested by the user. Ordinary replies are posted automatically in the worker's home channel, so they do not reach the other channel. The live source message establishes where to reply; no separate send request is needed. Provide a channel name or channel_choice from discord_list_channels, or a thread_id from its result or message thread metadata. Long content is split into Discord-sized messages. Optional exact user names for explicit mentions. Optional files is an array of local file paths to attach; files are checked before sending. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
-                "다른 채널이나 스레드에서 직접 받은 메시지에는 이 도구로 그 메시지의 채널이나 스레드에 답장하세요. 사용자가 요청한 별도 메시지를 보낼 때도 사용합니다. 일반 답변은 홈 채널에 자동 게시되므로 다른 채널에 전달되지 않습니다. 직접 수신한 메시지의 출처로 답장 위치가 정해지며 별도의 발송 요청은 필요하지 않습니다. discord_list_channels의 채널 이름·channel_choice 또는 결과나 메시지 thread 정보의 thread_id를 지정하세요. 명시적 멘션은 정확한 사용자 이름을 지정할 수 있습니다. 선택적 files 배열에는 첨부할 로컬 경로를 지정하며, 전송 전에 크기 제한과 경로를 검사합니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
-                "使用此工具在原频道或线程回复从其他频道或线程直接收到的消息，也可发送用户另外要求的消息。普通回复会自动发到主频道，不会到达其他频道。直接收到的消息来源已确定回复位置，无需单独提出发送请求。提供 discord_list_channels 的频道名称、channel_choice，或其结果/消息 thread 信息中的 thread_id。可提供要明确提及的准确成员姓名。较长内容会拆分成多条 Discord 消息；files 数组中的本地路径会经过检查，附件按 Discord 消息限制分批发送。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
-                "別チャンネルやスレッドから直接受信したメッセージには、このツールで元のチャンネルやスレッドへ返答してください。ユーザーが別途依頼したメッセージの送信にも使います。通常の返答はホームチャンネルに投稿され、他チャンネルには届きません。直接受信したメッセージの送信元が返信先となるため、別途送信を依頼される必要はありません。discord_list_channels のチャンネル名・channel_choice、または一覧やメッセージ thread 情報の thread_id を指定します。明示的なメンションには正確なユーザー名を指定できます。長文は複数のDiscordメッセージに分けます。files 配列のローカルパスを確認し、添付をDiscordメッセージ上限に合わせて分割送信します。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
-            ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; omit when selecting channel_choice, thread_id, or dm_id", "채널 이름; channel_choice, thread_id 또는 dm_id를 지정하면 생략하세요", "频道名称；指定 channel_choice、thread_id 或 dm_id 时省略", "チャンネル名。channel_choice、thread_id、dm_id のいずれかを指定する場合は省略します")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"dm_id":{"type":"string","description":language.text("Direct-message conversation ID from incoming dm_id metadata; use it instead of channel/channel_choice/thread_id", "수신 메타데이터 dm_id의 DM 대화 ID입니다. channel/channel_choice/thread_id 대신 지정하세요", "来自收到消息 dm_id 元数据的私信会话 ID；用它替代 channel/channel_choice/thread_id", "受信メタデータ dm_id のDM会話ID。channel/channel_choice/thread_id の代わりに指定します")},"content":{"type":"string","description":language.text("Message body; long content is sent as multiple Discord-sized messages", "메시지 내용; 긴 내용은 Discord 메시지 크기에 맞춰 여러 개로 나눠 보냅니다", "消息正文；较长内容会拆分为多条符合 Discord 限制的消息", "メッセージ本文。長文はDiscordの上限に合わせて複数のメッセージに分けて送ります")},"mentions":{"type":"array","items":{"type":"string"},"description":language.text("Exact current server-member or DM-recipient names to mention explicitly", "명시적으로 멘션할 현재 서버 구성원 또는 DM 상대의 정확한 이름", "要明确提及的当前服务器成员或私信收件人的准确姓名", "明示的にメンションする現在のサーバーメンバーまたはDM相手の正確な名前")},"files":{"type":"array","minItems":1,"items":{"type":"string"},"description":language.text("Optional local file paths to attach; files are checked and split into Discord-sized message batches", "선택 사항: 첨부할 로컬 파일 경로입니다. 파일을 검사하고 Discord 메시지 크기에 맞춰 나눠 보냅니다", "可选：要附加的本地文件路径；会检查文件并按 Discord 消息限制分批发送", "任意：添付するローカルファイルのパスです。ファイルを確認し、Discordメッセージ上限に合わせて分割送信します")}},"anyOf":[{"required":["content"]},{"required":["files"]}],"additionalProperties":false}),
+            language.message(MessageKey::DiscordToolsUseToolReplyLiveMessageReceived),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.message(MessageKey::DiscordToolsChannelNameOmitWhenSelectingChannel)},"channel_choice":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueChannelChoiceReturnedDiscordList)},"thread_id":{"type":"string","description":language.message(MessageKey::DiscordToolsThreadIdReturnedDiscordListChannels)},"dm_id":{"type":"string","description":language.message(MessageKey::DiscordToolsDirectMessageConversationIdIncomingDm)},"content":{"type":"string","description":language.message(MessageKey::DiscordToolsMessageBodyLongContentSentMultiple)},"mentions":{"type":"array","items":{"type":"string"},"description":language.message(MessageKey::DiscordToolsExactCurrentServerMemberDmRecipient)},"files":{"type":"array","minItems":1,"items":{"type":"string"},"description":language.message(MessageKey::DiscordToolsOptionalLocalFilePathsAttachFiles)}},"anyOf":[{"required":["content"]},{"required":["files"]}],"additionalProperties":false}),
         ),
         def(
             "discord_get_messages",
-            language.text(
-                "Read messages from a channel name, channel_choice, or thread_id returned in channel/message metadata; archived threads are supported by ID. Use Discord message links for before, after, or around cursors. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
-                "채널 이름, channel_choice 또는 채널/메시지 정보가 반환한 thread_id에서 메시지를 읽습니다. ID로 보관된 스레드도 조회할 수 있습니다. before, after, around 커서에는 Discord 메시지 링크를 사용하세요. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
-                "从频道名称、channel_choice 或频道/消息元数据返回的 thread_id 读取消息；也支持通过 ID 查询已归档线程。before、after 或 around 游标使用 Discord 消息链接。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
-                "チャンネル名、channel_choice、またはチャンネル/メッセージ情報で返された thread_id から読み込みます。ID指定でアーカイブ済みスレッドも読めます。before、after、around にはDiscordメッセージリンクを使います。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
-            ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; omit when selecting channel_choice, thread_id, or dm_id", "채널 이름; channel_choice, thread_id 또는 dm_id를 지정하면 생략하세요", "频道名称；指定 channel_choice、thread_id 或 dm_id 时省略", "チャンネル名。channel_choice、thread_id、dm_id のいずれかを指定する場合は省略します")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"dm_id":{"type":"string","description":language.text("Direct-message conversation ID from incoming dm_id metadata; use it instead of channel/channel_choice/thread_id", "수신 메타데이터 dm_id의 DM 대화 ID입니다. channel/channel_choice/thread_id 대신 지정하세요", "来自收到消息 dm_id 元数据的私信会话 ID；用它替代 channel/channel_choice/thread_id", "受信メタデータ dm_id のDM会話ID。channel/channel_choice/thread_id の代わりに指定します")},"limit":{"type":"integer","minimum":1,"description":language.text("Maximum number of messages to return; larger requests are paged automatically", "반환할 최대 메시지 수", "最多返回的消息数", "返すメッセージの最大数")},"before":{"type":"string","description":language.text("Discord message link; return messages before this message", "Discord 메시지 링크; 이 메시지보다 이전 메시지를 반환합니다", "Discord 消息链接；返回此消息之前的消息", "Discordメッセージリンク。このメッセージより前を返します")},"after":{"type":"string","description":language.text("Discord message link; return messages after this message", "Discord 메시지 링크; 이 메시지보다 이후 메시지를 반환합니다", "Discord 消息链接；返回此消息之后的消息", "Discordメッセージリンク。このメッセージより後を返します")},"around":{"type":"string","description":language.text("Discord message link; return messages around this message", "Discord 메시지 링크; 이 메시지 주변의 메시지를 반환합니다", "Discord 消息链接；返回此消息附近的消息", "Discordメッセージリンク。このメッセージの前後を返します")},"offset":{"type":"integer","minimum":0,"description":language.text("Optional number of recent messages to skip", "선택 사항: 최근 메시지 중 건너뛸 수", "可选：跳过最近的消息数", "任意指定：直近のメッセージからスキップする件数")}},"additionalProperties":false}),
+            language.message(MessageKey::DiscordToolsReadMessagesChannelNameChannelChoice),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.message(MessageKey::DiscordToolsChannelNameOmitWhenSelectingChannel)},"channel_choice":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueChannelChoiceReturnedDiscordList)},"thread_id":{"type":"string","description":language.message(MessageKey::DiscordToolsThreadIdReturnedDiscordListChannels)},"dm_id":{"type":"string","description":language.message(MessageKey::DiscordToolsDirectMessageConversationIdIncomingDm)},"limit":{"type":"integer","minimum":1,"description":language.message(MessageKey::DiscordToolsMaximumNumberMessagesReturnLargerRequests)},"before":{"type":"string","description":language.message(MessageKey::DiscordToolsDiscordMessageLinkReturnMessagesBefore)},"after":{"type":"string","description":language.message(MessageKey::DiscordToolsDiscordMessageLinkReturnMessagesAfter)},"around":{"type":"string","description":language.message(MessageKey::DiscordToolsDiscordMessageLinkReturnMessagesAround)},"offset":{"type":"integer","minimum":0,"description":language.message(MessageKey::DiscordToolsOptionalNumberRecentMessagesSkip)}},"additionalProperties":false}),
         ),
         def(
             "discord_search_messages",
-            language.text(
-                "Search recent history in a channel name, channel_choice, or thread_id using literal substring matching. Requested ranges are paged through Discord history. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
-                "채널 이름, channel_choice 또는 thread_id의 제한된 최근 기록에서 문자 그대로의 부분 문자열을 검색합니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
-                "在频道名称、channel_choice 或 thread_id 的有限近期历史记录中进行字面子串搜索。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
-                "チャンネル名、channel_choice、または thread_id の範囲を限定した最近の履歴から、文字どおりの部分文字列を検索します。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
-            ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; omit when selecting channel_choice, thread_id, or dm_id", "채널 이름; channel_choice, thread_id 또는 dm_id를 지정하면 생략하세요", "频道名称；指定 channel_choice、thread_id 或 dm_id 时省略", "チャンネル名。channel_choice、thread_id、dm_id のいずれかを指定する場合は省略します")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"dm_id":{"type":"string","description":language.text("Direct-message conversation ID from incoming dm_id metadata; use it instead of channel/channel_choice/thread_id", "수신 메타데이터 dm_id의 DM 대화 ID입니다. channel/channel_choice/thread_id 대신 지정하세요", "来自收到消息 dm_id 元数据的私信会话 ID；用它替代 channel/channel_choice/thread_id", "受信メタデータ dm_id のDM会話ID。channel/channel_choice/thread_id の代わりに指定します")},"query":{"type":"string","description":language.text("Literal substring to search for", "문자 그대로 검색할 부분 문자열", "要搜索的字面子串", "そのまま検索する部分文字列")},"max_scan":{"type":"integer","minimum":1,"description":language.text("Maximum number of recent messages to inspect; requests are paged automatically", "확인할 최근 메시지의 최대 수", "最多检查的近期消息数", "確認する直近メッセージの最大数")},"limit":{"type":"integer","minimum":1,"description":language.text("Maximum number of matches to return", "반환할 최대 일치 수", "最多返回的匹配数", "返す一致件数の最大数")}},"required":["query"],"additionalProperties":false}),
+            language.message(MessageKey::DiscordToolsSearchRecentHistoryChannelNameChannel),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.message(MessageKey::DiscordToolsChannelNameOmitWhenSelectingChannel)},"channel_choice":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueChannelChoiceReturnedDiscordList)},"thread_id":{"type":"string","description":language.message(MessageKey::DiscordToolsThreadIdReturnedDiscordListChannels)},"dm_id":{"type":"string","description":language.message(MessageKey::DiscordToolsDirectMessageConversationIdIncomingDm)},"query":{"type":"string","description":language.message(MessageKey::DiscordToolsLiteralSubstringSearch)},"max_scan":{"type":"integer","minimum":1,"description":language.message(MessageKey::DiscordToolsMaximumNumberRecentMessagesInspectRequests)},"limit":{"type":"integer","minimum":1,"description":language.message(MessageKey::DiscordToolsMaximumNumberMatchesReturn)}},"required":["query"],"additionalProperties":false}),
         ),
         def(
             "discord_download_attachment",
-            language.text(
-                "Download an attachment shown in discord_get_messages or discord_search_messages using its message link and filename. Select its channel by name/channel_choice or use thread_id for an active or archived thread. If a message has duplicate filenames, use a returned attachment_choice. The result includes the local saved path; use it in discord_send_message files to forward the file. The current message and attachment are revalidated; arbitrary URLs are not accepted. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
-                "discord_get_messages 또는 discord_search_messages 결과에 표시된 첨부 파일을 메시지 링크와 파일 이름으로 다운로드합니다. 채널 이름/channel_choice 또는 활성·보관 스레드의 thread_id를 지정하세요. 파일 이름이 중복되면 반환된 attachment_choice를 사용하세요. 결과에는 저장된 로컬 경로가 포함되며 discord_send_message의 files에 지정해 전달할 수 있습니다. 메시지와 첨부 파일은 다시 확인하며 임의 URL은 허용하지 않습니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
-                "使用消息链接和文件名下载 discord_get_messages 或 discord_search_messages 结果中显示的附件。频道可按名称或 channel_choice 选择，也可使用活动或已归档线程的 thread_id。如果消息中存在同名文件，请使用返回的 attachment_choice。结果包含本地保存路径，可将其用于 discord_send_message 的 files 转发文件。会重新验证当前消息和附件；不接受任意 URL。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
-                "discord_get_messages または discord_search_messages の結果に表示された添付を、メッセージリンクとファイル名でダウンロードします。チャンネル名/channel_choice、またはアクティブ/アーカイブ済みスレッドの thread_id を指定します。同名ファイルがある場合は返された attachment_choice を使ってください。結果には保存先のローカルパスが含まれ、discord_send_message の files に指定して転送できます。現在のメッセージと添付を再検証し、任意のURLは受け付けません。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
-            ),
-            json!({"type":"object","properties":{"channel":{"type":"string","description":language.text("Channel name; omit when selecting channel_choice, thread_id, or dm_id", "채널 이름; channel_choice, thread_id 또는 dm_id를 지정하면 생략하세요", "频道名称；指定 channel_choice、thread_id 或 dm_id 时省略", "チャンネル名。channel_choice、thread_id、dm_id のいずれかを指定する場合は省略します")},"channel_choice":{"type":"string","description":language.text("Opaque channel choice returned by discord_list_channels", "discord_list_channels가 반환한 불투명 채널 선택 토큰", "discord_list_channels 返回的不透明频道选择值", "discord_list_channels が返した不透明なチャンネル選択値")},"thread_id":{"type":"string","description":language.text("Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported", "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다", "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程", "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます")},"dm_id":{"type":"string","description":language.text("Direct-message conversation ID from incoming dm_id metadata; use it instead of channel/channel_choice/thread_id", "수신 메타데이터 dm_id의 DM 대화 ID입니다. channel/channel_choice/thread_id 대신 지정하세요", "来自收到消息 dm_id 元数据的私信会话 ID；用它替代 channel/channel_choice/thread_id", "受信メタデータ dm_id のDM会話ID。channel/channel_choice/thread_id の代わりに指定します")},"message_link":{"type":"string","description":language.text("Discord message link returned by history or search", "메시지 기록 또는 검색에서 반환된 Discord 메시지 링크", "消息历史或搜索结果返回的 Discord 消息链接", "履歴または検索結果で返されたDiscordメッセージリンク")},"filename":{"type":"string","description":language.text("Attachment filename shown by discord_get_messages/search; optional when attachment_choice is provided", "discord_get_messages/search 결과에 표시된 첨부 파일 이름; attachment_choice가 있으면 생략 가능", "discord_get_messages/search 显示的附件文件名；提供 attachment_choice 时可省略", "discord_get_messages/search に表示された添付ファイル名。attachment_choice を指定する場合は省略可")},"attachment_choice":{"type":"string","description":language.text("Opaque choice returned when attachment filenames collide", "첨부 파일 이름이 중복될 때 반환되는 불투명 선택 토큰", "附件文件名重复时返回的不透明选择值", "添付ファイル名が重複した場合に返される不透明な選択値")}},"required":["message_link"],"additionalProperties":false}),
+            language.message(MessageKey::DiscordToolsDownloadAttachmentShownDiscordGetMessages),
+            json!({"type":"object","properties":{"channel":{"type":"string","description":language.message(MessageKey::DiscordToolsChannelNameOmitWhenSelectingChannel)},"channel_choice":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueChannelChoiceReturnedDiscordList)},"thread_id":{"type":"string","description":language.message(MessageKey::DiscordToolsThreadIdReturnedDiscordListChannels)},"dm_id":{"type":"string","description":language.message(MessageKey::DiscordToolsDirectMessageConversationIdIncomingDm)},"message_link":{"type":"string","description":language.message(MessageKey::DiscordToolsDiscordMessageLinkReturnedHistorySearch)},"filename":{"type":"string","description":language.message(MessageKey::DiscordToolsAttachmentFilenameShownDiscordGetMessages)},"attachment_choice":{"type":"string","description":language.message(MessageKey::DiscordToolsOpaqueChoiceReturnedWhenAttachmentFilenames)}},"required":["message_link"],"additionalProperties":false}),
         ),
     ]
 }
@@ -1531,10 +1978,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_message_selection_uses_a_conversation_id_without_other_selectors() {
-        assert!(validate_channel_selection(&json!({"dm_id":"42"})).is_ok());
+    fn localized_templates_substitute_runtime_values() {
         assert_eq!(
-            selected_channel_id(&json!("42"), "dm_id").unwrap(),
+            localized_template(
+                Language::English,
+                MessageKey::DiscordToolsUnknownTool,
+                &[("tool", "discord_unknown".to_owned())],
+            ),
+            "Unknown Discord tool: discord_unknown"
+        );
+    }
+
+    #[test]
+    fn direct_message_selection_uses_a_conversation_id_without_other_selectors() {
+        assert!(validate_channel_selection(&json!({"dm_id":"42"}), Language::English).is_ok());
+        assert_eq!(
+            selected_channel_id(&json!("42"), "dm_id", Language::English).unwrap(),
             ChannelId::new(42)
         );
         for invalid in [
@@ -1547,7 +2006,7 @@ mod tests {
             json!({"dm_id":"42","channel_choice":"choice_0123456789abcdef0123456789abcdef"}),
         ] {
             assert!(
-                validate_channel_selection(&invalid).is_err(),
+                validate_channel_selection(&invalid, Language::English).is_err(),
                 "accepted {invalid}"
             );
         }
@@ -1558,12 +2017,20 @@ mod tests {
         let link = message_link(0, 42, 123);
         assert_eq!(link, "https://discord.com/channels/@me/42/123");
         assert_eq!(
-            parse_message_link(&link, 0, 42).unwrap(),
+            parse_message_link(&link, 0, 42, Language::English).unwrap(),
             MessageId::new(123)
         );
-        assert!(parse_message_link(&link, 99, 42).is_err());
-        assert!(parse_message_link(&link, 0, 43).is_err());
-        assert!(parse_message_link("https://discord.com/channels/99/42/123", 0, 42).is_err());
+        assert!(parse_message_link(&link, 99, 42, Language::English).is_err());
+        assert!(parse_message_link(&link, 0, 43, Language::English).is_err());
+        assert!(
+            parse_message_link(
+                "https://discord.com/channels/99/42/123",
+                0,
+                42,
+                Language::English
+            )
+            .is_err()
+        );
         assert_eq!(
             message_cursors([123, 124].into_iter().map(MessageId::new), false, 0, 42),
             json!({
@@ -1582,29 +2049,43 @@ mod tests {
     #[test]
     fn explicit_file_paths_accept_optional_nonempty_local_path_arrays() {
         assert_eq!(
-            explicit_file_paths(&json!({})).unwrap(),
+            explicit_file_paths(&json!({}), Language::English).unwrap(),
             Vec::<String>::new()
         );
         assert_eq!(
-            explicit_file_paths(&json!({"files":["/tmp/one.txt", "/tmp/two.png"]})).unwrap(),
+            explicit_file_paths(
+                &json!({"files":["/tmp/one.txt", "/tmp/two.png"]}),
+                Language::English
+            )
+            .unwrap(),
             vec!["/tmp/one.txt", "/tmp/two.png"]
         );
-        assert!(explicit_file_paths(&json!({"files":"/tmp/one.txt"})).is_err());
-        assert!(explicit_file_paths(&json!({"files":["/tmp/one.txt", " "]})).is_err());
+        assert!(explicit_file_paths(&json!({"files":"/tmp/one.txt"}), Language::English).is_err());
+        assert!(
+            explicit_file_paths(&json!({"files":["/tmp/one.txt", " "]}), Language::English)
+                .is_err()
+        );
         assert_eq!(
-            explicit_file_paths(&json!({"files":vec!["/tmp/x"; 11]}))
+            explicit_file_paths(&json!({"files":vec!["/tmp/x"; 11]}), Language::English)
                 .unwrap()
                 .len(),
             11
         );
-        assert!(validate_send_payload("", 0).is_err());
-        assert!(validate_send_payload("", 1).is_ok());
-        assert!(validate_send_payload("caption", 0).is_ok());
-        assert!(validate_channel_selection(&json!({"thread_id":"123"})).is_ok());
-        assert!(validate_channel_selection(&json!({"thread_id":"0"})).is_err());
-        assert!(validate_channel_selection(&json!({"thread_id":"not-an-id"})).is_err());
+        assert!(validate_send_payload("", 0, Language::English).is_err());
+        assert!(validate_send_payload("", 1, Language::English).is_ok());
+        assert!(validate_send_payload("caption", 0, Language::English).is_ok());
+        assert!(validate_channel_selection(&json!({"thread_id":"123"}), Language::English).is_ok());
+        assert!(validate_channel_selection(&json!({"thread_id":"0"}), Language::English).is_err());
         assert!(
-            validate_channel_selection(&json!({"thread_id":"123","channel":"general"})).is_err()
+            validate_channel_selection(&json!({"thread_id":"not-an-id"}), Language::English)
+                .is_err()
+        );
+        assert!(
+            validate_channel_selection(
+                &json!({"thread_id":"123","channel":"general"}),
+                Language::English
+            )
+            .is_err()
         );
     }
 
@@ -1685,10 +2166,24 @@ mod tests {
     #[test]
     fn voice_history_requires_connect_but_text_history_does_not() {
         let read = Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY;
-        assert!(require_read_permissions(ChannelType::Text, read).is_ok());
-        assert!(require_read_permissions(ChannelType::Voice, read).is_err());
-        assert!(require_read_permissions(ChannelType::Stage, read | Permissions::CONNECT).is_ok());
-        assert!(require_read_permissions(ChannelType::Text, Permissions::VIEW_CHANNEL).is_err());
+        assert!(require_read_permissions(ChannelType::Text, read, Language::English).is_ok());
+        assert!(require_read_permissions(ChannelType::Voice, read, Language::English).is_err());
+        assert!(
+            require_read_permissions(
+                ChannelType::Stage,
+                read | Permissions::CONNECT,
+                Language::English
+            )
+            .is_ok()
+        );
+        assert!(
+            require_read_permissions(
+                ChannelType::Text,
+                Permissions::VIEW_CHANNEL,
+                Language::English
+            )
+            .is_err()
+        );
     }
     #[test]
     fn message_cursors_follow_direction_and_handle_empty_pages() {
@@ -1778,35 +2273,123 @@ mod tests {
     #[test]
     fn requested_counts_accept_values_larger_than_prior_tool_caps() {
         assert_eq!(
-            requested_count(&json!({"offset":500_000}), "offset", 0).unwrap(),
+            requested_count(&json!({"offset":500_000}), "offset", 0, Language::English).unwrap(),
             500_000
         );
         assert_eq!(
-            requested_count(&json!({"max_scan":25_000}), "max_scan", 100).unwrap(),
+            requested_count(
+                &json!({"max_scan":25_000}),
+                "max_scan",
+                100,
+                Language::English
+            )
+            .unwrap(),
             25_000
         );
-        assert!(requested_count(&json!({"limit":-1}), "limit", 50).is_err());
-        assert!(requested_count(&json!({"limit":"100"}), "limit", 50).is_err());
+        assert!(requested_count(&json!({"limit":-1}), "limit", 50, Language::English).is_err());
+        assert!(requested_count(&json!({"limit":"100"}), "limit", 50, Language::English).is_err());
     }
     #[test]
     fn numeric_bounds_and_message_id_inputs_are_strict() {
         assert_eq!(
-            bounded(&json!({"limit":100}), "limit", 50, 1, 100).unwrap(),
+            bounded(
+                &json!({"limit":100}),
+                "limit",
+                50,
+                1,
+                100,
+                Language::English
+            )
+            .unwrap(),
             100
         );
-        assert!(bounded(&json!({"limit":101}), "limit", 50, 1, 100).is_err());
-        assert!(bounded(&json!({"limit":"10"}), "limit", 50, 1, 100).is_err());
+        assert!(
+            bounded(
+                &json!({"limit":101}),
+                "limit",
+                50,
+                1,
+                100,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            bounded(
+                &json!({"limit":"10"}),
+                "limit",
+                50,
+                1,
+                100,
+                Language::English
+            )
+            .is_err()
+        );
         assert_eq!(
-            parse_message_link("https://discord.com/channels/1/2/123", 1, 2).unwrap(),
+            parse_message_link(
+                "https://discord.com/channels/1/2/123",
+                1,
+                2,
+                Language::English
+            )
+            .unwrap(),
             MessageId::new(123)
         );
-        assert!(parse_message_link("123", 1, 2).is_err());
-        assert!(parse_message_link("http://discord.com/channels/1/2/123", 1, 2).is_err());
-        assert!(parse_message_link("https://example.com/channels/1/2/123", 1, 2).is_err());
-        assert!(parse_message_link("https://discord.com/channels/1/2/0", 1, 2).is_err());
-        assert!(parse_message_link("https://discord.com/channels/1/2/123/extra", 1, 2).is_err());
-        assert!(parse_message_link("https://discord.com/channels/9/2/123", 1, 2).is_err());
-        assert!(parse_message_link("https://discord.com/channels/1/3/123", 1, 2).is_err());
+        assert!(parse_message_link("123", 1, 2, Language::English).is_err());
+        assert!(
+            parse_message_link(
+                "http://discord.com/channels/1/2/123",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            parse_message_link(
+                "https://example.com/channels/1/2/123",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            parse_message_link(
+                "https://discord.com/channels/1/2/0",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            parse_message_link(
+                "https://discord.com/channels/1/2/123/extra",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            parse_message_link(
+                "https://discord.com/channels/9/2/123",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
+        assert!(
+            parse_message_link(
+                "https://discord.com/channels/1/3/123",
+                1,
+                2,
+                Language::English
+            )
+            .is_err()
+        );
     }
     #[test]
     fn name_prefixes_preserve_numeric_names_as_literal_names() {
@@ -1819,10 +2402,14 @@ mod tests {
 
     #[test]
     fn voice_channel_selection_accepts_exactly_name_or_opaque_choice() {
-        assert!(validate_voice_channel_selection(&json!({"channel":"Stage 1"})).is_ok());
+        assert!(
+            validate_voice_channel_selection(&json!({"channel":"Stage 1"}), Language::English)
+                .is_ok()
+        );
         assert!(
             validate_voice_channel_selection(
-                &json!({"channel_choice":"choice_0123456789abcdef0123456789abcdef"})
+                &json!({"channel_choice":"choice_0123456789abcdef0123456789abcdef"}),
+                Language::English
             )
             .is_ok()
         );
@@ -1836,7 +2423,7 @@ mod tests {
             json!({"extra":"ignored"}),
         ] {
             assert!(
-                validate_voice_channel_selection(&args).is_err(),
+                validate_voice_channel_selection(&args, Language::English).is_err(),
                 "accepted {args}"
             );
         }
@@ -1874,8 +2461,8 @@ mod tests {
             matches.iter().map(|channel| channel.id).collect::<Vec<_>>(),
             vec![voice_a.id]
         );
-        assert!(require_voice_channel(&voice_a).is_ok());
-        assert!(require_voice_channel(&channels[2]).is_err());
+        assert!(require_voice_channel(&voice_a, Language::English).is_ok());
+        assert!(require_voice_channel(&channels[2], Language::English).is_err());
         let unqualified = matching_named_channels(
             &channels,
             &categories,

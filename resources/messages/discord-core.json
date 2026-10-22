@@ -1,0 +1,200 @@
+{
+  "discord.core.codex_could_not_complete_task_please": {
+    "en": "Codex could not complete the task. Please try again.",
+    "ko": "Codex가 작업을 완료하지 못했습니다. 다시 시도해 주세요.",
+    "zh": "Codex 无法完成此任务。请重试。",
+    "ja": "Codex はタスクを完了できませんでした。もう一度お試しください。"
+  },
+  "discord.core.codex_settings_changed_check_current_values": {
+    "en": "Codex settings changed. Check the current values with /discodex status.",
+    "ko": "Codex 설정이 변경되었습니다. 현재값은 /discodex status에서 확인할 수 있습니다.",
+    "zh": "Codex 设置已更改。请使用 /discodex status 查看当前值。",
+    "ja": "Codex の設定が変更されました。/discodex status で現在の値を確認してください。"
+  },
+  "discord.core.command_execution_completed": {
+    "en": "Command execution completed.",
+    "ko": "명령 실행이 완료되었습니다.",
+    "zh": "命令执行已完成。",
+    "ja": "コマンドの実行が完了しました。"
+  },
+  "discord.core.command_execution_declined": {
+    "en": "Command execution was declined.",
+    "ko": "명령 실행이 거부되었습니다.",
+    "zh": "命令执行已被拒绝。",
+    "ja": "コマンドの実行が拒否されました。"
+  },
+  "discord.core.command_execution_failed": {
+    "en": "Command execution failed.",
+    "ko": "명령 실행에 실패했습니다.",
+    "zh": "命令执行失败。",
+    "ja": "コマンドの実行に失敗しました。"
+  },
+  "discord.core.command_output": {
+    "en": "Command output",
+    "ko": "명령 출력",
+    "zh": "命令输出",
+    "ja": "コマンド出力"
+  },
+  "discord.core.could_not_confirm_delivery_attached_files": {
+    "en": "Could not confirm delivery of the attached files. Please try again.",
+    "ko": "파일 첨부 전송을 확인하지 못했습니다. 다시 요청해 주세요.",
+    "zh": "无法确认附件已发送，请重试。",
+    "ja": "添付ファイルの送信を確認できませんでした。もう一度お試しください。"
+  },
+  "discord.core.could_not_process_codex_command": {
+    "en": "Could not process the Codex command.",
+    "ko": "Codex 명령을 처리하지 못했습니다.",
+    "zh": "无法处理 Codex 命令。",
+    "ja": "Codex コマンドを処理できませんでした。"
+  },
+  "discord.core.could_not_process_codex_input": {
+    "en": "Could not process the Codex input.",
+    "ko": "Codex 입력을 처리하지 못했습니다.",
+    "zh": "无法处理 Codex 输入。",
+    "ja": "Codex の入力を処理できませんでした。"
+  },
+  "discord.core.could_not_respond_codex_request": {
+    "en": "Could not respond to the Codex request.",
+    "ko": "Codex 요청에 응답하지 못했습니다.",
+    "zh": "无法响应 Codex 请求。",
+    "ja": "Codex リクエストに応答できませんでした。"
+  },
+  "discord.core.could_not_save_message_voice_inbox": {
+    "en": "Could not save this message to the voice inbox. Please try again.",
+    "ko": "이 메시지를 음성 받은편지함에 저장하지 못했습니다. 다시 시도해 주세요.",
+    "zh": "无法将此消息保存到语音收件箱。请重试。",
+    "ja": "このメッセージを音声受信トレイに保存できませんでした。もう一度お試しください。"
+  },
+  "discord.core.could_not_send_input_codex": {
+    "en": "Could not send input to Codex.",
+    "ko": "Codex에 입력을 전달하지 못했습니다.",
+    "zh": "无法向 Codex 发送输入。",
+    "ja": "Codex に入力を送信できませんでした。"
+  },
+  "discord.core.could_not_send_message_its_attachments": {
+    "en": "Could not send this message and its attachments to the call. Check whether the call is still active.",
+    "ko": "이 메시지와 첨부 파일을 통화에 전달하지 못했습니다. 통화가 계속 중인지 확인해 주세요.",
+    "zh": "无法向此通话发送消息及附件。请确认通话是否仍在进行。",
+    "ja": "このメッセージと添付ファイルを通話に送信できませんでした。通話が継続中か確認してください。"
+  },
+  "discord.core.could_not_send_text_call_check": {
+    "en": "Could not send text to this call. Check whether the call is still active.",
+    "ko": "이 통화에 텍스트를 전달하지 못했습니다. 통화가 계속 중인지 확인해 주세요.",
+    "zh": "无法向此通话发送文本。请确认通话是否仍在进行。",
+    "ja": "この通話にテキストを送信できませんでした。通話が継続中か確認してください。"
+  },
+  "discord.core.details": {
+    "en": "Details",
+    "ko": "상세",
+    "zh": "详情",
+    "ja": "詳細"
+  },
+  "discord.core.discodex_updating_please_retry_command_after": {
+    "en": "Discodex is updating. Please retry this command after it reconnects. Chat messages are saved.",
+    "ko": "Discodex 업데이트 중입니다. 다시 연결되면 명령을 재시도해 주세요. 채팅 메시지는 보관합니다.",
+    "zh": "Discodex 正在更新，请重新连接后重试命令。聊天消息会被保存。",
+    "ja": "Discodexを更新中です。再接続後にコマンドを再試行してください。チャットメッセージは保存されます。"
+  },
+  "discord.core.discodex_updating_retry_after_reconnects": {
+    "en": "Discodex is updating. Retry after it reconnects.",
+    "ko": "Discodex 업데이트 중입니다. 다시 연결된 후 재시도해 주세요.",
+    "zh": "Discodex 正在更新，请在重新连接后重试。",
+    "ja": "Discodexを更新中です。再接続後に再試行してください。"
+  },
+  "discord.core.exit_code": {
+    "en": "Exit code",
+    "ko": "종료 코드",
+    "zh": "退出代码",
+    "ja": "終了コード"
+  },
+  "discord.core.file_changes_completed": {
+    "en": "File changes completed.",
+    "ko": "파일 변경이 완료되었습니다.",
+    "zh": "文件更改已完成。",
+    "ja": "ファイル変更が完了しました。"
+  },
+  "discord.core.file_changes_declined": {
+    "en": "File changes were declined.",
+    "ko": "파일 변경이 거부되었습니다.",
+    "zh": "文件更改已被拒绝。",
+    "ja": "ファイル変更が拒否されました。"
+  },
+  "discord.core.file_changes_failed": {
+    "en": "File changes failed.",
+    "ko": "파일 변경에 실패했습니다.",
+    "zh": "文件更改失败。",
+    "ja": "ファイル変更に失敗しました。"
+  },
+  "discord.core.message_saved_one_more_attachments_could": {
+    "en": "Your message was saved, but one or more attachments could not be downloaded yet.",
+    "ko": "메시지는 저장했지만 첨부 파일을 아직 다운로드하지 못했습니다.",
+    "zh": "消息已保存，但有一个或多个附件暂时无法下载。",
+    "ja": "メッセージは保存されましたが、添付ファイルをまだダウンロードできませんでした。"
+  },
+  "discord.core.native_error": {
+    "en": "Native error",
+    "ko": "네이티브 오류",
+    "zh": "原生错误",
+    "ja": "ネイティブエラー"
+  },
+  "discord.core.reason": {
+    "en": "Reason",
+    "ko": "사유",
+    "zh": "原因",
+    "ja": "理由"
+  },
+  "discord.core.some_attachments_unavailable_dispatch_message_body": {
+    "en": "Some attachments were unavailable at dispatch; the message body is preserved.",
+    "ko": "일부 첨부 파일을 전송하지 못했지만 메시지 본문은 보존되어 있습니다.",
+    "zh": "部分附件在发送时不可用；消息正文已保留。",
+    "ja": "送信時に利用できない添付ファイルがありました。メッセージ本文は保持されています。"
+  },
+  "discord.core.source_message": {
+    "en": "Source message",
+    "ko": "원본 메시지",
+    "zh": "原始消息",
+    "ja": "元のメッセージ"
+  },
+  "discord.core.task_approval_request_interrupted": {
+    "en": "The task with an approval request was interrupted.",
+    "ko": "승인 요청이 있던 작업의 실행이 중단되었습니다.",
+    "zh": "包含审批请求的任务已中断。",
+    "ja": "承認リクエストを含むタスクが中断されました。"
+  },
+  "discord.core.voice_call_that_received_message_ended": {
+    "en": "The voice call that received this message has ended or changed.",
+    "ko": "이 메시지를 받은 음성 통화가 이미 종료되었거나 바뀌었습니다.",
+    "zh": "接收此消息的语音通话已结束或发生变化。",
+    "ja": "このメッセージを受け取った音声通話は終了したか、別の通話に切り替わりました。"
+  },
+  "discord.core.failure_details": {
+    "en": "Operation failed: {error}",
+    "ko": "작업에 실패했습니다: {error}",
+    "zh": "操作失败：{error}",
+    "ja": "処理に失敗しました: {error}"
+  },
+  "discord.core.failure_details_unavailable": {
+    "en": "Operation failed; no error details were provided.",
+    "ko": "작업에 실패했습니다. 오류 세부 정보가 없습니다.",
+    "zh": "操作失败；未提供错误详情。",
+    "ja": "処理に失敗しました。エラーの詳細はありません。"
+  },
+  "discord.core.failure_codex_input": {
+    "en": "Codex could not accept the message: {error}",
+    "ko": "Codex가 메시지를 처리하지 못했습니다: {error}",
+    "zh": "Codex 无法接受此消息：{error}",
+    "ja": "Codex がメッセージを受け付けませんでした: {error}"
+  },
+  "discord.core.failure_attachment": {
+    "en": "Attachment processing failed: {error}",
+    "ko": "첨부 파일 처리에 실패했습니다: {error}",
+    "zh": "附件处理失败：{error}",
+    "ja": "添付ファイルの処理に失敗しました: {error}"
+  },
+  "discord.core.failure_voice_inbox": {
+    "en": "Could not save or notify the voice inbox message: {error}",
+    "ko": "음성 받은 편지함 메시지를 저장하거나 알리지 못했습니다: {error}",
+    "zh": "无法保存或通知语音收件箱消息：{error}",
+    "ja": "音声受信箱のメッセージを保存または通知できませんでした: {error}"
+  }
+}

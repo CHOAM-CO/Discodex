@@ -20,7 +20,7 @@ use crate::{
     agy_setup::{InputDisposition, SetupConfig, SetupInput, SetupProgress, SetupReady},
     commands::SettingsMenuState,
     discord::BridgeState,
-    i18n::Language,
+    i18n::{Language, MessageKey},
 };
 
 #[derive(Default)]
@@ -82,25 +82,17 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
                 button(
                     id,
                     "separate",
-                    language.text("Separate settings", "별도 설정", "独立设置", "個別の設定"),
+                    language.message(MessageKey::DiscordAgySetupSeparateSettings),
                 ),
                 button(
                     id,
                     "shared",
-                    language.text(
-                        "Share existing settings",
-                        "기존 설정 공유",
-                        "共享现有设置",
-                        "既存の設定を共有",
-                    ),
+                    language.message(MessageKey::DiscordAgySetupShareExistingSettings),
                 ),
             ]));
-            language.text(
-                "Install a Discodex-managed Antigravity CLI. Choose separate settings or share your existing AGY settings. AGY's OS credential store is used in either case. Browser sign-in may require your confirmation.",
-                "Discodex 전용 Antigravity CLI를 설치합니다. 별도 설정 또는 기존 AGY 설정 공유를 선택하세요. 로그인은 두 경우 모두 AGY의 OS 자격증명 저장소를 사용합니다. 브라우저 로그인 시 직접 확인이 필요할 수 있습니다.",
-                "安装由 Discodex 管理的 Antigravity CLI。请选择独立设置或共享现有 AGY 设置。两种方式均使用 AGY 的操作系统凭据存储。浏览器登录可能需要您确认。",
-                "Discodex 管理の Antigravity CLI をインストールします。個別の設定か既存の AGY 設定の共有を選んでください。どちらも AGY の OS 資格情報ストアを使います。ブラウザーでのログインには確認が必要な場合があります。",
-            ).to_owned()
+            language
+                .message(MessageKey::DiscordAgySetupInstallDiscodexManagedAntigravityCliChoose)
+                .to_owned()
         }
         Stage::Progress(SetupProgress::Authentication {
             output,
@@ -115,7 +107,7 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
                     button(
                         id,
                         "enter",
-                        language.text("Continue", "계속", "继续", "続ける"),
+                        language.message(MessageKey::DiscordAgySetupContinue),
                     ),
                 ]));
             }
@@ -123,20 +115,11 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
                 rows.push(CreateActionRow::Buttons(vec![button(
                     id,
                     "code",
-                    language.text(
-                        "Enter sign-in code",
-                        "로그인 코드 입력",
-                        "输入登录代码",
-                        "ログインコードを入力",
-                    ),
+                    language.message(MessageKey::DiscordAgySetupEnterSignCode),
                 )]));
             }
-            let instruction = language.text(
-                "Follow the Antigravity sign-in prompt below.",
-                "아래 Antigravity 로그인 안내에 따라 진행하세요.",
-                "请按照下方 Antigravity 登录提示操作。",
-                "以下の Antigravity のログイン案内に従ってください。",
-            );
+            let instruction =
+                language.message(MessageKey::DiscordAgySetupFollowAntigravitySignPromptBelow);
             // Keep the complete native URL as text: OAuth URLs may exceed a link button's limit.
             format!(
                 "{instruction}\n{output}{}",
@@ -147,52 +130,35 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
             )
         }
         Stage::Progress(progress) => match progress {
-            SetupProgress::Checking => language.text(
-                "Checking the managed CLI…",
-                "전용 CLI를 확인하고 있어요…",
-                "正在检查托管 CLI…",
-                "管理対象 CLI を確認中…",
-            ),
-            SetupProgress::Installing => language.text(
-                "Installing the official prebuilt CLI…",
-                "공식 빌드된 CLI를 설치하고 있어요…",
-                "正在安装官方预编译 CLI…",
-                "公式ビルド済み CLI をインストール中…",
-            ),
-            SetupProgress::CheckingAccount => language.text(
-                "Checking sign-in…",
-                "로그인 상태를 확인하고 있어요…",
-                "正在检查登录状态…",
-                "ログイン状態を確認中…",
-            ),
-            SetupProgress::Verifying => language.text(
-                "Verifying available models…",
-                "사용 가능한 모델을 확인하고 있어요…",
-                "正在验证可用模型…",
-                "利用可能なモデルを確認中…",
-            ),
+            SetupProgress::Checking => {
+                language.message(MessageKey::DiscordAgySetupCheckingManagedCli)
+            }
+            SetupProgress::Installing => {
+                language.message(MessageKey::DiscordAgySetupInstallingOfficialPrebuiltCli)
+            }
+            SetupProgress::CheckingAccount => {
+                language.message(MessageKey::DiscordAgySetupCheckingSign)
+            }
+            SetupProgress::Verifying => {
+                language.message(MessageKey::DiscordAgySetupVerifyingAvailableModels)
+            }
             SetupProgress::Authentication { .. } => unreachable!(),
         }
         .to_owned(),
         Stage::Stopping => language
-            .text(
-                "Cancelling setup…",
-                "설치를 취소하고 있어요…",
-                "正在取消设置…",
-                "セットアップをキャンセル中…",
-            )
+            .message(MessageKey::DiscordAgySetupCancellingSetup)
             .to_owned(),
         Stage::Finished(notice) => {
             rows.push(CreateActionRow::Buttons(vec![
                 button(
                     id,
                     "retry",
-                    language.text("Set up again", "설정 다시 진행", "重新设置", "再設定"),
+                    language.message(MessageKey::DiscordAgySetupSetUpAgain),
                 ),
                 button(
                     id,
                     "back",
-                    language.text("Back", "뒤로가기", "返回", "戻る"),
+                    language.message(MessageKey::DiscordAgySetupBack),
                 ),
             ]));
             notice.clone()
@@ -204,7 +170,7 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
             button(
                 id,
                 "cancel",
-                language.text("Cancel", "취소", "取消", "キャンセル"),
+                language.message(MessageKey::DiscordAgySetupCancel),
             )
             .disabled(matches!(stage, Stage::Stopping)),
         );
@@ -212,7 +178,7 @@ fn panel(id: &str, stage: &Stage, language: Language) -> (String, Vec<CreateActi
     controls.push(button(
         id,
         "exit",
-        language.text("Exit", "나가기", "退出", "終了"),
+        language.message(MessageKey::DiscordAgySetupExit),
     ));
     rows.push(CreateActionRow::Buttons(controls));
     (format!("**Antigravity**\n{body}"), rows)
@@ -241,7 +207,7 @@ async fn render(
             button(
                 &active.id,
                 "previous",
-                language.text("Previous", "이전", "上一页", "前へ"),
+                language.message(MessageKey::DiscordAgySetupPrevious),
             )
             .disabled(page == 0),
             button(
@@ -253,7 +219,7 @@ async fn render(
             button(
                 &active.id,
                 "next",
-                language.text("Next", "다음", "下一页", "次へ"),
+                language.message(MessageKey::DiscordAgySetupNext),
             )
             .disabled(page + 1 == chunks.len()),
         ]));
@@ -282,20 +248,20 @@ pub(crate) async fn begin(
     if let Some(active) = current.as_ref() {
         if !active.actions.is_closed() {
             if active.requester != interaction.user.id.get() {
-                bail!(state.config.language.text(
-                    "Another operator is setting up Antigravity.",
-                    "다른 관리자가 Antigravity를 설정 중입니다.",
-                    "另一位管理员正在设置 Antigravity。",
-                    "別の管理者が Antigravity を設定中です。"
-                ));
+                bail!(
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::DiscordAgySetupAnotherOperatorSettingUpAntigravity)
+                );
             }
             if active.closed.load(Ordering::Acquire) {
-                bail!(state.config.language.text(
-                    "Setup is stopping. Open settings again when it has stopped.",
-                    "설정을 종료하고 있습니다. 종료 후 설정을 다시 여세요.",
-                    "正在停止设置，请停止后重新打开。",
-                    "セットアップを終了中です。終了後に設定を開き直してください。"
-                ));
+                bail!(
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::DiscordAgySetupSetupStoppingOpenSettingsAgainWhen)
+                );
             }
             active.actions.send(Action::Attach(interaction.clone()))?;
             state.settings_menus.lock().await.remove(previous_id);
@@ -392,10 +358,23 @@ async fn run(
                     stage = Stage::Progress(SetupProgress::Checking);
                 }
                 Err(error) => {
-                    stage = Stage::Finished(format!("{error:#}"));
+                    stage = Stage::Finished(crate::discord::sanitize_discord_error(
+                        &state.config,
+                        &format!("{error:#}"),
+                    ));
                     if let Err(render_error) = render(ctx, &target, active, &stage, language).await
                     {
-                        tracing::warn!(%render_error, "could not show Antigravity setup error");
+                        let detail = crate::discord::sanitize_discord_error(
+                            &state.config,
+                            &format!("{render_error:#}"),
+                        );
+                        tracing::error!(%detail, "could not show Antigravity setup error");
+                        crate::discord::report_discord_failure(
+                            &ctx.http,
+                            &state.config,
+                            serenity::all::ChannelId::new(state.config.home_channel_id),
+                            &format!("Antigravity setup failed: {error:#}; Discord delivery failed: {detail}"),
+                        ).await;
                     }
                 }
             }
@@ -407,7 +386,16 @@ async fn run(
                 match action {
                     Action::Attach(new_target) => {
                         if target.message.id != new_target.message.id {
-                            let _ = target.edit_response(ctx, EditInteractionResponse::new().components(Vec::new())).await;
+                            if let Err(error) = target.edit_response(ctx, EditInteractionResponse::new().components(Vec::new())).await {
+                                let detail = crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+                                tracing::warn!(%detail, "could not remove controls from previous Antigravity setup panel");
+                                crate::discord::report_discord_failure(
+                                    &ctx.http,
+                                    &state.config,
+                                    serenity::all::ChannelId::new(state.config.home_channel_id),
+                                    &detail,
+                                ).await;
+                            }
                             active.message_id.store(new_target.message.id.get(), Ordering::Release);
                         }
                         target = new_target;
@@ -422,7 +410,10 @@ async fn run(
                     Action::Retry(new_target) if running.is_none() => { target = new_target; stage = Stage::Sharing; }
                     Action::Back(new_target) if running.is_none() => {
                         if let Err(error) = crate::commands::return_from_agy_setup(ctx, &new_target, state, &menu).await {
-                            stage = Stage::Finished(format!("{error:#}"));
+                            stage = Stage::Finished(crate::discord::sanitize_discord_error(
+                                &state.config,
+                                &format!("{error:#}"),
+                            ));
                             target = new_target;
                         } else { break; }
                     }
@@ -460,13 +451,20 @@ async fn run(
                                 state.native.apply_native_feature_preferences(&preferences).await
                             }.await;
                             match result {
-                                Ok(_) => Stage::Finished(format!("{} ({})", language.text("Antigravity is ready. Available models", "Antigravity를 사용할 수 있어요. 사용 가능한 모델", "Antigravity 已就绪。可用模型", "Antigravity の準備ができました。利用可能なモデル"), ready.catalog.models.len())),
-                                Err(error) => Stage::Finished(format!("{error:#}")),
+                                Ok(_) => Stage::Finished(format!("{} ({})", language.message(MessageKey::DiscordAgySetupAntigravityReadyAvailableModels), ready.catalog.models.len())),
+                                Err(error) => Stage::Finished(crate::discord::sanitize_discord_error(
+                                    &state.config,
+                                    &format!("{error:#}"),
+                                )),
                             }
                         }
                     }
                     Err(error) if error.downcast_ref::<crate::agy_setup::SetupCancelled>().is_some() || *cancellation.borrow() => Stage::Finished(cancelled_notice(language).to_owned()),
-                    Err(error) => Stage::Finished(format!("{}\n{error:#}", language.text("Could not finish Antigravity setup.", "Antigravity 설정을 완료하지 못했습니다.", "无法完成 Antigravity 设置。", "Antigravity のセットアップを完了できませんでした。"))),
+                    Err(error) => Stage::Finished(format!(
+                        "{}\n{}",
+                        language.message(MessageKey::DiscordAgySetupCouldNotFinishAntigravitySetup),
+                        crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}")),
+                    )),
                 };
             }
             event = progress.recv(), if running.is_some() => {
@@ -478,38 +476,47 @@ async fn run(
         }
         if let Err(error) = render(ctx, &target, active, &stage, language).await {
             // A new settings panel can attach to this flow and refresh its interaction token.
-            tracing::warn!(%error, "could not refresh Antigravity setup panel");
+            let detail =
+                crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+            tracing::error!(%detail, "could not refresh Antigravity setup panel");
+            crate::discord::report_discord_failure(
+                &ctx.http,
+                &state.config,
+                serenity::all::ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
         }
     }
     active.cancel.send_replace(true);
     if let Some(running) = running {
-        let _ = running.await;
+        if let Err(error) = running.await {
+            let detail =
+                crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+            tracing::error!(%detail, "Antigravity setup worker terminated unexpectedly");
+            crate::discord::report_discord_failure(
+                &ctx.http,
+                &state.config,
+                serenity::all::ChannelId::new(state.config.home_channel_id),
+                &detail,
+            )
+            .await;
+        }
     }
 }
 
 fn cancelled_notice(language: Language) -> &'static str {
-    language.text(
-        "Setup cancelled. Antigravity was not enabled by this attempt.",
-        "설정을 취소했습니다. 이번 시도로 Antigravity를 활성화하지 않았습니다.",
-        "设置已取消。本次操作未启用 Antigravity。",
-        "セットアップをキャンセルしました。今回の操作では Antigravity を有効にしていません。",
-    )
+    language.message(MessageKey::DiscordAgySetupSetupCancelledAntigravityNotEnabledAttempt)
 }
 
 fn code_receipt_notice(disposition: InputDisposition, language: Language) -> &'static str {
     match disposition {
-        InputDisposition::Delivered => language.text(
-            "Sign-in code submitted.",
-            "로그인 코드를 전달했습니다.",
-            "已提交登录代码。",
-            "ログインコードを送信しました。",
-        ),
-        InputDisposition::NoLongerNeeded => language.text(
-            "Antigravity is already signed in; no code was needed.",
-            "Antigravity가 이미 로그인되어 있어 코드를 입력하지 않았습니다.",
-            "Antigravity 已登录，无需输入代码。",
-            "Antigravity はログイン済みのため、コードは不要でした。",
-        ),
+        InputDisposition::Delivered => {
+            language.message(MessageKey::DiscordAgySetupSignCodeSubmitted)
+        }
+        InputDisposition::NoLongerNeeded => {
+            language.message(MessageKey::DiscordAgySetupAntigravityAlreadySignedNoCodeNeeded)
+        }
         InputDisposition::NotAccepting => unreachable!("not accepting is returned as an error"),
     }
 }
@@ -518,12 +525,12 @@ async fn active_for(state: &BridgeState, id: &str, requester: u64) -> Result<Arc
     let active = state.agy_setup.active.lock().await;
     match active.as_ref() {
         Some(active) if active.id == id && active.requester == requester => Ok(active.clone()),
-        _ => bail!(state.config.language.text(
-            "This setup panel is no longer active. Open settings again.",
-            "설정 화면이 만료되었습니다. 설정을 다시 여세요.",
-            "此设置面板已失效，请重新打开设置。",
-            "この設定画面は無効です。設定を開き直してください。"
-        )),
+        _ => bail!(
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupSetupPanelNoLongerActiveOpen)
+        ),
     }
 }
 
@@ -534,16 +541,21 @@ pub(crate) async fn handle_component(
 ) -> Result<()> {
     let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
     if parts.len() != 4 {
-        bail!("Invalid AGY setup action");
+        bail!(
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupInvalidAction)
+        );
     }
     let active = active_for(state, parts[2], interaction.user.id.get()).await?;
     if active.message_id.load(Ordering::Acquire) != interaction.message.id.get() {
-        bail!(state.config.language.text(
-            "Use the latest setup panel.",
-            "최신 설정 화면을 사용하세요.",
-            "请使用最新设置面板。",
-            "最新の設定画面を使ってください。"
-        ));
+        bail!(
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupUseLatestSetupPanel)
+        );
     }
     let action = parts[3];
     if action == "code" {
@@ -559,22 +571,12 @@ pub(crate) async fn handle_component(
                             active.id,
                             active.attempt.load(Ordering::Acquire)
                         ),
-                        language.text(
-                            "Antigravity sign-in",
-                            "Antigravity 로그인",
-                            "Antigravity 登录",
-                            "Antigravity ログイン",
-                        ),
+                        language.message(MessageKey::DiscordAgySetupAntigravitySign),
                     )
                     .components(vec![CreateActionRow::InputText(
                         CreateInputText::new(
                             InputTextStyle::Short,
-                            language.text(
-                                "Code from the sign-in page",
-                                "로그인 페이지의 코드",
-                                "登录页面中的代码",
-                                "ログインページのコード",
-                            ),
+                            language.message(MessageKey::DiscordAgySetupCodeSignPage),
                             "code",
                         )
                         .required(true),
@@ -591,7 +593,12 @@ pub(crate) async fn handle_component(
     let action = match action {
         "shared" | "separate" => {
             if *active.stage.lock().unwrap() != Stage::Sharing {
-                bail!("Settings mode has already been selected");
+                bail!(
+                    state
+                        .config
+                        .language
+                        .message(MessageKey::DiscordAgySetupModeAlreadySelected)
+                );
             }
             active.cancel.send_replace(false);
             Action::Choose(interaction.clone(), action == "shared")
@@ -621,7 +628,12 @@ pub(crate) async fn handle_component(
             submit_input(&active, key.to_owned(), false, state.config.language).await?;
             return Ok(());
         }
-        _ => bail!("Invalid AGY setup action"),
+        _ => bail!(
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupInvalidAction)
+        ),
     };
     active.actions.send(action)?;
     Ok(())
@@ -649,12 +661,7 @@ fn ensure_input_stage(active: &Active, code: bool, language: Language) -> Result
         || *active.cancel.borrow()
         || !input_available(&active.stage.lock().unwrap(), code)
     {
-        bail!(language.text(
-            "This sign-in prompt has changed. Use the current setup panel.",
-            "로그인 단계가 변경되었습니다. 현재 설정 화면을 사용하세요.",
-            "登录提示已更改，请使用当前设置面板。",
-            "ログイン手順が変わりました。現在の設定画面を使ってください。"
-        ));
+        bail!(language.message(MessageKey::DiscordAgySetupSignPromptChangedUseCurrentSetup));
     }
     Ok(())
 }
@@ -666,12 +673,12 @@ async fn submit_input(
     language: Language,
 ) -> Result<InputDisposition> {
     ensure_input_stage(active, code, language)?;
-    let input = active
-        .input
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("Antigravity sign-in has ended"))?;
+    let input = active.input.lock().unwrap().clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            language.message(MessageKey::DiscordAgySetupSigninEnded)
+        )
+    })?;
     let mut cancel = active.cancel.subscribe();
     let (acknowledgement, received) = oneshot::channel();
     let response = async {
@@ -681,17 +688,19 @@ async fn submit_input(
                 acknowledgement,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("Antigravity sign-in has ended"))?;
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "{}",
+                    language.message(MessageKey::DiscordAgySetupSigninEnded)
+                )
+            })?;
         match received.await? {
             disposition @ (InputDisposition::Delivered | InputDisposition::NoLongerNeeded) => {
                 Ok(disposition)
             }
-            InputDisposition::NotAccepting => bail!(language.text(
-                "The sign-in prompt has changed. Use the current panel.",
-                "로그인 단계가 변경되었습니다. 현재 화면을 사용하세요.",
-                "登录提示已更改，请使用当前面板。",
-                "ログイン手順が変わりました。現在の画面を使ってください。"
-            )),
+            InputDisposition::NotAccepting => {
+                bail!(language.message(MessageKey::DiscordAgySetupSignPromptChangedUseCurrentPanel))
+            }
         }
     };
     tokio::select! {
@@ -710,18 +719,32 @@ pub(crate) async fn handle_modal(
         .data
         .custom_id
         .strip_prefix("discodex:agy-code:")
-        .ok_or_else(|| anyhow::anyhow!("Invalid AGY setup modal"))?;
-    let (id, attempt) = identity
-        .split_once(':')
-        .ok_or_else(|| anyhow::anyhow!("Invalid AGY setup attempt"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}",
+                state
+                    .config
+                    .language
+                    .message(MessageKey::DiscordAgySetupInvalidModal)
+            )
+        })?;
+    let (id, attempt) = identity.split_once(':').ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupInvalidAttempt)
+        )
+    })?;
     let active = active_for(state, id, interaction.user.id.get()).await?;
     if attempt.parse::<u64>()? != active.attempt.load(Ordering::Acquire) {
-        bail!(state.config.language.text(
-            "This sign-in attempt has ended. Use the current setup panel.",
-            "로그인 시도가 종료되었습니다. 현재 설정 화면을 사용하세요.",
-            "此登录尝试已结束，请使用当前设置面板。",
-            "このログイン試行は終了しました。現在の設定画面を使ってください。"
-        ));
+        bail!(
+            state
+                .config
+                .language
+                .message(MessageKey::DiscordAgySetupSignAttemptEndedUseCurrentSetup)
+        );
     }
     let code = interaction
         .data
@@ -795,7 +818,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     exit["label"],
-                    language.text("Exit", "나가기", "退出", "終了")
+                    language.message(MessageKey::DiscordAgySetupExit)
                 );
                 assert_eq!(buttons.iter().any(|button| button["custom_id"] == "discodex:agy-setup:setup-test:cancel"), !matches!(stage, Stage::Finished(_)));
             }

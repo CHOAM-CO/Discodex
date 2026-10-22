@@ -4,6 +4,9 @@
 //! `foo-high` / `Foo (High)`) and publishes its effort vocabulary separately.
 //! We only form a family when both observed fields agree on a discovered effort.
 
+/// Codex orchestration mode; never a CLI-native AGY effort value.
+pub(crate) const CODEX_ORCHESTRATION_EFFORT: &str = "ultra";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Variant {
     pub id: String,
@@ -25,7 +28,7 @@ pub(crate) struct Invocation {
 }
 
 fn normalized_effort<'a>(value: &'a str, available: &'a [String]) -> Option<&'a str> {
-    if value.eq_ignore_ascii_case("ultra") {
+    if value.eq_ignore_ascii_case(CODEX_ORCHESTRATION_EFFORT) {
         return None;
     }
     available
@@ -94,15 +97,17 @@ pub(crate) fn families(catalog: &crate::agy::Catalog) -> Vec<Family> {
     result
 }
 
-/// Resolve a UI selection into the base alias and an optional CLI effort.
-/// `ultra` is a Codex orchestration marker: it is ignored for AGY while a
-/// legacy variant ID still retains its concrete effort.
+/// Resolve only metadata-confirmed variants into a base alias and CLI effort.
+/// Without a matching discovered family, preserve the exact model ID. `ultra`
+/// is a Codex orchestration marker and is never sent to AGY; a legacy variant
+/// retains its concrete effort only when discovery metadata identifies it.
 pub(crate) fn invocation(
     catalog: Option<&crate::agy::Catalog>,
     selected_model: &str,
     selected_effort: Option<&str>,
 ) -> Invocation {
-    let requested = selected_effort.filter(|effort| !effort.eq_ignore_ascii_case("ultra"));
+    let requested =
+        selected_effort.filter(|effort| !effort.eq_ignore_ascii_case(CODEX_ORCHESTRATION_EFFORT));
     if let Some(catalog) = catalog {
         let families = families(catalog);
         if let Some(family) = families.iter().find(|family| {
@@ -124,25 +129,20 @@ pub(crate) fn invocation(
                     .or_else(|| legacy_effort.map(str::to_owned)),
             };
         }
-    }
 
-    let suffix_split = selected_model.rsplit_once('-').and_then(|(base, suffix)| {
-        let known = ["low", "medium", "high", "xhigh", "max"];
-        (!base.is_empty()
-            && known
-                .iter()
-                .any(|effort| suffix.eq_ignore_ascii_case(effort)))
-        .then_some((base, suffix.to_ascii_lowercase()))
-    });
-    let Some((base, legacy_effort)) = suffix_split else {
+        // A present discovery snapshot is authoritative. If this exact ID was
+        // not safely grouped from observed ID/label metadata, do not infer a
+        // base alias from its spelling. This also preserves explicitly
+        // configured IDs absent from the discovery snapshot.
         return Invocation {
             model: selected_model.to_owned(),
             effort: requested.map(str::to_owned),
         };
-    };
+    }
+
     Invocation {
-        model: base.to_owned(),
-        effort: requested.map(str::to_owned).or(Some(legacy_effort)),
+        model: selected_model.to_owned(),
+        effort: requested.map(str::to_owned),
     }
 }
 
@@ -280,19 +280,19 @@ mod tests {
     }
 
     #[test]
-    fn missing_catalog_only_splits_exact_known_terminal_effort_tokens() {
+    fn missing_catalog_preserves_exact_model_ids_and_only_explicit_effort() {
         assert_eq!(
             invocation(None, "foo-low", Some("high")),
             Invocation {
-                model: "foo".into(),
+                model: "foo-low".into(),
                 effort: Some("high".into())
             }
         );
         assert_eq!(
             invocation(None, "foo-xhigh", Some("ultra")),
             Invocation {
-                model: "foo".into(),
-                effort: Some("xhigh".into())
+                model: "foo-xhigh".into(),
+                effort: None
             }
         );
         assert_eq!(
@@ -305,8 +305,8 @@ mod tests {
         assert_eq!(
             invocation(None, "foo-low", None),
             Invocation {
-                model: "foo".into(),
-                effort: Some("low".into())
+                model: "foo-low".into(),
+                effort: None
             }
         );
     }
@@ -321,5 +321,36 @@ mod tests {
             efforts: vec!["low".into(), "high".into()],
         };
         assert!(families(&catalog).is_empty());
+        assert_eq!(
+            invocation(Some(&catalog), "model-high", None),
+            Invocation {
+                model: "model-high".into(),
+                effort: None,
+            }
+        );
+    }
+
+    #[test]
+    fn present_catalog_does_not_infer_suffix_for_unobserved_or_unmatched_id() {
+        let mut catalog = catalog();
+        catalog.models.push(crate::agy::ModelOption {
+            id: "observed-low".into(),
+            label: "Observed model".into(),
+        });
+
+        assert_eq!(
+            invocation(Some(&catalog), "observed-low", None),
+            Invocation {
+                model: "observed-low".into(),
+                effort: None,
+            }
+        );
+        assert_eq!(
+            invocation(Some(&catalog), "configured-high", Some("medium")),
+            Invocation {
+                model: "configured-high".into(),
+                effort: Some("medium".into()),
+            }
+        );
     }
 }

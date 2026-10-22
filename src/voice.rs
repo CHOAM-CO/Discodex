@@ -62,7 +62,7 @@ use webrtc::{
     },
 };
 
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 use crate::reply_files::{PreparedReply, ReplyFile, attachment_batches};
 use crate::voice_input::{VoiceInputGate, VoiceInputPhase};
 use crate::{config::Config, installation_check::Checks, native::Native};
@@ -2123,12 +2123,10 @@ fn plan_voice_join(
     match active_channel {
         None => Ok(VoiceJoinAction::Start),
         Some(active) if active == channel_id => Ok(VoiceJoinAction::AlreadyConnected),
-        Some(_) => bail!("{}", language.text(
-            "A voice call is already connected in another channel. End it before joining a different channel.",
-            "다른 채널의 음성 통화에 이미 연결되어 있습니다. 다른 채널에 들어가려면 먼저 현재 통화를 종료하세요.",
-            "已连接另一个频道的语音通话。请先结束当前通话，再加入其他频道。",
-            "別のチャンネルで音声通話に接続中です。別のチャンネルに入る前に現在の通話を終了してください。",
-        )),
+        Some(_) => bail!(
+            "{}",
+            language.message(MessageKey::VoiceAlreadyConnectedElsewhere)
+        ),
     }
 }
 
@@ -2231,6 +2229,31 @@ impl VoiceLeaveResult {
     }
 }
 
+fn voice_leave_failure_details(result: &VoiceLeaveResult) -> String {
+    let failures = [
+        ("nativeRealtimeStop", &result.native_realtime_stop),
+        ("peerConnectionClose", &result.peer_connection_close),
+        ("discordVoiceLeave", &result.discord_voice_leave),
+    ]
+    .into_iter()
+    .filter(|(_, operation)| operation.ok != Some(true))
+    .map(|(name, operation)| {
+        format!(
+            "{name}: {}",
+            operation
+                .error
+                .as_deref()
+                .unwrap_or("failed without an error detail")
+        )
+    })
+    .collect::<Vec<_>>();
+    if failures.is_empty() {
+        "voice call is still active".to_owned()
+    } else {
+        failures.join("; ")
+    }
+}
+
 impl VoiceBridge {
     pub fn new(
         config: Arc<Config>,
@@ -2314,12 +2337,10 @@ impl VoiceBridge {
             *self.input_gate.state.lock().await,
             VoiceInputPhase::Blocked
         ) {
-            bail!("{}", language.text(
-                "The previous voice connection has not been confirmed as ended. Retry with `/discodex voice-leave`.",
-                "이전 음성 연결의 종료가 확인되지 않았습니다. `/discodex voice-leave`로 종료를 다시 요청하세요.",
-                "尚未确认上一次语音连接已结束。请使用 `/discodex voice-leave` 重试。",
-                "前回の音声接続が終了したことを確認できていません。`/discodex voice-leave` でもう一度終了してください。",
-            ));
+            bail!(
+                "{}",
+                language.message(MessageKey::VoicePreviousCallNotEnded)
+            );
         }
         self.input_gate.set(VoiceInputPhase::Starting).await;
         let result = self.join_locked(guild_id, channel_id).await;
@@ -2471,15 +2492,7 @@ impl VoiceBridge {
                 start_discord_playback(&call, playback.clone(), audio_stats.clone()).await?;
             if let Err(error) = self.songbird.join(guild_id, channel_id).await {
                 let _ = output.stop();
-                bail!(
-                    "{}: {error}",
-                    language.text(
-                        "Could not join the Discord voice channel",
-                        "Discord 음성 채널 입장 실패",
-                        "无法加入 Discord 语音频道",
-                        "Discordの音声チャンネルに参加できませんでした",
-                    )
-                );
+                bail!("{}: {error}", language.message(MessageKey::VoiceJoinFailed));
             }
             Ok::<_, anyhow::Error>(output)
         }
@@ -2535,6 +2548,7 @@ impl VoiceBridge {
             self.input_gate.clone(),
             self.songbird.clone(),
             self.http.clone(),
+            self.config.clone(),
             guild_id,
             call_instance_id,
             thread_id.clone(),
@@ -2580,12 +2594,15 @@ impl VoiceBridge {
             warn!(result = ?serde_json::to_value(&result), "voice leave was partial");
         }
         if !result.cleanup_ok() {
-            bail!("{}", self.config.language.text(
-                "Some voice call cleanup steps failed. See the operation log for details.",
-                "음성 통화 종료 처리 중 일부 작업이 실패했습니다. 운영 기록에서 상세 결과를 확인하세요.",
-                "部分语音通话清理步骤失败。详情请查看操作日志。",
-                "音声通話の終了処理の一部に失敗しました。詳細は操作ログを確認してください。",
-            ));
+            let details = voice_leave_failure_details(&result);
+            let details = crate::discord::sanitize_discord_error(&self.config, &details);
+            bail!(
+                "{}",
+                self.config
+                    .language
+                    .message(MessageKey::VoiceCleanupIncomplete)
+                    .replace("{error}", &details)
+            );
         }
         Ok(())
     }
@@ -2760,12 +2777,9 @@ impl VoiceBridge {
                 &self.http,
                 format!(
                     "{} <#{}>",
-                    self.config.language.text(
-                        "Voice call ended · voice channel",
-                        "음성 통화 종료 · 음성 채널",
-                        "语音通话已结束 · 语音频道",
-                        "音声通話終了 · 音声チャンネル",
-                    ),
+                    self.config
+                        .language
+                        .message(MessageKey::VoiceCallEndedFooter),
                     active.channel_id.get(),
                 ),
             )
@@ -2855,15 +2869,7 @@ fn authorize_voice_join(
     authorize_voice_channel(config, guild_id, channel_id)?;
     let language = config.language;
     if !config.operator_ids.contains(&requested_by.get()) {
-        bail!(
-            "{}",
-            language.text(
-                "Only a configured operator can start a voice call.",
-                "설정된 조작자만 음성 통화를 시작할 수 있습니다.",
-                "只有已配置的操作员可以开始语音通话。",
-                "設定済みの操作者のみ音声通話を開始できます。",
-            )
-        );
+        bail!("{}", language.message(MessageKey::VoiceOperatorRequired));
     }
     Ok(())
 }
@@ -2875,26 +2881,10 @@ fn authorize_voice_channel(
 ) -> Result<()> {
     let language = config.language;
     if guild_id.get() != config.guild_id {
-        bail!(
-            "{}",
-            language.text(
-                "Voice calls are allowed only in the configured Discord server.",
-                "음성 입장은 설정된 Discord 서버에서만 가능합니다.",
-                "只能在已配置的 Discord 服务器中进行语音通话。",
-                "設定済みの Discord サーバーでのみ音声通話を開始できます。",
-            )
-        );
+        bail!("{}", language.message(MessageKey::VoiceServerRestricted));
     }
     if !config.voice_channel_ids.contains(&channel_id.get()) {
-        bail!(
-            "{}",
-            language.text(
-                "The requested voice channel is not in the allowlist.",
-                "요청한 음성 채널은 allowlist에 없습니다.",
-                "请求的语音频道不在允许列表中。",
-                "指定された音声チャンネルは許可リストにありません。",
-            )
-        );
+        bail!("{}", language.message(MessageKey::VoiceChannelRestricted));
     }
     Ok(())
 }
@@ -3760,20 +3750,10 @@ fn realtime_call_start_context(
 ) -> RealtimeCallStartContext {
     let call_id = call_instance_id.to_string();
     let call_state = language
-        .text(
-            "This is a new Discord voice call. callInstanceId={call_id}. The call is starting and has not ended.",
-            "새 Discord 음성 통화입니다. callInstanceId={call_id}. 현재 상태는 연결 시작 중이며 종료되지 않았습니다.",
-            "这是一次新的 Discord 语音通话。callInstanceId={call_id}。当前正在连接，通话尚未结束。",
-            "これは新しい Discord 音声通話です。callInstanceId={call_id}。接続を開始したところで、通話はまだ終了していません。",
-        )
+        .message(MessageKey::VoiceStartCallContext)
         .replace("{call_id}", &call_id);
     let continuity = language
-        .text(
-            "A successful voice_leave from an earlier call is historical. Keep the existing native Codex conversation thread {native_thread_id}; do not create a new conversation thread.",
-            "이전 voice_leave 성공은 이전 통화의 과거 기록입니다. Codex의 기존 native 대화 thread {native_thread_id}를 유지하고 새 대화 thread를 만들지 마세요.",
-            "之前通话中成功的 voice_leave 仅属于历史记录。请保留现有的 native Codex 对话线程 {native_thread_id}，不要创建新对话线程。",
-            "以前の通話で成功した voice_leave は過去の記録です。既存の native Codex 会話スレッド {native_thread_id} を維持し、新しい会話スレッドを作成しないでください。",
-        )
+        .message(MessageKey::VoiceCallContinuityContext)
         .replace("{native_thread_id}", native_thread_id);
     RealtimeCallStartContext {
         start_instructions: format!("{call_state} {continuity}"),
@@ -3970,15 +3950,7 @@ async fn await_peer_connected(
             match *states.borrow_and_update() {
                 RTCPeerConnectionState::Connected => return Ok(()),
                 RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
-                    bail!(
-                        "{}",
-                        language.text(
-                            "Codex voice connection setup failed.",
-                            "Codex 음성 연결 준비에 실패했습니다.",
-                            "Codex 语音连接准备失败。",
-                            "Codex 音声接続の準備に失敗しました。",
-                        )
-                    )
+                    bail!("{}", language.message(MessageKey::VoiceCodexSetupFailed))
                 }
                 _ => {}
             }
@@ -3989,12 +3961,7 @@ async fn await_peer_connected(
         }
     })
     .await
-    .context(language.text(
-        "Timed out while preparing the Codex voice connection.",
-        "Codex 음성 연결 준비 시간이 초과됐습니다.",
-        "准备 Codex 语音连接时超时。",
-        "Codex 音声接続の準備中にタイムアウトしました。",
-    ))?
+    .context(language.message(MessageKey::VoiceCodexSetupTimeout))?
 }
 
 async fn create_complete_offer(
@@ -4082,13 +4049,14 @@ async fn await_realtime_sdp_for_connection(
                         .ok_or_else(|| anyhow!("native realtime SDP event had no SDP"));
                 }
                 "thread/realtime/error" => {
-                    let message = params
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .or_else(|| params.pointer("/error/message").and_then(Value::as_str))
-                        .or_else(|| params.get("error").and_then(Value::as_str))
-                        .unwrap_or("unknown native realtime error");
-                    bail!("native realtime startup failed: {message}");
+                    let detail = crate::discord::native_error_detail(params)
+                        .map(|detail| crate::discord::sanitize_discord_diagnostic(&detail));
+                    match detail.as_deref() {
+                        Some(detail) => bail!("native realtime startup failed: {detail}"),
+                        None => {
+                            bail!("native realtime startup failed: unknown native realtime error")
+                        }
+                    }
                 }
                 // Generic turn errors can share this thread while realtime
                 // startup is in flight. Record only their type/count and let
@@ -4387,6 +4355,7 @@ async fn monitor_native_realtime_close(
     input_gate: Arc<VoiceInputGate>,
     songbird: Arc<Songbird>,
     http: Arc<Http>,
+    config: Arc<Config>,
     guild_id: GuildId,
     call_instance_id: Uuid,
     thread_id: String,
@@ -4503,41 +4472,55 @@ async fn monitor_native_realtime_close(
         }
         active.audio_stats.note_voice_end();
         let peer_summary = match peer_result {
-            Ok(()) => language.text("closed", "닫힘", "已关闭", "終了").to_owned(),
+            Ok(()) => language.message(MessageKey::VoiceClosed).to_owned(),
             Err(error) => {
-                warn!(%error, guild = guild_id.get(), "peer connection close failed after native realtime closed");
-                language
-                    .text("close failed", "닫기 실패", "关闭失败", "終了に失敗")
-                    .to_owned()
+                let detail = crate::discord::sanitize_discord_error(&config, &error.to_string());
+                warn!(%detail, guild = guild_id.get(), "peer connection close failed after native realtime closed");
+                format!(
+                    "{}: {detail}",
+                    language.message(MessageKey::VoiceCloseFailed)
+                )
             }
         };
         let discord_summary = match discord_result {
-            Ok(_) => language
-                .text("left", "퇴장함", "已离开", "退出済み")
-                .to_owned(),
+            Ok(_) => language.message(MessageKey::VoiceLeft).to_owned(),
             Err(error) => {
-                warn!(%error, guild = guild_id.get(), "Discord voice leave failed after native realtime closed");
-                language
-                    .text("leave failed", "퇴장 실패", "退出失败", "退出に失敗")
-                    .to_owned()
+                let detail = crate::discord::sanitize_discord_error(&config, &error.to_string());
+                warn!(%detail, guild = guild_id.get(), "Discord voice leave failed after native realtime closed");
+                format!(
+                    "{}: {detail}",
+                    language.message(MessageKey::VoiceLeaveFailed)
+                )
             }
         };
+        let safe_reason = crate::discord::sanitize_discord_error(&config, &reason);
         let report = language
-            .text(
-                "The realtime voice connection closed; cleanup is complete.\nPeer connection: {peer_summary}\nDiscord voice: {discord_summary}",
-                "실시간 음성 연결이 종료되어 정리했습니다.\nPeer 연결: {peer_summary}\nDiscord 음성: {discord_summary}",
-                "实时语音连接已关闭，清理完成。\nPeer 连接：{peer_summary}\nDiscord 语音：{discord_summary}",
-                "リアルタイム音声接続が終了したため、クリーンアップしました。\nPeer 接続: {peer_summary}\nDiscord 音声: {discord_summary}",
-            )
+            .message(MessageKey::VoiceRealtimeClosedReport)
+            .replace("{reason}", &safe_reason)
             .replace("{peer_summary}", &peer_summary)
             .replace("{discord_summary}", &discord_summary);
-        if let Err(error) = transcript_thread_id.say(&http, report).await {
-            warn!(%error, %reason, thread = %thread_id, "could not record native realtime closure and cleanup result");
+        for part in crate::commands::split_discord_content(&report) {
+            if let Err(error) = transcript_thread_id
+                .send_message(
+                    &http,
+                    CreateMessage::new()
+                        .content(part)
+                        .allowed_mentions(transcript_empty_mentions()),
+                )
+                .await
+            {
+                let detail = crate::discord::sanitize_discord_error(&config, &error.to_string());
+                warn!(%detail, %reason, thread = %thread_id, "could not record native realtime closure and cleanup result");
+                break;
+            }
         }
-        if discord_summary != language.text("left", "퇴장함", "已离开", "退出済み") {
-            warn!(%reason, %discord_summary, guild = guild_id.get(), "native realtime closed but Discord voice cleanup failed");
+        if peer_summary != language.message(MessageKey::VoiceClosed)
+            || discord_summary != language.message(MessageKey::VoiceLeft)
+        {
+            warn!(%reason, %peer_summary, %discord_summary, guild = guild_id.get(), "native realtime closed but voice cleanup was incomplete");
+        } else {
+            info!(%reason, guild = guild_id.get(), thread = %thread_id, "cleaned Discord voice resources after native realtime closed");
         }
-        info!(%reason, guild = guild_id.get(), thread = %thread_id, "cleaned Discord voice resources after native realtime closed");
         input_gate.set(VoiceInputPhase::Idle).await;
         return;
     }
@@ -4696,10 +4679,13 @@ async fn handle_native_realtime_events(
                 native_closed = true;
             }
             "thread/realtime/error" => {
-                let message = params
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown realtime error");
+                let detail = crate::discord::native_error_detail(&params).map(|detail| {
+                    call.reply_file_config.as_deref().map_or_else(
+                        || crate::discord::sanitize_discord_diagnostic(&detail),
+                        |config| crate::discord::sanitize_discord_error(config, &detail),
+                    )
+                });
+                let message = detail.as_deref().unwrap_or("unknown realtime error");
                 if let Some(checks) = &call.installation_checks {
                     checks.note_voice_error(
                         &call.native_thread_id,
@@ -4708,19 +4694,20 @@ async fn handle_native_realtime_events(
                     );
                 }
                 error!(%message, "Codex realtime session error");
-                if let Err(error) = transcript_thread_id
-                    .say(
-                        &http,
-                        call.language.text(
-                            "A realtime voice connection error occurred. Details are in the operation log.",
-                            "실시간 음성 연결 오류가 발생했습니다. 상세 원인은 운영 기록에 보존했습니다.",
-                            "实时语音连接发生错误。详情已保存在操作日志中。",
-                            "リアルタイム音声接続エラーが発生しました。詳細は操作ログに記録されています。",
-                        ),
-                    )
-                    .await
-                {
-                    warn!(%error, "Discord could not record native realtime error");
+                let notice = realtime_failure_notice(call.language, detail.as_deref());
+                for part in crate::commands::split_discord_content(&notice) {
+                    if let Err(error) = transcript_thread_id
+                        .send_message(
+                            &http,
+                            CreateMessage::new()
+                                .content(part)
+                                .allowed_mentions(transcript_empty_mentions()),
+                        )
+                        .await
+                    {
+                        warn!(%error, "Discord could not deliver native realtime error notice");
+                        break;
+                    }
                 }
             }
             _ => {}
@@ -4738,12 +4725,7 @@ async fn handle_native_realtime_events(
         transcript_thread_id
             .say(
                 &http,
-                call.language.text(
-                    "An unfinished transcript remained when the call ended, so it was not posted.",
-                    "음성 종료 전에 끝나지 않은 전사가 있어 게시하지 않았습니다.",
-                    "通话结束时仍有未完成的转录，因此未予发布。",
-                    "通話終了時に未完了の文字起こしが残っていたため、投稿しませんでした。",
-                ),
+                call.language.message(MessageKey::VoiceIncompleteTranscript),
             )
             .await
             .context("could not post incomplete transcript notice")?;
@@ -4759,6 +4741,17 @@ fn has_nonempty_incomplete_transcript(items: &[TranscriptItem]) -> bool {
     items
         .iter()
         .any(|item| item.status == TranscriptStatus::Incomplete && !item.text.is_empty())
+}
+
+fn realtime_failure_notice(language: Language, detail: Option<&str>) -> String {
+    match detail.map(str::trim).filter(|detail| !detail.is_empty()) {
+        Some(detail) => language
+            .message(MessageKey::VoiceRealtimeError)
+            .replace("{error}", detail),
+        None => language
+            .message(MessageKey::VoiceRealtimeErrorUnknown)
+            .to_owned(),
+    }
 }
 
 fn observe_native_transcript_item(
@@ -4996,12 +4989,7 @@ fn render_transcript_reply(
     let total_pages = contents.len().max(file_pages);
     while contents.len() < total_pages {
         let page = contents.len() + 1;
-        let label = language.text(
-            "Attachments continued",
-            "첨부 파일 계속",
-            "附件续页",
-            "添付ファイルの続き",
-        );
+        let label = language.message(MessageKey::VoiceAttachmentsContinued);
         contents.push(format!(
             "**{}**\n{} · {}",
             escape_markdown_header(&item.agent_label),
@@ -5190,18 +5178,8 @@ async fn upsert_transcript(
     for (index, message_id) in known_ids.iter().enumerate().skip(contents.len()) {
         let retired = format!(
             "**{}**\n{}",
-            language.text(
-                "Transcript · previous segment",
-                "전사 · 이전 부분",
-                "转录 · 先前片段",
-                "文字起こし · 前の部分",
-            ),
-            language.text(
-                "(This page was merged into the confirmed transcript.)",
-                "(이 페이지는 확정 전사로 통합되었습니다.)",
-                "（此页内容已合并到已确认的转录中。）",
-                "（このページは確定済みの文字起こしに統合されました。）",
-            ),
+            language.message(MessageKey::VoiceTranscriptPreviousSegment),
+            language.message(MessageKey::VoiceTranscriptMerged),
         );
         if let Err(error) = thread_id
             .edit_message(
@@ -5297,31 +5275,14 @@ fn transcript_content_pages(item: &TranscriptItem) -> Vec<String> {
 
 fn transcript_content_pages_for_language(item: &TranscriptItem, language: Language) -> Vec<String> {
     let phase = match item.status {
-        TranscriptStatus::Incomplete => language.text(
-            " · unconfirmed at call end",
-            " · 종료 시 미확정",
-            " · 通话结束时未确认",
-            " · 通話終了時に未確定",
-        ),
-        TranscriptStatus::Partial => language.text(
-            " · partial transcript",
-            " · 부분 전사",
-            " · 部分转录",
-            " · 部分文字起こし",
-        ),
+        TranscriptStatus::Incomplete => language.message(MessageKey::VoiceTranscriptUnconfirmed),
+        TranscriptStatus::Partial => language.message(MessageKey::VoiceTranscriptPartial),
         TranscriptStatus::Complete => "",
     };
     let role = match item.role.as_str() {
         "user" => {
             if item.speaker_labels.is_empty() {
-                language
-                    .text(
-                        "Discord speaker",
-                        "Discord 사용자",
-                        "Discord 发言者",
-                        "Discordの話者",
-                    )
-                    .to_owned()
+                language.message(MessageKey::VoiceDiscordSpeaker).to_owned()
             } else {
                 item.speaker_labels.join(" + ")
             }
@@ -5333,9 +5294,7 @@ fn transcript_content_pages_for_language(item: &TranscriptItem, language: Langua
                 item.agent_label.clone()
             }
         }
-        _ => language
-            .text("Transcript", "전사", "转录", "文字起こし")
-            .to_owned(),
+        _ => language.message(MessageKey::VoiceTranscriptRole).to_owned(),
     };
     let head = format!("**{}{phase}**", escape_markdown_header(&role));
     let page_payload = 1_750_usize
@@ -5393,12 +5352,7 @@ async fn create_transcript_thread(
             http,
             CreateMessage::new().content(format!(
                 "{} · {}",
-                config.language.text(
-                    "Voice call transcript",
-                    "음성 통화 기록",
-                    "语音通话转录",
-                    "音声通話の文字起こし",
-                ),
+                config.language.message(MessageKey::VoiceTranscriptTitle),
                 config.name
             )),
         )
@@ -5411,9 +5365,7 @@ async fn create_transcript_thread(
             CreateThread::new(format!(
                 "{} {}",
                 config.name,
-                config
-                    .language
-                    .text("voice call", "음성 통화", "语音通话", "音声通話"),
+                config.language.message(MessageKey::VoiceCallThreadTitle),
             ))
             .kind(ChannelType::PublicThread),
         )
@@ -5436,12 +5388,7 @@ async fn create_transcript_thread(
             http,
             format!(
                 "{} · {}",
-                config.language.text(
-                    "Voice call started",
-                    "음성 통화 시작",
-                    "语音通话已开始",
-                    "音声通話開始",
-                ),
+                config.language.message(MessageKey::VoiceCallStarted),
                 config.name,
             ),
         )
@@ -5567,6 +5514,51 @@ impl VoiceEventHandler for PlaybackErrorObserver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn realtime_error_notice_preserves_native_detail_in_all_languages() {
+        let detail = "-32001: transport closed";
+        for (language, prefix) in [
+            (Language::English, "Realtime voice connection failed: "),
+            (Language::Korean, "실시간 음성 연결 실패: "),
+            (Language::Chinese, "实时语音连接失败："),
+            (Language::Japanese, "リアルタイム音声接続に失敗しました: "),
+        ] {
+            assert_eq!(
+                realtime_failure_notice(language, Some(detail)),
+                format!("{prefix}{detail}")
+            );
+        }
+        assert!(
+            realtime_failure_notice(Language::English, None)
+                .contains("did not provide an error message or code")
+        );
+        let long_detail = "x".repeat(5_000);
+        let notice = realtime_failure_notice(Language::English, Some(&long_detail));
+        let pages = crate::commands::split_discord_content(&notice);
+        assert!(pages.len() > 1);
+        assert!(pages.iter().all(|page| page.chars().count() <= 2_000));
+        assert!(pages.concat().contains(&long_detail));
+    }
+
+    #[test]
+    fn voice_leave_failure_details_keep_failed_operation_errors() {
+        let result = VoiceLeaveResult {
+            status: "partial",
+            voice_call_active: false,
+            native_thread_id: None,
+            native_realtime_stop: VoiceOperationResult::failed("native stop code -32001"),
+            peer_connection_close: VoiceOperationResult::succeeded(),
+            discord_voice_leave: VoiceOperationResult::failed("Discord unavailable"),
+            transcript_delivery: VoiceOperationResult::succeeded(),
+            transcript_summary_update: VoiceOperationResult::succeeded(),
+            transcript_footer: VoiceOperationResult::succeeded(),
+        };
+        assert_eq!(
+            voice_leave_failure_details(&result),
+            "nativeRealtimeStop: native stop code -32001; discordVoiceLeave: Discord unavailable"
+        );
+    }
 
     #[test]
     fn voice_settings_absence_falls_back_to_configured_voice() {

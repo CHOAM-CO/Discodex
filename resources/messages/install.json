@@ -1,0 +1,3308 @@
+{
+  "install.error_environment_variable_not_utf8": {
+    "en": "Environment variable {0} is not valid UTF-8.",
+    "ko": "환경 변수 {0}의 값이 유효한 UTF-8이 아닙니다.",
+    "zh": "环境变量 {0} 的值不是有效的 UTF-8。",
+    "ja": "環境変数 {0} の値は有効な UTF-8 ではありません。"
+  },
+  "install.error_read_durable_feature_state": {
+    "en": "Read durable installation feature state.",
+    "ko": "설치 기능의 저장된 상태를 읽습니다.",
+    "zh": "读取已保存的安装功能状态。",
+    "ja": "インストール機能の保存済み状態を読み込みます。"
+  },
+  "install.error_command_failed": {
+    "en": "{0} failed ({1}): {2}",
+    "ko": "{0} 실행이 실패했습니다({1}): {2}",
+    "zh": "{0} 执行失败（{1}）：{2}",
+    "ja": "{0} に失敗しました（{1}）: {2}"
+  },
+  "update.error_invalid_etag": {
+    "en": "GitHub returned a non-text ETag header.",
+    "ko": "GitHub가 텍스트가 아닌 ETag 헤더를 반환했습니다.",
+    "zh": "GitHub 返回了非文本 ETag 标头。",
+    "ja": "GitHub がテキストではない ETag ヘッダーを返しました。"
+  },
+  "update.error_invalid_version": {
+    "en": "Could not parse {0} version: {1}.",
+    "ko": "{0} 버전을 해석할 수 없습니다: {1}.",
+    "zh": "无法解析{0}版本：{1}。",
+    "ja": "{0}バージョンを解析できません: {1}。"
+  },
+  "update.error_launch_job": {
+    "en": "Could not start the {0} update job ({1}): {2}",
+    "ko": "{0} 업데이트 작업을 시작하지 못했습니다({1}): {2}",
+    "zh": "无法启动 {0} 更新任务（{1}）：{2}",
+    "ja": "{0} 更新ジョブを開始できませんでした（{1}）: {2}"
+  },
+  "update.error_start_command": {
+    "en": "Could not start {0}.",
+    "ko": "{0}을 시작하지 못했습니다.",
+    "zh": "无法启动 {0}。",
+    "ja": "{0} を開始できませんでした。"
+  },
+  "update.error_handoff_cancelled": {
+    "en": "Update handoff stopped before helper startup (status: {0}, attempt: {1}, detail: {2}).",
+    "ko": "업데이트 helper가 시작되기 전에 인계가 중단되었습니다(상태: {0}, 시도: {1}, 세부 정보: {2}).",
+    "zh": "更新辅助进程启动前交接已停止（状态：{0}，尝试：{1}，详情：{2}）。",
+    "ja": "更新ヘルパーの起動前に引き渡しが停止しました（状態: {0}、試行: {1}、詳細: {2}）。"
+  },
+  "update.error_handoff_unacknowledged": {
+    "en": "Update helper did not acknowledge startup (cancellation recorded: {0}, status: {1}, detail: {2}).",
+    "ko": "업데이트 helper가 시작 확인을 보내지 않았습니다(취소 기록: {0}, 상태: {1}, 세부 정보: {2}).",
+    "zh": "更新辅助进程未确认启动（已记录取消：{0}，状态：{1}，详情：{2}）。",
+    "ja": "更新ヘルパーから起動確認がありません（キャンセル記録: {0}、状態: {1}、詳細: {2}）。"
+  },
+  "update.error_missing_helper_pid": {
+    "en": "The applying update acknowledged startup without a helper process ID.",
+    "ko": "적용 중인 업데이트가 helper 프로세스 ID 없이 시작을 확인했습니다.",
+    "zh": "正在应用的更新确认已启动，但没有辅助进程 ID。",
+    "ja": "適用中の更新がヘルパープロセス ID なしで起動を確認しました。"
+  },
+  "update.error_missing_prepared_metadata": {
+    "en": "The applying update acknowledged startup without prepared update metadata.",
+    "ko": "적용 중인 업데이트가 준비된 업데이트 정보 없이 시작을 확인했습니다.",
+    "zh": "正在应用的更新确认已启动，但没有已准备的更新元数据。",
+    "ja": "適用中の更新が準備済み更新メタデータなしで起動を確認しました。"
+  },
+  "update.error_inspect_helper": {
+    "en": "Could not inspect the detached update helper ({0}): {1}",
+    "ko": "분리된 업데이트 helper를 확인하지 못했습니다({0}): {1}",
+    "zh": "无法检查独立运行的更新辅助进程（{0}）：{1}",
+    "ja": "分離された更新ヘルパーを確認できませんでした（{0}）: {1}"
+  },
+  "update.error_start_task": {
+    "en": "Could not start the independent Scheduled Task updater ({0}): {1}",
+    "ko": "독립 Scheduled Task 업데이트 작업을 시작하지 못했습니다({0}): {1}",
+    "zh": "无法启动独立的计划任务更新程序（{0}）：{1}",
+    "ja": "独立したスケジュールタスク更新プログラムを開始できませんでした（{0}）: {1}"
+  },
+  "update.error_persist_failure_state": {
+    "en": "Also failed to persist the update failure state: {0}",
+    "ko": "업데이트 실패 상태도 저장하지 못했습니다: {0}",
+    "zh": "同时未能保存更新失败状态：{0}",
+    "ja": "更新失敗状態も保存できませんでした: {0}"
+  },
+  "update.error_unexpected_task_inspection": {
+    "en": "Unexpected Scheduled Task inspection result: {0}",
+    "ko": "예상하지 못한 Scheduled Task 확인 결과입니다: {0}",
+    "zh": "计划任务检查结果异常：{0}",
+    "ja": "スケジュールタスクの予期しない確認結果です: {0}"
+  },
+  "install.language_prompt": {
+    "en": "Choose language: [en] English (default), [ko] 한국어, [zh] 简体中文, [ja] 日本語: ",
+    "ko": "언어 선택: [en] English (기본값), [ko] 한국어, [zh] 简体中文, [ja] 日本語: ",
+    "zh": "选择语言：[en] English（默认）、[ko] 한국어、[zh] 简体中文、[ja] 日本語：",
+    "ja": "言語を選択: [en] English（既定）、[ko] 한국어、[zh] 简体中文、[ja] 日本語: "
+  },
+  "install.language_environment_error": {
+    "en": "Set DISCODEX_LANGUAGE to en, ko, zh, or ja.",
+    "ko": "DISCODEX_LANGUAGE를 en, ko, zh, ja 중 하나로 설정하세요.",
+    "zh": "请将 DISCODEX_LANGUAGE 设置为 en、ko、zh 或 ja。",
+    "ja": "DISCODEX_LANGUAGE に en、ko、zh、ja のいずれかを設定してください。"
+  },
+  "install.unsupported_platform": {
+    "en": "No prebuilt Discodex release is available for %s %s.\n",
+    "ko": "감지한 환경(%s %s)에 사용할 Discodex 사전 빌드 릴리스가 없습니다.\n",
+    "zh": "没有适用于检测到的环境 %s %s 的 Discodex 预构建版本。\n",
+    "ja": "検出された環境 %s %s 用の Discodex ビルド済みリリースはありません。\n"
+  },
+  "install.curl_required": {
+    "en": "curl is required to download the official Discodex release.",
+    "ko": "공식 Discodex 릴리스를 다운로드하려면 curl이 필요합니다.",
+    "zh": "下载 Discodex 官方预构建版本需要 curl。",
+    "ja": "Discodex 公式ビルド済みリリースのダウンロードには curl が必要です。"
+  },
+  "install.help": {
+    "en": "./install (new installation)\n./update --config <profile-config> (update)\n./install --update --config <profile-config> (update alias)\n",
+    "ko": "./install (새 설치)\n./update --config <profile-config> (업데이트)\n./install --update --config <profile-config> (업데이트 별칭)\n",
+    "zh": "./install（新安装）\n./update --config <profile-config>（更新）\n./install --update --config <profile-config>（更新别名）\n",
+    "ja": "./install（新規インストール）\n./update --config <profile-config>（更新）\n./install --update --config <profile-config>（更新別名）\n"
+  },
+  "install.unknown_option": {
+    "en": "Unknown install option; use ./install --help.\n",
+    "ko": "알 수 없는 설치 옵션입니다. ./install --help를 사용하세요.\n",
+    "zh": "未知的安装选项；请使用 ./install --help。\n",
+    "ja": "不明なインストールオプションです。./install --help を使用してください。\n"
+  },
+  "install.refuse_replace": {
+    "en": "Refusing to replace %s. Use the existing binary for install/reinstall/uninstall, or remove it after its owned installation is uninstalled.\n",
+    "ko": "%s 파일을 덮어쓰지 않습니다. 기존 소유 설치로 재설치·제거하거나 해당 설치를 제거한 뒤 파일을 정리하세요.\n",
+    "zh": "不会覆盖文件 %s。请使用现有安装执行重新安装或卸载，之后再清理文件。\n",
+    "ja": "ファイル %s は上書きしません。既存のインストールから再インストールまたは削除し、その後ファイルを整理してください。\n"
+  },
+  "install.destination_appeared": {
+    "en": "Refusing to replace %s; the destination appeared during installation.\n",
+    "ko": "설치 중 대상 경로 %s가 생겨 덮어쓰지 않습니다.\n",
+    "zh": "安装过程中目标路径 %s 已出现，不会覆盖。\n",
+    "ja": "インストール中に保存先 %s が作成されたため、上書きしません。\n"
+  },
+  "install.invalid_checksum": {
+    "en": "The release checksum file is invalid.\n",
+    "ko": "릴리스 체크섬 파일이 올바르지 않습니다.\n",
+    "zh": "发行版校验和文件无效。\n",
+    "ja": "リリースのチェックサムファイルが無効です。\n"
+  },
+  "install.checksum_mismatch": {
+    "en": "The downloaded release binary failed SHA256 verification.\n",
+    "ko": "다운로드한 릴리스 바이너리의 SHA256 검증에 실패했습니다.\n",
+    "zh": "下载的发行版二进制文件未通过 SHA256 校验。\n",
+    "ja": "ダウンロードしたリリースバイナリの SHA256 検証に失敗しました。\n"
+  },
+  "install.windows_only": {
+    "en": "This installer is for Windows.",
+    "ko": "이 설치 프로그램은 Windows 전용입니다.",
+    "zh": "此安装程序仅适用于 Windows。",
+    "ja": "このインストーラーは Windows 専用です。"
+  },
+  "install.discodex_failed": {
+    "en": "discodex install returned exit code %s.",
+    "ko": "discodex install이 종료 코드 %s을 반환했습니다.",
+    "zh": "discodex install 返回退出代码 %s。",
+    "ja": "discodex install が終了コード %s を返しました。"
+  },
+  "update.usage": {
+    "en": "Usage: ./update --config <existing-profile-config.json> [--migrate-adhoc]\n\nDownloads the official Discodex release for this operating system and architecture,\nthen stages its matching prebuilt Codex runtime and updates the selected profile.\nThe existing Codex data home, conversations and settings are preserved.\n",
+    "ko": "사용법: ./update --config <existing-profile-config.json> [--migrate-adhoc]\n\n현재 운영 체제와 아키텍처에 맞는 공식 Discodex 릴리스를 다운로드하고\n해당 사전 빌드 Codex 런타임을 준비한 뒤 선택한 프로필을 업데이트합니다.\n기존 Codex 데이터 홈, 대화, 설정은 보존됩니다.\n",
+    "zh": "用法：./update --config <existing-profile-config.json> [--migrate-adhoc]\n\n下载适用于此操作系统和架构的 Discodex 官方版本，\n然后准备匹配的预构建 Codex 运行时并更新所选配置。\n现有 Codex 数据目录、对话和设置会保留。\n",
+    "ja": "使用方法: ./update --config <existing-profile-config.json> [--migrate-adhoc]\n\nこの OS とアーキテクチャに対応する Discodex 公式リリースをダウンロードし、\n対応する Codex ランタイムを準備して選択したプロファイルを更新します。\n既存の Codex データホーム、会話、設定は保持されます。\n"
+  },
+  "update.missing_config": {
+    "en": "An existing profile config is required with --config.\n",
+    "ko": "--config에 기존 프로필 설정 파일을 지정해야 합니다.\n",
+    "zh": "必须通过 --config 指定现有配置文件。\n",
+    "ja": "--config で既存のプロファイル設定ファイルを指定してください。\n"
+  },
+  "update.missing_config_value": {
+    "en": "Missing value for --config.\n",
+    "ko": "--config 값이 없습니다.\n",
+    "zh": "缺少 --config 的值。\n",
+    "ja": "--config の値がありません。\n"
+  },
+  "update.config_not_found": {
+    "en": "Config file not found: %s\n",
+    "ko": "설정 파일을 찾을 수 없습니다: %s\n",
+    "zh": "找不到配置文件：%s\n",
+    "ja": "設定ファイルが見つかりません: %s\n"
+  },
+  "update.unknown_option": {
+    "en": "Unknown update option: %s\n",
+    "ko": "알 수 없는 업데이트 옵션입니다: %s\n",
+    "zh": "未知的更新选项：%s\n",
+    "ja": "不明な更新オプションです: %s\n"
+  },
+  "update.unsupported_platform": {
+    "en": "No prebuilt Discodex release is available for %s/%s.\n",
+    "ko": "%s/%s 환경에 사용할 Discodex 사전 빌드 릴리스가 없습니다.\n",
+    "zh": "没有适用于 %s/%s 的 Discodex 预构建版本。\n",
+    "ja": "%s/%s 用の Discodex ビルド済みリリースはありません。\n"
+  },
+  "update.discodex_failed": {
+    "en": "Discodex update returned exit code %s.\n",
+    "ko": "Discodex 업데이트가 종료 코드 %s을 반환했습니다.\n",
+    "zh": "Discodex 更新返回退出代码 %s。\n",
+    "ja": "Discodex の更新が終了コード %s を返しました。\n"
+  },
+  "install.no_installation_list_is_saved_create_it_before_s": {
+    "en": "No installation list is saved. Create it before setup starts.",
+    "ko": "저장된 설치 목록이 없습니다. 설정을 시작하기 전에 목록을 만듭니다.",
+    "zh": "未找到已保存的安装列表。请先创建列表再开始设置。",
+    "ja": "保存済みのインストールリストがありません。設定を始める前に作成します。"
+  },
+  "install.discord_bot_token_input_hidden": {
+    "en": "Discord bot token (input hidden): ",
+    "ko": "Discord 봇 토큰 (입력 숨김): ",
+    "zh": "Discord 机器人令牌（隐藏输入）：",
+    "ja": "Discord ボットトークン（入力非表示）："
+  },
+  "install.discord_channel_permission_check": {
+    "en": "Discord channel permission check",
+    "ko": "Discord 채널 권한 확인",
+    "zh": "Discord 频道权限检查",
+    "ja": "Discord チャンネル権限の確認"
+  },
+  "install.verified_the_bot_s_current_role_and_channel_over": {
+    "en": "Verified the bot's current role and channel overrides for read, write, voice, and transcript-thread permissions on Discord.",
+    "ko": "Discord의 현재 봇 역할과 채널 덮어쓰기에서 읽기·쓰기·통화·기록 스레드 권한을 확인했습니다.",
+    "zh": "已验证 Discord 中机器人当前角色和频道覆盖设置具备读取、写入、语音和记录线程权限。",
+    "ja": "Discord の現在のボットロールとチャンネル上書き設定で、読み取り、書き込み、音声、記録スレッドの権限を確認しました。"
+  },
+  "install.codex_provider_authentication_settings_were_chec": {
+    "en": "Codex provider authentication settings were checked; the permission profile ID was saved and the user service start was requested. Check /discodex status for active thread settings.",
+    "ko": "Codex 공급자의 인증 설정을 확인했습니다. 권한 프로필 ID를 저장했고 사용자 서비스를 시작하도록 요청했습니다. 활성 대화 설정은 /discodex status에서 확인하세요.",
+    "zh": "已检查 Codex 提供商的身份验证设置，保存权限配置 ID，并请求启动用户服务。请通过 /discodex status 查看当前对话设置。",
+    "ja": "Codex プロバイダーの認証設定を確認しました。権限プロファイル ID を保存し、ユーザーサービスの起動を要求しました。現在のスレッド設定は /discodex status で確認してください。"
+  },
+  "install.send_a_real_text_message_in_discord_and_try_sett": {
+    "en": "Send a real text message in Discord and try settings, question forms, and approval buttons. Speak in an allowed voice channel and verify voice work and its finalized transcript. Handle sign-in, MFA, OS consent, and microphone prompts in their official user interfaces.",
+    "ko": "Discord에서 실제 텍스트를 보내고 설정 변경·질문 폼·승인 버튼을 사용하세요. 허용한 음성 채널에서 말한 뒤 음성 업무와 확정 전사를 확인하세요. 로그인·MFA·OS 동의·마이크는 공식 사용자 화면에서 처리합니다.",
+    "zh": "请在 Discord 中发送真实文本，并尝试设置、问题表单和批准按钮。在获准的语音频道中讲话，验证语音任务和最终转录。请在官方用户界面中处理登录、MFA、操作系统授权和麦克风提示。",
+    "ja": "Discord で実際のテキストを送り、設定、質問フォーム、承認ボタンを試してください。許可された音声チャンネルで話し、音声タスクと確定した文字起こしを確認してください。サインイン、MFA、OS の許可、マイクの確認は公式ユーザー画面で行ってください."
+  },
+  "install.could_not_read_installation_feature_observations": {
+    "en": "Could not read installation feature observations",
+    "ko": "설치 기능 관측을 읽지 못했습니다",
+    "zh": "无法读取安装功能观察结果",
+    "ja": "インストール機能の観測結果を読み取れませんでした"
+  },
+  "install.failed": {
+    "en": "failed",
+    "ko": "실패",
+    "zh": "失败",
+    "ja": "失敗"
+  },
+  "install.incomplete": {
+    "en": "incomplete",
+    "ko": "미완료",
+    "zh": "未完成",
+    "ja": "未完了"
+  },
+  "install.ready_this_install_successfully_exercised_text_s": {
+    "en": "READY: This install successfully exercised text, settings, approvals, two-way voice, work linked to the same conversation, and the finalized transcript.",
+    "ko": "준비 완료: 이 설치에서 텍스트·설정·승인·양방향 음성·같은 대화 업무 연결·확정 전사가 실제로 동작했습니다.",
+    "zh": "就绪：此安装已成功验证文本、设置、批准、双向语音、关联同一对话的任务以及最终转录。",
+    "ja": "準備完了：このインストールで、テキスト、設定、承認、双方向音声、同じ会話に紐づくタスク、確定した文字起こしが動作しました。"
+  },
+  "install.no_feature_result_from_the_current_install_has_b": {
+    "en": "No feature result from the current install has been observed yet.",
+    "ko": "현재 설치의 기능 결과가 아직 관측되지 않았습니다。",
+    "zh": "尚未观察到当前安装的功能结果。",
+    "ja": "現在のインストールでの機能結果はまだ確認されていません。"
+  },
+  "install.settings_and_conversation_history_were_preserved": {
+    "en": "Settings and conversation history were preserved. Feature verification is incomplete.",
+    "ko": "설정과 대화 이력을 보존했습니다. 기능 확인은 미완료입니다.",
+    "zh": "设置和对话历史已保留。功能验证尚未完成。",
+    "ja": "設定と会話履歴は保持されています。機能確認は未完了です。"
+  },
+  "install.press_enter_to_read_results_again_or_q_to_exit_w": {
+    "en": "Press Enter to read results again, or q to exit with verification incomplete > ",
+    "ko": "Enter: 실제 결과 다시 읽기, q: 미완료 상태로 종료 > ",
+    "zh": "按 Enter 重新读取结果，或按 q 在验证未完成时退出 > ",
+    "ja": "Enter で結果を再読込、q で確認未完了のまま終了 > "
+  },
+  "install.in_finder_add_the_selected_executable_to_system": {
+    "en": "In Finder, add the selected executable to System Settings > Privacy & Security > Full Disk Access and enable it: {}",
+    "ko": "Finder에서 선택한 실행 파일을 시스템 설정 > 개인정보 보호 및 보안 > 전체 디스크 접근 권한에 추가하고 켜세요: {}",
+    "zh": "在 Finder 中将选定的可执行文件添加到“系统设置”>“隐私与安全性”>“完全磁盘访问权限”并启用：{}",
+    "ja": "Finder で選択した実行ファイルを「システム設定」>「プライバシーとセキュリティ」>「フルディスクアクセス」に追加して有効にしてください：{}"
+  },
+  "install.this_command_does_not_automatically_check_or_cha": {
+    "en": "This command does not automatically check or change macOS permissions.",
+    "ko": "이 명령은 macOS 권한 부여 여부를 자동으로 확인하거나 변경하지 않습니다.",
+    "zh": "此命令不会自动检查或更改 macOS 权限。",
+    "ja": "このコマンドは macOS の権限を自動で確認または変更しません。"
+  },
+  "install.macos_may_ask_this_executable_for_protected_fold": {
+    "en": "macOS may ask this executable for protected-folder access separately. Add this exact worker to Full Disk Access only if your workflow needs that broader permission.",
+    "ko": "macOS가 이 실행 파일에 보호된 폴더 접근을 별도로 요청할 수 있습니다. 더 넓은 권한이 필요한 작업에서만 이 실행 파일을 전체 디스크 접근에 추가하세요.",
+    "zh": "macOS 可能会单独询问此可执行文件是否可访问受保护的文件夹。只有工作流确实需要更广泛权限时，才将此准确路径的工作程序添加到“完全磁盘访问权限”。",
+    "ja": "macOS はこの実行ファイルに保護フォルダへのアクセスを別途求める場合があります。ワークフローにより広い権限が必要な場合に限り、このパスのワーカーをフルディスクアクセスに追加してください。"
+  },
+  "install.if_you_grant_full_disk_access_select_the_exact_e": {
+    "en": "If you grant Full Disk Access, select the exact executable path shown above and enable it. Press Enter to continue or q to cancel. Continuing does not confirm that macOS granted access.",
+    "ko": "전체 디스크 접근을 허용하려면 위에 표시된 정확한 실행 파일을 선택하고 켜세요. Enter로 계속하거나 q로 취소할 수 있습니다. 계속해도 macOS가 권한을 허용했는지는 확인되지 않습니다.",
+    "zh": "如需授予“完全磁盘访问权限”，请选择上方显示的准确可执行文件并启用。按 Enter 继续，或按 q 取消。继续操作不会确认 macOS 已授予访问权限。",
+    "ja": "フルディスクアクセスを許可する場合は、上記の正確な実行ファイルを選択して有効にしてください。Enter で続行、q でキャンセルできます。続行しても macOS がアクセスを許可したことは確認されません。"
+  },
+  "install.continue_after_fda_guidance_enter_cancel_q": {
+    "en": "Continue after FDA guidance [Enter] / cancel [q] > ",
+    "ko": "FDA 안내 후 계속 [Enter] / 취소 [q] > ",
+    "zh": "完成完全磁盘访问提示后继续 [Enter] / 取消 [q] > ",
+    "ja": "フルディスクアクセスの案内後に続行 [Enter] / キャンセル [q] > "
+  },
+  "install.codex_data_1_existing_home_share_account_memory": {
+    "en": "Codex data: 1) Existing home (share account, memory and history); 2) Separate Discodex home. Shared settings are preserved.",
+    "ko": "Codex 데이터: 1) 기존 홈 공유 (계정·메모리·기록); 2) Discodex 전용 홈. 공유 설정은 보존합니다.",
+    "zh": "Codex 数据：1) 共享现有目录（账户、记忆和历史）；2) Discodex 独立目录。保留共享设置。",
+    "ja": "Codex データ：1) 既存ホームを共有（アカウント・メモリ・履歴）；2) Discodex 専用ホーム。共有設定は保持します。"
+  },
+  "install.choose_1_or_2": {
+    "en": "Choose 1 or 2.",
+    "ko": "1 또는 2를 선택하세요.",
+    "zh": "请选择 1 或 2。",
+    "ja": "1 または 2 を選んでください。"
+  },
+  "install.antigravity_1_install_a_discodex_managed_cli_2_s": {
+    "en": "Antigravity: 1) Install a Discodex-managed CLI; 2) Skip (you can enable it later in Discord). Enter q to exit setup.",
+    "ko": "Antigravity: 1) Discodex 전용 CLI 설치; 2) 건너뛰기 (나중에 Discord에서 활성화 가능). q를 입력하면 설치를 종료합니다.",
+    "zh": "Antigravity：1) 安装由 Discodex 管理的 CLI；2) 跳过（以后可在 Discord 中启用）。输入 q 退出安装。",
+    "ja": "Antigravity：1) Discodex 管理の CLI をインストール; 2) スキップ（後で Discord から有効化できます）。q でセットアップを終了します。"
+  },
+  "install.choose_1_2_or_q": {
+    "en": "Choose 1, 2, or q.",
+    "ko": "1, 2 또는 q를 선택하세요.",
+    "zh": "请选择 1、2 或 q。",
+    "ja": "1、2、q のいずれかを選んでください。"
+  },
+  "install.antigravity_settings_1_share_existing_settings_2": {
+    "en": "Antigravity settings: 1) Share existing settings; 2) Separate Discodex settings. The CLI still uses the operating system's account keyring. Shared settings are preserved on uninstall. Enter q to exit.",
+    "ko": "Antigravity 설정: 1) 기존 설정 공유; 2) Discodex 전용 설정. 로그인 계정은 CLI의 운영체제 키링을 사용합니다. 공유 설정은 삭제할 때 보존합니다. q를 입력하면 종료합니다.",
+    "zh": "Antigravity 设置：1) 共享现有设置；2) Discodex 独立设置。CLI 仍使用操作系统账户密钥环。卸载时保留共享设置。输入 q 退出。",
+    "ja": "Antigravity 設定：1) 既存の設定を共有; 2) Discodex 専用の設定。CLI は引き続き OS のアカウントキーチェーンを使用します。共有設定はアンインストール時も保持します。q で終了します。"
+  },
+  "install.antigravity_is_installed_signed_in_and_enabled": {
+    "en": "Antigravity is installed, signed in, and enabled.",
+    "ko": "Antigravity 설치와 로그인을 확인했고 활성화했습니다.",
+    "zh": "已确认 Antigravity 安装和登录成功，并已启用。",
+    "ja": "Antigravity のインストールとログインを確認し、有効化しました。"
+  },
+  "install.preparing_antigravity_ctrl_c_or_ctrl_d_cancels_a": {
+    "en": "Preparing Antigravity. Ctrl+C or Ctrl+D cancels and exits at any stage. Use arrow keys and Enter for CLI choices; type an answer or login code, then press Enter. Typed text is hidden.",
+    "ko": "Antigravity를 준비합니다. 어느 단계에서든 Ctrl+C 또는 Ctrl+D로 취소하고 나갈 수 있습니다. CLI 선택은 방향키와 Enter를 사용하고, 답변이나 로그인 코드는 입력 후 Enter를 누르세요. 입력 내용은 숨겨집니다.",
+    "zh": "正在准备 Antigravity。任何阶段都可按 Ctrl+C 或 Ctrl+D 取消并退出。使用方向键和 Enter 选择 CLI 选项；输入回答或登录代码后按 Enter。输入内容不显示。",
+    "ja": "Antigravity を準備します。各段階で Ctrl+C または Ctrl+D を押すと中止して終了できます。CLI の選択は矢印キーと Enter を使い、回答やログインコードは入力後に Enter を押してください。入力内容は非表示です。"
+  },
+  "install.the_cli_prompt_changed_follow_the_current_prompt": {
+    "en": "The CLI prompt changed. Follow the current prompt and try again.",
+    "ko": "CLI 입력 단계가 바뀌었습니다. 현재 안내에 따라 다시 입력하세요.",
+    "zh": "CLI 提示已更改。请按照当前提示重新输入。",
+    "ja": "CLI の入力段階が変わりました。現在の案内に従って再入力してください。"
+  },
+  "install.checking_managed_antigravity": {
+    "en": "Checking managed Antigravity…",
+    "ko": "전용 Antigravity를 확인합니다…",
+    "zh": "正在检查托管的 Antigravity…",
+    "ja": "管理対象の Antigravity を確認しています…"
+  },
+  "install.downloading_official_antigravity_release": {
+    "en": "Downloading official Antigravity release…",
+    "ko": "공식 Antigravity 릴리스를 다운로드합니다…",
+    "zh": "正在下载 Antigravity 官方版本…",
+    "ja": "Antigravity の公式リリースをダウンロードしています…"
+  },
+  "install.checking_antigravity_sign_in": {
+    "en": "Checking Antigravity sign-in…",
+    "ko": "Antigravity 로그인을 확인합니다…",
+    "zh": "正在检查 Antigravity 登录状态…",
+    "ja": "Antigravity のログインを確認しています…"
+  },
+  "install.verifying_the_antigravity_model_catalog": {
+    "en": "Verifying the Antigravity model catalog…",
+    "ko": "Antigravity 모델 목록을 확인합니다…",
+    "zh": "正在验证 Antigravity 模型列表…",
+    "ja": "Antigravity のモデル一覧を確認しています…"
+  },
+  "install.antigravity_sign_in_needs_an_interactive_termina": {
+    "en": "Antigravity sign-in needs an interactive terminal. Run the installer in a terminal or enable Antigravity from Discord settings.",
+    "ko": "Antigravity 로그인에 대화형 터미널이 필요합니다. 터미널에서 설치 프로그램을 실행하거나 Discord 설정에서 Antigravity를 활성화하세요.",
+    "zh": "Antigravity 登录需要交互式终端。请在终端中运行安装程序，或从 Discord 设置启用 Antigravity。",
+    "ja": "Antigravity のログインには対話型端末が必要です。端末でインストーラーを実行するか、Discord の設定から Antigravity を有効化してください。"
+  },
+  "install.antigravity_setup_cancelled": {
+    "en": "Antigravity setup cancelled.",
+    "ko": "Antigravity 설정을 취소했습니다.",
+    "zh": "已取消 Antigravity 设置。",
+    "ja": "Antigravity のセットアップを中止しました。"
+  },
+  "install.using_the_active_codex_provider_and_its_existing": {
+    "en": "Using the active Codex provider and its existing authentication settings.",
+    "ko": "활성 Codex 공급자와 기존 인증 설정을 사용합니다.",
+    "zh": "使用当前 Codex 提供商及其现有身份验证设置。",
+    "ja": "有効な Codex プロバイダーと既存の認証設定を使用します。"
+  },
+  "install.message_receive_policy_1_everyone_all_servers_an": {
+    "en": "Message receive policy: 1) Everyone (all servers and DMs)  2) Registered server  3) Registered channels  4) Paired users",
+    "ko": "메시지 수신 정책: 1) 모두 (모든 서버 및 DM)  2) 등록된 서버  3) 등록된 채널  4) 페어링된 사용자",
+    "zh": "消息接收策略：1) 所有人（所有服务器和私信）  2) 已注册服务器  3) 已注册频道  4) 已配对用户",
+    "ja": "メッセージ受信ポリシー: 1) 全員（すべてのサーバーとDM）  2) 登録サーバー  3) 登録チャンネル  4) ペアユーザー"
+  },
+  "install.choose_1_2_3_or_4": {
+    "en": "Choose 1, 2, 3, or 4.",
+    "ko": "1, 2, 3, 4 중에서 선택하세요.",
+    "zh": "请选择 1、2、3 或 4。",
+    "ja": "1、2、3、4 から選択してください。"
+  },
+  "install.enter_numeric_ids_separated_by_commas_or_none_to": {
+    "en": "Enter numeric IDs separated by commas, or 'none' to clear.",
+    "ko": "숫자 ID를 쉼표로 구분해 입력하거나 'none'을 입력해 비우세요.",
+    "zh": "请输入逗号分隔的数字 ID，或输入 none 清空。",
+    "ja": "数値 ID をカンマ区切りで入力するか、none で消去してください。"
+  },
+  "install.enter_numeric_ids_separated_by_commas_or_leave_b": {
+    "en": "Enter numeric IDs separated by commas, or leave blank for none.",
+    "ko": "숫자 ID를 쉼표로 구분해 입력하거나 비워 두세요.",
+    "zh": "请输入逗号分隔的数字 ID，或留空表示无。",
+    "ja": "数値 ID をカンマ区切りで入力するか、空欄のままにしてください。"
+  },
+  "install.enter_the_numeric_discord_id": {
+    "en": "Enter the numeric Discord ID.",
+    "ko": "숫자 Discord ID를 입력하세요.",
+    "zh": "请输入数字 Discord ID。",
+    "ja": "Discord の数値 ID を入力してください。"
+  },
+  "install.enter_one_or_more_numeric_ids_separated_by_comma": {
+    "en": "Enter one or more numeric IDs separated by commas.",
+    "ko": "숫자 ID를 하나 이상 쉼표로 구분해 입력하세요.",
+    "zh": "请输入一个或多个数字 ID，并用逗号分隔。",
+    "ja": "数値 ID を1つ以上、カンマ区切りで入力してください。"
+  },
+  "install.discord_profile_name": {
+    "en": "Discord profile name",
+    "ko": "Discord 프로필 이름",
+    "zh": "Discord 配置名称",
+    "ja": "Discord プロファイル名"
+  },
+  "install.discord_application_profile_existing_app": {
+    "en": "Discord application profile (existing app)",
+    "ko": "Discord 애플리케이션 프로필 (기존 앱)",
+    "zh": "Discord 应用配置（现有应用）",
+    "ja": "Discord アプリケーションプロファイル（既存アプリ）"
+  },
+  "install.codex_project_work_directory": {
+    "en": "Codex project/work directory",
+    "ko": "Codex 프로젝트/작업 디렉터리",
+    "zh": "Codex 项目/工作目录",
+    "ja": "Codex プロジェクト/作業ディレクトリ"
+  },
+  "install.data_home": {
+    "en": "Data home",
+    "ko": "데이터 홈",
+    "zh": "数据目录",
+    "ja": "データホーム"
+  },
+  "install.existing_codex_home": {
+    "en": "Existing Codex home",
+    "ko": "기존 Codex 홈",
+    "zh": "现有 Codex 目录",
+    "ja": "既存 Codex ホーム"
+  },
+  "install.antigravity": {
+    "en": "Antigravity",
+    "ko": "Antigravity",
+    "zh": "Antigravity",
+    "ja": "Antigravity"
+  },
+  "install.settings": {
+    "en": "Settings",
+    "ko": "설정",
+    "zh": "设置",
+    "ja": "設定"
+  },
+  "install.allowed_permission_profile_id": {
+    "en": "Allowed permission profile ID",
+    "ko": "허용된 권한 프로필 ID",
+    "zh": "允许的权限配置 ID",
+    "ja": "許可された権限プロファイル ID"
+  },
+  "install.choose_policy_1_4": {
+    "en": "Choose policy (1-4)",
+    "ko": "정책 선택 (1-4)",
+    "zh": "选择策略（1-4）",
+    "ja": "ポリシーを選択 (1-4)"
+  },
+  "install.home_guild_server_id": {
+    "en": "Home guild/server ID",
+    "ko": "홈 서버 ID",
+    "zh": "主页服务器 ID",
+    "ja": "ホームサーバー ID"
+  },
+  "install.home_text_channel_id": {
+    "en": "Home text channel ID",
+    "ko": "홈 텍스트 채널 ID",
+    "zh": "主页文本频道 ID",
+    "ja": "ホームテキストチャンネル ID"
+  },
+  "install.voice_transcript_channel_id": {
+    "en": "Voice transcript channel ID",
+    "ko": "음성 전사 채널 ID",
+    "zh": "语音转录频道 ID",
+    "ja": "音声文字起こしチャンネル ID"
+  },
+  "install.allowed_voice_channel_ids_comma_separated": {
+    "en": "Allowed voice channel IDs (comma-separated)",
+    "ko": "허용할 음성 채널 ID (쉼표로 구분)",
+    "zh": "允许的语音频道 ID（逗号分隔）",
+    "ja": "許可する音声チャンネル ID（カンマ区切り）"
+  },
+  "install.operator_user_ids_comma_separated": {
+    "en": "Operator user IDs (comma-separated)",
+    "ko": "운영자 사용자 ID (쉼표로 구분)",
+    "zh": "操作员用户 ID（逗号分隔）",
+    "ja": "オペレーターのユーザー ID（カンマ区切り）"
+  },
+  "install.codex_model_leave_empty_for_native_default": {
+    "en": "Codex model (leave empty for native default)",
+    "ko": "Codex 모델 (비우면 기본값)",
+    "zh": "Codex 模型（留空使用默认值）",
+    "ja": "Codex モデル（空欄なら標準）"
+  },
+  "install.paired_user_ids_enter_none_to_clear": {
+    "en": "Paired user IDs; enter 'none' to clear",
+    "ko": "페어링 사용자 ID ('none' 입력 시 비움)",
+    "zh": "已配对用户 ID（输入 none 清空）",
+    "ja": "ペアユーザー ID（none で消去）"
+  },
+  "install.registered_channel_ids_blank_keeps_home_transcri": {
+    "en": "Registered channel IDs; blank keeps home/transcript defaults, 'none' clears",
+    "ko": "등록 채널 ID (비우면 홈/전사 채널, 'none' 입력 시 비움)",
+    "zh": "已注册频道 ID（留空使用主页/转录频道，输入 none 清空）",
+    "ja": "登録チャンネル ID（空欄でホーム/文字起こし、none で消去）"
+  },
+  "install.whitelist_user_ids_optional_comma_separated": {
+    "en": "Whitelist user IDs (optional; comma-separated)",
+    "ko": "허용 목록 사용자 ID (선택 사항, 쉼표로 구분)",
+    "zh": "允许列表用户 ID（可选，逗号分隔）",
+    "ja": "許可リストのユーザー ID（任意、カンマ区切り）"
+  },
+  "install.blacklist_user_ids_optional_comma_separated": {
+    "en": "Blacklist user IDs (optional; comma-separated)",
+    "ko": "차단 목록 사용자 ID (선택 사항, 쉼표로 구분)",
+    "zh": "阻止列表用户 ID（可选，逗号分隔）",
+    "ja": "拒否リストのユーザー ID（任意、カンマ区切り）"
+  },
+  "install.text": {
+    "en": "Text",
+    "ko": "텍스트",
+    "zh": "文本",
+    "ja": "テキスト"
+  },
+  "install.questions": {
+    "en": "Questions",
+    "ko": "질문 폼",
+    "zh": "问题",
+    "ja": "質問"
+  },
+  "install.approvals": {
+    "en": "Approvals",
+    "ko": "승인",
+    "zh": "审批",
+    "ja": "承認"
+  },
+  "install.two_way_voice": {
+    "en": "Two-way voice",
+    "ko": "양방향 음성",
+    "zh": "双向语音",
+    "ja": "双方向音声"
+  },
+  "install.same_thread_handoff": {
+    "en": "Same-thread handoff",
+    "ko": "같은 대화 업무 연결",
+    "zh": "同一对话任务衔接",
+    "ja": "同じ会話での作業引き継ぎ"
+  },
+  "install.final_transcript": {
+    "en": "Final transcript",
+    "ko": "확정 전사",
+    "zh": "最终转录",
+    "ja": "確定済み文字起こし"
+  },
+  "install.not_run_or_not_observed": {
+    "en": "Not run or not observed",
+    "ko": "미실행 또는 미관측",
+    "zh": "未运行或未观察",
+    "ja": "未実行または未確認"
+  },
+  "install.behavior_confirmed": {
+    "en": "Behavior confirmed",
+    "ko": "실제 동작 확인",
+    "zh": "行为已确认",
+    "ja": "動作を確認済み"
+  },
+  "install.some_results_are_not_yet_confirmed": {
+    "en": "Some results are not yet confirmed",
+    "ko": "일부 적용 결과가 아직 미확인",
+    "zh": "部分结果尚未确认",
+    "ja": "一部の結果は未確認です"
+  },
+  "install.failed_see_the_installation_screen_and_private_l": {
+    "en": "Failed; see the installation screen and private logs",
+    "ko": "실패 (설치 화면과 비공개 로그에서 원인 확인)",
+    "zh": "失败；请查看安装界面和私密日志",
+    "ja": "失敗（インストール画面と非公開ログを確認してください）"
+  },
+  "install.diagnostic_0f25c86292cb": {
+    "en": "Windows task executable path is not valid UTF-8",
+    "ko": "Windows task executable path is not valid UTF-8",
+    "zh": "Windows task executable path is not valid UTF-8",
+    "ja": "Windows task executable path is not valid UTF-8"
+  },
+  "install.diagnostic_a21620791616": {
+    "en": "read current directory",
+    "ko": "read current directory",
+    "zh": "read current directory",
+    "ja": "read current directory"
+  },
+  "install.diagnostic_c3c97f1a6ed6": {
+    "en": "resolve recorded config",
+    "ko": "resolve recorded config",
+    "zh": "resolve recorded config",
+    "ja": "resolve recorded config"
+  },
+  "install.diagnostic_5da1346d0987": {
+    "en": "resolve selected config",
+    "ko": "resolve selected config",
+    "zh": "resolve selected config",
+    "ja": "resolve selected config"
+  },
+  "install.diagnostic_8ef2f02b61b1": {
+    "en": "legacy config path has no parent",
+    "ko": "legacy config path has no parent",
+    "zh": "legacy config path has no parent",
+    "ja": "legacy config path has no parent"
+  },
+  "install.diagnostic_22d2c16acd47": {
+    "en": "recorded legacy config path has no parent",
+    "ko": "recorded legacy config path has no parent",
+    "zh": "recorded legacy config path has no parent",
+    "ja": "recorded legacy config path has no parent"
+  },
+  "install.diagnostic_95676b526233": {
+    "en": "legacy state directory has no data root",
+    "ko": "legacy state directory has no data root",
+    "zh": "legacy state directory has no data root",
+    "ja": "legacy state directory has no data root"
+  },
+  "install.diagnostic_15b4ac0aa549": {
+    "en": "Discodex config path has no parent",
+    "ko": "Discodex config path has no parent",
+    "zh": "Discodex config path has no parent",
+    "ja": "Discodex config path has no parent"
+  },
+  "install.diagnostic_e7962f384f80": {
+    "en": "legacy ownership has no signed worker executable",
+    "ko": "legacy ownership has no signed worker executable",
+    "zh": "legacy ownership has no signed worker executable",
+    "ja": "legacy ownership has no signed worker executable"
+  },
+  "install.diagnostic_7e543fe17c9f": {
+    "en": "resolve legacy signed worker executable",
+    "ko": "resolve legacy signed worker executable",
+    "zh": "resolve legacy signed worker executable",
+    "ja": "resolve legacy signed worker executable"
+  },
+  "install.diagnostic_d697c107a5c7": {
+    "en": "preserve the verified legacy macOS signing identity",
+    "ko": "preserve the verified legacy macOS signing identity",
+    "zh": "preserve the verified legacy macOS signing identity",
+    "ja": "preserve the verified legacy macOS signing identity"
+  },
+  "install.diagnostic_1531cf999339": {
+    "en": "worker staging failed and staged migration files could not be removed",
+    "ko": "worker staging failed and staged migration files could not be removed",
+    "zh": "worker staging failed and staged migration files could not be removed",
+    "ja": "worker staging failed and staged migration files could not be removed"
+  },
+  "install.diagnostic_8bbbd3939c66": {
+    "en": "could not stage the Discodex worker before stopping the legacy service",
+    "ko": "could not stage the Discodex worker before stopping the legacy service",
+    "zh": "could not stage the Discodex worker before stopping the legacy service",
+    "ja": "could not stage the Discodex worker before stopping the legacy service"
+  },
+  "install.diagnostic_52a38bf9090c": {
+    "en": "worker signing failed and staged migration files could not be removed",
+    "ko": "worker signing failed and staged migration files could not be removed",
+    "zh": "worker signing failed and staged migration files could not be removed",
+    "ja": "worker signing failed and staged migration files could not be removed"
+  },
+  "install.diagnostic_623268cc091b": {
+    "en": "could not stop the verified legacy service before Discodex startup",
+    "ko": "could not stop the verified legacy service before Discodex startup",
+    "zh": "could not stop the verified legacy service before Discodex startup",
+    "ja": "could not stop the verified legacy service before Discodex startup"
+  },
+  "install.diagnostic_23307340990d": {
+    "en": "could not copy the legacy state after stopping its service",
+    "ko": "could not copy the legacy state after stopping its service",
+    "zh": "could not copy the legacy state after stopping its service",
+    "ja": "could not copy the legacy state after stopping its service"
+  },
+  "install.diagnostic_837aadc13ac3": {
+    "en": "Discodex is installed, but its migration marker could not be removed",
+    "ko": "Discodex is installed, but its migration marker could not be removed",
+    "zh": "Discodex is installed, but its migration marker could not be removed",
+    "ja": "Discodex is installed, but its migration marker could not be removed"
+  },
+  "install.diagnostic_6fe628c6dd4d": {
+    "en": "Discodex migration failed; the previous service was restored",
+    "ko": "Discodex migration failed; the previous service was restored",
+    "zh": "Discodex migration failed; the previous service was restored",
+    "ja": "Discodex migration failed; the previous service was restored"
+  },
+  "install.diagnostic_24f104b78121": {
+    "en": "inspect the legacy user service state",
+    "ko": "inspect the legacy user service state",
+    "zh": "inspect the legacy user service state",
+    "ja": "inspect the legacy user service state"
+  },
+  "install.diagnostic_3ad1b6abe1ca": {
+    "en": "inspect Windows task state",
+    "ko": "inspect Windows task state",
+    "zh": "inspect Windows task state",
+    "ja": "inspect Windows task state"
+  },
+  "install.diagnostic_1decb8bc3536": {
+    "en": "Windows task returned an invalid state",
+    "ko": "Windows task returned an invalid state",
+    "zh": "Windows task returned an invalid state",
+    "ja": "Windows task returned an invalid state"
+  },
+  "install.diagnostic_71a34462ea25": {
+    "en": "legacy ownership has no worker executable",
+    "ko": "legacy ownership has no worker executable",
+    "zh": "legacy ownership has no worker executable",
+    "ja": "legacy ownership has no worker executable"
+  },
+  "install.diagnostic_473684fa95a4": {
+    "en": "resolve legacy owned worker executable",
+    "ko": "resolve legacy owned worker executable",
+    "zh": "resolve legacy owned worker executable",
+    "ja": "resolve legacy owned worker executable"
+  },
+  "install.diagnostic_9fb8a6a5853a": {
+    "en": "resolve legacy owned config",
+    "ko": "resolve legacy owned config",
+    "zh": "resolve legacy owned config",
+    "ja": "resolve legacy owned config"
+  },
+  "install.diagnostic_01d9d9c72829": {
+    "en": "legacy systemd ownership has no unit path",
+    "ko": "legacy systemd ownership has no unit path",
+    "zh": "legacy systemd ownership has no unit path",
+    "ja": "legacy systemd ownership has no unit path"
+  },
+  "install.diagnostic_3fa37b1ead88": {
+    "en": "read legacy systemd unit",
+    "ko": "read legacy systemd unit",
+    "zh": "read legacy systemd unit",
+    "ja": "read legacy systemd unit"
+  },
+  "install.diagnostic_98984f92cab6": {
+    "en": "legacy LaunchAgent ownership has no plist path",
+    "ko": "legacy LaunchAgent ownership has no plist path",
+    "zh": "legacy LaunchAgent ownership has no plist path",
+    "ja": "legacy LaunchAgent ownership has no plist path"
+  },
+  "install.diagnostic_fedb1c470c47": {
+    "en": "legacy systemd unit path missing",
+    "ko": "legacy systemd unit path missing",
+    "zh": "legacy systemd unit path missing",
+    "ja": "legacy systemd unit path missing"
+  },
+  "install.diagnostic_9b9de85f9205": {
+    "en": "legacy systemd unit snapshot missing",
+    "ko": "legacy systemd unit snapshot missing",
+    "zh": "legacy systemd unit snapshot missing",
+    "ja": "legacy systemd unit snapshot missing"
+  },
+  "install.diagnostic_6aceed2745d9": {
+    "en": "legacy systemd unit filename invalid",
+    "ko": "legacy systemd unit filename invalid",
+    "zh": "legacy systemd unit filename invalid",
+    "ja": "legacy systemd unit filename invalid"
+  },
+  "install.diagnostic_5505037525ce": {
+    "en": "legacy LaunchAgent plist path missing",
+    "ko": "legacy LaunchAgent plist path missing",
+    "zh": "legacy LaunchAgent plist path missing",
+    "ja": "legacy LaunchAgent plist path missing"
+  },
+  "install.diagnostic_9a86c877c462": {
+    "en": "legacy LaunchAgent snapshot missing",
+    "ko": "legacy LaunchAgent snapshot missing",
+    "zh": "legacy LaunchAgent snapshot missing",
+    "ja": "legacy LaunchAgent snapshot missing"
+  },
+  "install.diagnostic_b0806749976a": {
+    "en": "legacy LaunchAgent executable missing",
+    "ko": "legacy LaunchAgent executable missing",
+    "zh": "legacy LaunchAgent executable missing",
+    "ja": "legacy LaunchAgent executable missing"
+  },
+  "install.diagnostic_d51c138cd7ea": {
+    "en": "legacy LaunchAgent path is not UTF-8",
+    "ko": "legacy LaunchAgent path is not UTF-8",
+    "zh": "legacy LaunchAgent path is not UTF-8",
+    "ja": "legacy LaunchAgent path is not UTF-8"
+  },
+  "install.diagnostic_0308549e64f0": {
+    "en": "legacy task executable missing",
+    "ko": "legacy task executable missing",
+    "zh": "legacy task executable missing",
+    "ja": "legacy task executable missing"
+  },
+  "install.diagnostic_1444729912bf": {
+    "en": "read legacy profile settings",
+    "ko": "read legacy profile settings",
+    "zh": "read legacy profile settings",
+    "ja": "read legacy profile settings"
+  },
+  "install.diagnostic_68004127460e": {
+    "en": "read legacy installation list",
+    "ko": "read legacy installation list",
+    "zh": "read legacy installation list",
+    "ja": "read legacy installation list"
+  },
+  "install.diagnostic_0548ba607a0e": {
+    "en": "inspect legacy Discord credential file",
+    "ko": "inspect legacy Discord credential file",
+    "zh": "inspect legacy Discord credential file",
+    "ja": "inspect legacy Discord credential file"
+  },
+  "install.diagnostic_5b64d3fb2531": {
+    "en": "resolve legacy worker executable",
+    "ko": "resolve legacy worker executable",
+    "zh": "resolve legacy worker executable",
+    "ja": "resolve legacy worker executable"
+  },
+  "install.diagnostic_ea5bf11008f7": {
+    "en": "resolve running Discodex executable",
+    "ko": "resolve running Discodex executable",
+    "zh": "resolve running Discodex executable",
+    "ja": "resolve running Discodex executable"
+  },
+  "install.diagnostic_d64634ebedc5": {
+    "en": "resolve staged Discodex executable",
+    "ko": "resolve staged Discodex executable",
+    "zh": "resolve staged Discodex executable",
+    "ja": "resolve staged Discodex executable"
+  },
+  "install.diagnostic_78398f44affe": {
+    "en": "sign staged Discodex worker with the preserved macOS identity",
+    "ko": "sign staged Discodex worker with the preserved macOS identity",
+    "zh": "sign staged Discodex worker with the preserved macOS identity",
+    "ja": "sign staged Discodex worker with the preserved macOS identity"
+  },
+  "install.diagnostic_69922bc5fb30": {
+    "en": "verify staged Discodex worker signature",
+    "ko": "verify staged Discodex worker signature",
+    "zh": "verify staged Discodex worker signature",
+    "ja": "verify staged Discodex worker signature"
+  },
+  "install.diagnostic_d4d3480f589c": {
+    "en": "owned state directory has no data root",
+    "ko": "owned state directory has no data root",
+    "zh": "owned state directory has no data root",
+    "ja": "owned state directory has no data root"
+  },
+  "install.diagnostic_3994cf6d02d5": {
+    "en": "inspect migration marker",
+    "ko": "inspect migration marker",
+    "zh": "inspect migration marker",
+    "ja": "inspect migration marker"
+  },
+  "install.diagnostic_167b62362de8": {
+    "en": "read migration marker",
+    "ko": "read migration marker",
+    "zh": "read migration marker",
+    "ja": "read migration marker"
+  },
+  "install.diagnostic_c599bafe8473": {
+    "en": "parse migration marker",
+    "ko": "parse migration marker",
+    "zh": "parse migration marker",
+    "ja": "parse migration marker"
+  },
+  "install.diagnostic_87d7ad31b4fc": {
+    "en": "resolve staged migration worker",
+    "ko": "resolve staged migration worker",
+    "zh": "resolve staged migration worker",
+    "ja": "resolve staged migration worker"
+  },
+  "install.diagnostic_2c2470231d37": {
+    "en": "resolve migration data root",
+    "ko": "resolve migration data root",
+    "zh": "resolve migration data root",
+    "ja": "resolve migration data root"
+  },
+  "install.diagnostic_ba6ee28c1f60": {
+    "en": "Discodex data path has no parent",
+    "ko": "Discodex data path has no parent",
+    "zh": "Discodex data path has no parent",
+    "ja": "Discodex data path has no parent"
+  },
+  "install.diagnostic_742e24df1ed3": {
+    "en": "remove completed migration marker",
+    "ko": "remove completed migration marker",
+    "zh": "remove completed migration marker",
+    "ja": "remove completed migration marker"
+  },
+  "install.diagnostic_281eeb375681": {
+    "en": "verify ownership of staged migration roots",
+    "ko": "verify ownership of staged migration roots",
+    "zh": "verify ownership of staged migration roots",
+    "ja": "verify ownership of staged migration roots"
+  },
+  "install.diagnostic_c4fc9a1f4d30": {
+    "en": "inspect saved Discord credential file",
+    "ko": "inspect saved Discord credential file",
+    "zh": "inspect saved Discord credential file",
+    "ja": "inspect saved Discord credential file"
+  },
+  "install.diagnostic_dc70aa917cfb": {
+    "en": "read saved Discord credential file",
+    "ko": "read saved Discord credential file",
+    "zh": "read saved Discord credential file",
+    "ja": "read saved Discord credential file"
+  },
+  "install.diagnostic_418010b666c9": {
+    "en": "read Discord token privately",
+    "ko": "read Discord token privately",
+    "zh": "read Discord token privately",
+    "ja": "read Discord token privately"
+  },
+  "install.diagnostic_a70a4c92ea48": {
+    "en": "new installation plan did not include a message receive policy",
+    "ko": "new installation plan did not include a message receive policy",
+    "zh": "new installation plan did not include a message receive policy",
+    "ja": "new installation plan did not include a message receive policy"
+  },
+  "install.diagnostic_f828c78ec9bd": {
+    "en": "Discord profile check failed; saved installation list and private config remain for correction",
+    "ko": "Discord profile check failed; saved installation list and private config remain for correction",
+    "zh": "Discord profile check failed; saved installation list and private config remain for correction",
+    "ja": "Discord profile check failed; saved installation list and private config remain for correction"
+  },
+  "install.diagnostic_50d84d8c4dfb": {
+    "en": "could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry",
+    "ko": "could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry",
+    "zh": "could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry",
+    "ja": "could not remove the owned Discord command; service is stopped and credentials/config/ownership were preserved for retry"
+  },
+  "install.diagnostic_e3306f259c97": {
+    "en": "read the owned profile language for Full Disk Access guidance",
+    "ko": "read the owned profile language for Full Disk Access guidance",
+    "zh": "read the owned profile language for Full Disk Access guidance",
+    "ja": "read the owned profile language for Full Disk Access guidance"
+  },
+  "install.diagnostic_c8192dfbdd99": {
+    "en": "the owned installation has no recorded worker executable",
+    "ko": "the owned installation has no recorded worker executable",
+    "zh": "the owned installation has no recorded worker executable",
+    "ja": "the owned installation has no recorded worker executable"
+  },
+  "install.diagnostic_04894a6ca1f7": {
+    "en": "the owned worker executable path is not valid UTF-8",
+    "ko": "the owned worker executable path is not valid UTF-8",
+    "zh": "the owned worker executable path is not valid UTF-8",
+    "ja": "the owned worker executable path is not valid UTF-8"
+  },
+  "install.diagnostic_9576a14fa6eb": {
+    "en": "read the configured macOS signing identity",
+    "ko": "read the configured macOS signing identity",
+    "zh": "read the configured macOS signing identity",
+    "ja": "read the configured macOS signing identity"
+  },
+  "install.diagnostic_ced3baeb9a3b": {
+    "en": "verify the actual owned worker before opening Full Disk Access settings",
+    "ko": "verify the actual owned worker before opening Full Disk Access settings",
+    "zh": "verify the actual owned worker before opening Full Disk Access settings",
+    "ja": "verify the actual owned worker before opening Full Disk Access settings"
+  },
+  "install.diagnostic_4ccad3835de7": {
+    "en": "owned state directory has no profile data root",
+    "ko": "owned state directory has no profile data root",
+    "zh": "owned state directory has no profile data root",
+    "ja": "owned state directory has no profile data root"
+  },
+  "install.diagnostic_57a8aa9b2250": {
+    "en": "mac-permissions option requires a path",
+    "ko": "mac-permissions option requires a path",
+    "zh": "mac-permissions option requires a path",
+    "ja": "mac-permissions option requires a path"
+  },
+  "install.diagnostic_f403d5770643": {
+    "en": "update option requires a path",
+    "ko": "update option requires a path",
+    "zh": "update option requires a path",
+    "ja": "update option requires a path"
+  },
+  "install.diagnostic_aa9831e2105c": {
+    "en": "update requires --source <new-binary>",
+    "ko": "update requires --source <new-binary>",
+    "zh": "update requires --source <new-binary>",
+    "ja": "update requires --source <new-binary>"
+  },
+  "install.diagnostic_4316e0f38728": {
+    "en": "update requires --config <existing-config>",
+    "ko": "update requires --config <existing-config>",
+    "zh": "update requires --config <existing-config>",
+    "ja": "update requires --config <existing-config>"
+  },
+  "install.diagnostic_73447fc62fab": {
+    "en": "run the incoming worker's update installer",
+    "ko": "run the incoming worker's update installer",
+    "zh": "run the incoming worker's update installer",
+    "ja": "run the incoming worker's update installer"
+  },
+  "install.diagnostic_acd4ffe8cc98": {
+    "en": "config path has no parent",
+    "ko": "config path has no parent",
+    "zh": "config path has no parent",
+    "ja": "config path has no parent"
+  },
+  "install.diagnostic_9ec42889ad52": {
+    "en": "resolve update source",
+    "ko": "resolve update source",
+    "zh": "resolve update source",
+    "ja": "resolve update source"
+  },
+  "install.diagnostic_29396e029f42": {
+    "en": "ownership record has no validated worker executable",
+    "ko": "ownership record has no validated worker executable",
+    "zh": "ownership record has no validated worker executable",
+    "ja": "ownership record has no validated worker executable"
+  },
+  "install.diagnostic_936b3911332c": {
+    "en": "snapshot owned worker",
+    "ko": "snapshot owned worker",
+    "zh": "snapshot owned worker",
+    "ja": "snapshot owned worker"
+  },
+  "install.diagnostic_b3ecf7893d5a": {
+    "en": "worker executable has no parent",
+    "ko": "worker executable has no parent",
+    "zh": "worker executable has no parent",
+    "ja": "worker executable has no parent"
+  },
+  "install.diagnostic_6fe3ef092714": {
+    "en": "could not stop updated service before restoring worker",
+    "ko": "could not stop updated service before restoring worker",
+    "zh": "could not stop updated service before restoring worker",
+    "ja": "could not stop updated service before restoring worker"
+  },
+  "install.diagnostic_f056a417d249": {
+    "en": "could not stop updated task before restoring worker",
+    "ko": "could not stop updated task before restoring worker",
+    "zh": "could not stop updated task before restoring worker",
+    "ja": "could not stop updated task before restoring worker"
+  },
+  "install.diagnostic_086ac5c20557": {
+    "en": "binary restore failed",
+    "ko": "binary restore failed",
+    "zh": "binary restore failed",
+    "ja": "binary restore failed"
+  },
+  "install.diagnostic_78b29b510dcb": {
+    "en": "profile runtime restore failed",
+    "ko": "profile runtime restore failed",
+    "zh": "profile runtime restore failed",
+    "ja": "profile runtime restore failed"
+  },
+  "install.diagnostic_d526de95b55e": {
+    "en": "previous service restart failed",
+    "ko": "previous service restart failed",
+    "zh": "previous service restart failed",
+    "ja": "previous service restart failed"
+  },
+  "install.diagnostic_a4e274b5fd74": {
+    "en": "previous task state restore failed",
+    "ko": "previous task state restore failed",
+    "zh": "previous task state restore failed",
+    "ja": "previous task state restore failed"
+  },
+  "install.diagnostic_496a77f4d10a": {
+    "en": "staged runtime cleanup failed",
+    "ko": "staged runtime cleanup failed",
+    "zh": "staged runtime cleanup failed",
+    "ja": "staged runtime cleanup failed"
+  },
+  "install.diagnostic_d9699d3de110": {
+    "en": "profile has no directory",
+    "ko": "profile has no directory",
+    "zh": "profile has no directory",
+    "ja": "profile has no directory"
+  },
+  "install.diagnostic_7e242fba8ed1": {
+    "en": "stage update beside worker",
+    "ko": "stage update beside worker",
+    "zh": "stage update beside worker",
+    "ja": "stage update beside worker"
+  },
+  "install.diagnostic_231367784457": {
+    "en": "copy update binary to staging file",
+    "ko": "copy update binary to staging file",
+    "zh": "copy update binary to staging file",
+    "ja": "copy update binary to staging file"
+  },
+  "install.diagnostic_652dcc39d538": {
+    "en": "worker path has no parent",
+    "ko": "worker path has no parent",
+    "zh": "worker path has no parent",
+    "ja": "worker path has no parent"
+  },
+  "install.diagnostic_3a80d25b789d": {
+    "en": "ownership has no service unit path",
+    "ko": "ownership has no service unit path",
+    "zh": "ownership has no service unit path",
+    "ja": "ownership has no service unit path"
+  },
+  "install.diagnostic_5469a622b9bd": {
+    "en": "HOME is not set",
+    "ko": "HOME is not set",
+    "zh": "HOME is not set",
+    "ja": "HOME is not set"
+  },
+  "install.diagnostic_36d3a2815182": {
+    "en": "mac-update requires --source <new-build-binary>",
+    "ko": "mac-update requires --source <new-build-binary>",
+    "zh": "mac-update requires --source <new-build-binary>",
+    "ja": "mac-update requires --source <new-build-binary>"
+  },
+  "install.diagnostic_fb855f84dd3a": {
+    "en": "resolve ownership record",
+    "ko": "resolve ownership record",
+    "zh": "resolve ownership record",
+    "ja": "resolve ownership record"
+  },
+  "install.diagnostic_1130307220c6": {
+    "en": "read owned installation record",
+    "ko": "read owned installation record",
+    "zh": "read owned installation record",
+    "ja": "read owned installation record"
+  },
+  "install.diagnostic_0e908dc4c6b4": {
+    "en": "resolve owned profile config",
+    "ko": "resolve owned profile config",
+    "zh": "resolve owned profile config",
+    "ja": "resolve owned profile config"
+  },
+  "install.diagnostic_3a222090c2f7": {
+    "en": "resolve config path recorded in ownership",
+    "ko": "resolve config path recorded in ownership",
+    "zh": "resolve config path recorded in ownership",
+    "ja": "resolve config path recorded in ownership"
+  },
+  "install.diagnostic_1373ad3dfca7": {
+    "en": "owned config has no parent",
+    "ko": "owned config has no parent",
+    "zh": "owned config has no parent",
+    "ja": "owned config has no parent"
+  },
+  "install.diagnostic_ebe9007bd739": {
+    "en": "resolve ownership record beside config",
+    "ko": "resolve ownership record beside config",
+    "zh": "resolve ownership record beside config",
+    "ja": "resolve ownership record beside config"
+  },
+  "install.diagnostic_61c3c382e40d": {
+    "en": "owned install has no recorded worker executable",
+    "ko": "owned install has no recorded worker executable",
+    "zh": "owned install has no recorded worker executable",
+    "ja": "owned install has no recorded worker executable"
+  },
+  "install.diagnostic_2eb22310228c": {
+    "en": "resolve recorded worker executable",
+    "ko": "resolve recorded worker executable",
+    "zh": "resolve recorded worker executable",
+    "ja": "resolve recorded worker executable"
+  },
+  "install.diagnostic_6bf2478b7e34": {
+    "en": "preserve the verified owned signing identity",
+    "ko": "preserve the verified owned signing identity",
+    "zh": "preserve the verified owned signing identity",
+    "ja": "preserve the verified owned signing identity"
+  },
+  "install.diagnostic_367cdba5d706": {
+    "en": "verify installed binary against pinned signing identity",
+    "ko": "verify installed binary against pinned signing identity",
+    "zh": "verify installed binary against pinned signing identity",
+    "ja": "verify installed binary against pinned signing identity"
+  },
+  "install.diagnostic_f6291e50e541": {
+    "en": "inspect installed signature",
+    "ko": "inspect installed signature",
+    "zh": "inspect installed signature",
+    "ja": "inspect installed signature"
+  },
+  "install.diagnostic_0f55dda623ce": {
+    "en": "installed executable has no parent",
+    "ko": "installed executable has no parent",
+    "zh": "installed executable has no parent",
+    "ja": "installed executable has no parent"
+  },
+  "install.diagnostic_a3f2c3bf6700": {
+    "en": "snapshot installed executable",
+    "ko": "snapshot installed executable",
+    "zh": "snapshot installed executable",
+    "ja": "snapshot installed executable"
+  },
+  "install.diagnostic_ef62b0f22ea0": {
+    "en": "snapshot ownership record",
+    "ko": "snapshot ownership record",
+    "zh": "snapshot ownership record",
+    "ja": "snapshot ownership record"
+  },
+  "install.diagnostic_fc79f5cbaaf2": {
+    "en": "stage beside installed executable",
+    "ko": "stage beside installed executable",
+    "zh": "stage beside installed executable",
+    "ja": "stage beside installed executable"
+  },
+  "install.diagnostic_f0fff2f2f02d": {
+    "en": "copy update source into staging file",
+    "ko": "copy update source into staging file",
+    "zh": "copy update source into staging file",
+    "ja": "copy update source into staging file"
+  },
+  "install.diagnostic_f653d4b6e282": {
+    "en": "sign staged executable",
+    "ko": "sign staged executable",
+    "zh": "sign staged executable",
+    "ja": "sign staged executable"
+  },
+  "install.diagnostic_1ef8f20aab60": {
+    "en": "flush signed staged executable",
+    "ko": "flush signed staged executable",
+    "zh": "flush signed staged executable",
+    "ja": "flush signed staged executable"
+  },
+  "install.diagnostic_96ce7f142192": {
+    "en": "verify staged executable",
+    "ko": "verify staged executable",
+    "zh": "verify staged executable",
+    "ja": "verify staged executable"
+  },
+  "install.diagnostic_370279a88d9e": {
+    "en": "verify replaced executable",
+    "ko": "verify replaced executable",
+    "zh": "verify replaced executable",
+    "ja": "verify replaced executable"
+  },
+  "install.diagnostic_c11758f4343f": {
+    "en": "LaunchAgent path is not UTF-8",
+    "ko": "LaunchAgent path is not UTF-8",
+    "zh": "LaunchAgent path is not UTF-8",
+    "ja": "LaunchAgent path is not UTF-8"
+  },
+  "install.diagnostic_dbc750323f29": {
+    "en": "restore ownership record",
+    "ko": "restore ownership record",
+    "zh": "restore ownership record",
+    "ja": "restore ownership record"
+  },
+  "install.diagnostic_3faf2145387e": {
+    "en": "restore previous profile runtime",
+    "ko": "restore previous profile runtime",
+    "zh": "restore previous profile runtime",
+    "ja": "restore previous profile runtime"
+  },
+  "install.diagnostic_2bd940717e7c": {
+    "en": "update failed; previous executable, ownership record, and loaded state were restored",
+    "ko": "update failed; previous executable, ownership record, and loaded state were restored",
+    "zh": "update failed; previous executable, ownership record, and loaded state were restored",
+    "ja": "update failed; previous executable, ownership record, and loaded state were restored"
+  },
+  "install.diagnostic_defa449f102a": {
+    "en": "update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored",
+    "ko": "update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored",
+    "zh": "update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored",
+    "ja": "update failed before replacement; existing executable and profile were unchanged, and the previous service state was restored"
+  },
+  "install.diagnostic_63aaa1bde781": {
+    "en": "update failed before replacement; existing executable, profile, and service were unchanged",
+    "ko": "update failed before replacement; existing executable, profile, and service were unchanged",
+    "zh": "update failed before replacement; existing executable, profile, and service were unchanged",
+    "ja": "update failed before replacement; existing executable, profile, and service were unchanged"
+  },
+  "install.diagnostic_b8194bc5bd8c": {
+    "en": "resolve current executable",
+    "ko": "resolve current executable",
+    "zh": "resolve current executable",
+    "ja": "resolve current executable"
+  },
+  "install.diagnostic_4180d1e8b6f6": {
+    "en": "resolve current executable while comparing owned paths",
+    "ko": "resolve current executable while comparing owned paths",
+    "zh": "resolve current executable while comparing owned paths",
+    "ja": "resolve current executable while comparing owned paths"
+  },
+  "install.diagnostic_fdfd12afa0eb": {
+    "en": "self-cleanup requires the owned worker executable path",
+    "ko": "self-cleanup requires the owned worker executable path",
+    "zh": "self-cleanup requires the owned worker executable path",
+    "ja": "self-cleanup requires the owned worker executable path"
+  },
+  "install.diagnostic_2f25a2fd6fd9": {
+    "en": "record Codex user data and project paths for deferred cleanup",
+    "ko": "record Codex user data and project paths for deferred cleanup",
+    "zh": "record Codex user data and project paths for deferred cleanup",
+    "ja": "record Codex user data and project paths for deferred cleanup"
+  },
+  "install.diagnostic_e47bfa4f43ea": {
+    "en": "start the user-scoped Windows cleanup helper",
+    "ko": "start the user-scoped Windows cleanup helper",
+    "zh": "start the user-scoped Windows cleanup helper",
+    "ja": "start the user-scoped Windows cleanup helper"
+  },
+  "install.diagnostic_04c7eeb9bd5a": {
+    "en": "APPDATA is not set",
+    "ko": "APPDATA is not set",
+    "zh": "APPDATA is not set",
+    "ja": "APPDATA is not set"
+  },
+  "install.diagnostic_0f3fb1ef0ac0": {
+    "en": "XDG_CONFIG_HOME or HOME is not set",
+    "ko": "XDG_CONFIG_HOME or HOME is not set",
+    "zh": "XDG_CONFIG_HOME or HOME is not set",
+    "ja": "XDG_CONFIG_HOME or HOME is not set"
+  },
+  "install.diagnostic_0c7054af933b": {
+    "en": "LOCALAPPDATA is not set",
+    "ko": "LOCALAPPDATA is not set",
+    "zh": "LOCALAPPDATA is not set",
+    "ja": "LOCALAPPDATA is not set"
+  },
+  "install.diagnostic_9b961d0be2ae": {
+    "en": "XDG_DATA_HOME or HOME is not set",
+    "ko": "XDG_DATA_HOME or HOME is not set",
+    "zh": "XDG_DATA_HOME or HOME is not set",
+    "ja": "XDG_DATA_HOME or HOME is not set"
+  },
+  "install.diagnostic_fb9ae00e73dc": {
+    "en": "USERPROFILE is not set",
+    "ko": "USERPROFILE is not set",
+    "zh": "USERPROFILE is not set",
+    "ja": "USERPROFILE is not set"
+  },
+  "install.diagnostic_301d57bdbcfd": {
+    "en": "enable terminal input for Antigravity setup",
+    "ko": "enable terminal input for Antigravity setup",
+    "zh": "enable terminal input for Antigravity setup",
+    "ja": "enable terminal input for Antigravity setup"
+  },
+  "install.diagnostic_5160f0921dfc": {
+    "en": "listen for setup cancellation",
+    "ko": "listen for setup cancellation",
+    "zh": "listen for setup cancellation",
+    "ja": "listen for setup cancellation"
+  },
+  "install.diagnostic_dd4390dd63f5": {
+    "en": "managed Antigravity path has no parent",
+    "ko": "managed Antigravity path has no parent",
+    "zh": "managed Antigravity path has no parent",
+    "ja": "managed Antigravity path has no parent"
+  },
+  "install.diagnostic_12a998ef8bc8": {
+    "en": "remove Discodex-managed Antigravity installation",
+    "ko": "remove Discodex-managed Antigravity installation",
+    "zh": "remove Discodex-managed Antigravity installation",
+    "ja": "remove Discodex-managed Antigravity installation"
+  },
+  "install.diagnostic_1f0de93d2670": {
+    "en": "no CODEX_HOME or default home was available",
+    "ko": "no CODEX_HOME or default home was available",
+    "zh": "no CODEX_HOME or default home was available",
+    "ja": "no CODEX_HOME or default home was available"
+  },
+  "install.diagnostic_41d8fc5223b3": {
+    "en": "resolve relative project directory for CODEX_HOME",
+    "ko": "resolve relative project directory for CODEX_HOME",
+    "zh": "resolve relative project directory for CODEX_HOME",
+    "ja": "resolve relative project directory for CODEX_HOME"
+  },
+  "install.diagnostic_e351ed7e9ca5": {
+    "en": "inspect owned Codex runtime before cleanup",
+    "ko": "inspect owned Codex runtime before cleanup",
+    "zh": "inspect owned Codex runtime before cleanup",
+    "ja": "inspect owned Codex runtime before cleanup"
+  },
+  "install.diagnostic_cfb9f1aa00b2": {
+    "en": "read owned Codex runtime before cleanup",
+    "ko": "read owned Codex runtime before cleanup",
+    "zh": "read owned Codex runtime before cleanup",
+    "ja": "read owned Codex runtime before cleanup"
+  },
+  "install.diagnostic_302f11f469c6": {
+    "en": "read owned Codex runtime entry",
+    "ko": "read owned Codex runtime entry",
+    "zh": "read owned Codex runtime entry",
+    "ja": "read owned Codex runtime entry"
+  },
+  "install.diagnostic_70f433858c32": {
+    "en": "inspect owned runtime entry",
+    "ko": "inspect owned runtime entry",
+    "zh": "inspect owned runtime entry",
+    "ja": "inspect owned runtime entry"
+  },
+  "install.diagnostic_dd1c1ccb34f9": {
+    "en": "remove empty owned runtime; configuration and ownership remain if cleanup failed",
+    "ko": "remove empty owned runtime; configuration and ownership remain if cleanup failed",
+    "zh": "remove empty owned runtime; configuration and ownership remain if cleanup failed",
+    "ja": "remove empty owned runtime; configuration and ownership remain if cleanup failed"
+  },
+  "install.diagnostic_b2c34f0fc564": {
+    "en": "resolve canonical running Discodex executable",
+    "ko": "resolve canonical running Discodex executable",
+    "zh": "resolve canonical running Discodex executable",
+    "ja": "resolve canonical running Discodex executable"
+  },
+  "install.diagnostic_6e312e3913b8": {
+    "en": "find Discodex executable",
+    "ko": "find Discodex executable",
+    "zh": "find Discodex executable",
+    "ja": "find Discodex executable"
+  },
+  "install.diagnostic_c265ef3db580": {
+    "en": "check for an existing systemd user unit",
+    "ko": "check for an existing systemd user unit",
+    "zh": "check for an existing systemd user unit",
+    "ja": "check for an existing systemd user unit"
+  },
+  "install.diagnostic_22fb40ae0ac0": {
+    "en": "systemd unit path is not valid UTF-8",
+    "ko": "systemd unit path is not valid UTF-8",
+    "zh": "systemd unit path is not valid UTF-8",
+    "ja": "systemd unit path is not valid UTF-8"
+  },
+  "install.diagnostic_87d64e4bbbf3": {
+    "en": "resolve the Windows bridge executable before task registration",
+    "ko": "resolve the Windows bridge executable before task registration",
+    "zh": "resolve the Windows bridge executable before task registration",
+    "ja": "resolve the Windows bridge executable before task registration"
+  },
+  "install.diagnostic_d17e52d2831b": {
+    "en": "record the pending Windows task transition before requesting UAC",
+    "ko": "record the pending Windows task transition before requesting UAC",
+    "zh": "record the pending Windows task transition before requesting UAC",
+    "ja": "record the pending Windows task transition before requesting UAC"
+  },
+  "install.diagnostic_db958cdaa84f": {
+    "en": "could not save elevated task ownership; the new task was removed and startup was not requested",
+    "ko": "could not save elevated task ownership; the new task was removed and startup was not requested",
+    "zh": "could not save elevated task ownership; the new task was removed and startup was not requested",
+    "ja": "could not save elevated task ownership; the new task was removed and startup was not requested"
+  },
+  "install.diagnostic_c67d01d408f2": {
+    "en": "start the registered elevated Windows user task",
+    "ko": "start the registered elevated Windows user task",
+    "zh": "start the registered elevated Windows user task",
+    "ja": "start the registered elevated Windows user task"
+  },
+  "install.diagnostic_41ee4a8baebd": {
+    "en": "resolve the bridge executable for the user LaunchAgent",
+    "ko": "resolve the bridge executable for the user LaunchAgent",
+    "zh": "resolve the bridge executable for the user LaunchAgent",
+    "ja": "resolve the bridge executable for the user LaunchAgent"
+  },
+  "install.diagnostic_01ebbf45085c": {
+    "en": "resolve the profile config for the user LaunchAgent",
+    "ko": "resolve the profile config for the user LaunchAgent",
+    "zh": "resolve the profile config for the user LaunchAgent",
+    "ja": "resolve the profile config for the user LaunchAgent"
+  },
+  "install.diagnostic_595d75e9a0f2": {
+    "en": "verify the worker executable before changing the LaunchAgent",
+    "ko": "verify the worker executable before changing the LaunchAgent",
+    "zh": "verify the worker executable before changing the LaunchAgent",
+    "ja": "verify the worker executable before changing the LaunchAgent"
+  },
+  "install.diagnostic_c73901316980": {
+    "en": "LaunchAgent path has no parent",
+    "ko": "LaunchAgent path has no parent",
+    "zh": "LaunchAgent path has no parent",
+    "ja": "LaunchAgent path has no parent"
+  },
+  "install.diagnostic_4e1eaa350966": {
+    "en": "LaunchAgent path is not valid UTF-8",
+    "ko": "LaunchAgent path is not valid UTF-8",
+    "zh": "LaunchAgent path is not valid UTF-8",
+    "ja": "LaunchAgent path is not valid UTF-8"
+  },
+  "install.diagnostic_d291d3959b7f": {
+    "en": "profile config has no parent directory",
+    "ko": "profile config has no parent directory",
+    "zh": "profile config has no parent directory",
+    "ja": "profile config has no parent directory"
+  },
+  "install.diagnostic_db69884ec0ce": {
+    "en": "resolve profile config directory for LaunchAgent identity",
+    "ko": "resolve profile config directory for LaunchAgent identity",
+    "zh": "resolve profile config directory for LaunchAgent identity",
+    "ja": "resolve profile config directory for LaunchAgent identity"
+  },
+  "install.diagnostic_8ff08c663d6f": {
+    "en": "HOME is not set for the user LaunchAgent",
+    "ko": "HOME is not set for the user LaunchAgent",
+    "zh": "HOME is not set for the user LaunchAgent",
+    "ja": "HOME is not set for the user LaunchAgent"
+  },
+  "install.diagnostic_49a7e8526a28": {
+    "en": "read current user id for LaunchAgent domain",
+    "ko": "read current user id for LaunchAgent domain",
+    "zh": "read current user id for LaunchAgent domain",
+    "ja": "read current user id for LaunchAgent domain"
+  },
+  "install.diagnostic_0d836bba92aa": {
+    "en": "inspect user LaunchAgent registration",
+    "ko": "inspect user LaunchAgent registration",
+    "zh": "inspect user LaunchAgent registration",
+    "ja": "inspect user LaunchAgent registration"
+  },
+  "install.diagnostic_c34042e81fc5": {
+    "en": "loaded LaunchAgent has no program readback",
+    "ko": "loaded LaunchAgent has no program readback",
+    "zh": "loaded LaunchAgent has no program readback",
+    "ja": "loaded LaunchAgent has no program readback"
+  },
+  "install.diagnostic_30ad19392dcf": {
+    "en": "inspect the owned Windows task",
+    "ko": "inspect the owned Windows task",
+    "zh": "inspect the owned Windows task",
+    "ja": "inspect the owned Windows task"
+  },
+  "install.diagnostic_e376a5401de1": {
+    "en": "read installer Windows identity",
+    "ko": "read installer Windows identity",
+    "zh": "read installer Windows identity",
+    "ja": "read installer Windows identity"
+  },
+  "install.diagnostic_686af139d784": {
+    "en": "decode installer Windows identity",
+    "ko": "decode installer Windows identity",
+    "zh": "decode installer Windows identity",
+    "ja": "decode installer Windows identity"
+  },
+  "install.diagnostic_91ae76642013": {
+    "en": "installer Windows SID is missing",
+    "ko": "installer Windows SID is missing",
+    "zh": "installer Windows SID is missing",
+    "ja": "installer Windows SID is missing"
+  },
+  "install.diagnostic_9f52d4f57bd6": {
+    "en": "prepare temporary Windows task operation",
+    "ko": "prepare temporary Windows task operation",
+    "zh": "prepare temporary Windows task operation",
+    "ja": "prepare temporary Windows task operation"
+  },
+  "install.diagnostic_36de562c10ec": {
+    "en": "SystemRoot is not set",
+    "ko": "SystemRoot is not set",
+    "zh": "SystemRoot is not set",
+    "ja": "SystemRoot is not set"
+  },
+  "install.diagnostic_365b1e5cf848": {
+    "en": "request Windows administrator consent",
+    "ko": "request Windows administrator consent",
+    "zh": "request Windows administrator consent",
+    "ja": "request Windows administrator consent"
+  },
+  "install.diagnostic_de444ea1b224": {
+    "en": "read elevated Windows task operation result",
+    "ko": "read elevated Windows task operation result",
+    "zh": "read elevated Windows task operation result",
+    "ja": "read elevated Windows task operation result"
+  },
+  "install.diagnostic_6a5a669cf1d5": {
+    "en": "owned systemd service has no recorded unit path",
+    "ko": "owned systemd service has no recorded unit path",
+    "zh": "owned systemd service has no recorded unit path",
+    "ja": "owned systemd service has no recorded unit path"
+  },
+  "install.diagnostic_ec342418d571": {
+    "en": "owned systemd unit path has no valid service name",
+    "ko": "owned systemd unit path has no valid service name",
+    "zh": "owned systemd unit path has no valid service name",
+    "ja": "owned systemd unit path has no valid service name"
+  },
+  "install.diagnostic_d139d567b112": {
+    "en": "could not stop and disable the owned user service; config and credentials were preserved",
+    "ko": "could not stop and disable the owned user service; config and credentials were preserved",
+    "zh": "could not stop and disable the owned user service; config and credentials were preserved",
+    "ja": "could not stop and disable the owned user service; config and credentials were preserved"
+  },
+  "install.diagnostic_d7926557ea0e": {
+    "en": "owned Windows task has no recorded worker executable; preserving config and ownership",
+    "ko": "owned Windows task has no recorded worker executable; preserving config and ownership",
+    "zh": "owned Windows task has no recorded worker executable; preserving config and ownership",
+    "ja": "owned Windows task has no recorded worker executable; preserving config and ownership"
+  },
+  "install.diagnostic_dde75d1cdad9": {
+    "en": "could not verify, stop, and unregister the owned Windows task; config and credentials were preserved",
+    "ko": "could not verify, stop, and unregister the owned Windows task; config and credentials were preserved",
+    "zh": "could not verify, stop, and unregister the owned Windows task; config and credentials were preserved",
+    "ja": "could not verify, stop, and unregister the owned Windows task; config and credentials were preserved"
+  },
+  "install.diagnostic_566327d4a158": {
+    "en": "owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership",
+    "ko": "owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership",
+    "zh": "owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership",
+    "ja": "owned LaunchAgent has no recorded bridge executable; preserving configuration and ownership"
+  },
+  "install.diagnostic_030330c35ad0": {
+    "en": "resolve the owned profile config before removing its LaunchAgent",
+    "ko": "resolve the owned profile config before removing its LaunchAgent",
+    "zh": "resolve the owned profile config before removing its LaunchAgent",
+    "ja": "resolve the owned profile config before removing its LaunchAgent"
+  },
+  "install.diagnostic_c1600a70302d": {
+    "en": "owned LaunchAgent has no recorded plist path",
+    "ko": "owned LaunchAgent has no recorded plist path",
+    "zh": "owned LaunchAgent has no recorded plist path",
+    "ja": "owned LaunchAgent has no recorded plist path"
+  },
+  "install.diagnostic_80b304786d29": {
+    "en": "resolve the owned bridge executable before removing its LaunchAgent",
+    "ko": "resolve the owned bridge executable before removing its LaunchAgent",
+    "zh": "resolve the owned bridge executable before removing its LaunchAgent",
+    "ja": "resolve the owned bridge executable before removing its LaunchAgent"
+  },
+  "install.diagnostic_5d254451715c": {
+    "en": "owned LaunchAgent plist changed outside this install; preserving configuration and ownership",
+    "ko": "owned LaunchAgent plist changed outside this install; preserving configuration and ownership",
+    "zh": "owned LaunchAgent plist changed outside this install; preserving configuration and ownership",
+    "ja": "owned LaunchAgent plist changed outside this install; preserving configuration and ownership"
+  },
+  "install.diagnostic_02f68526e0df": {
+    "en": "could not stop the matching owned LaunchAgent; config and credentials were preserved",
+    "ko": "could not stop the matching owned LaunchAgent; config and credentials were preserved",
+    "zh": "could not stop the matching owned LaunchAgent; config and credentials were preserved",
+    "ja": "could not stop the matching owned LaunchAgent; config and credentials were preserved"
+  },
+  "install.diagnostic_d09b89995007": {
+    "en": "read the native provider model catalog",
+    "ko": "read the native provider model catalog",
+    "zh": "read the native provider model catalog",
+    "ja": "read the native provider model catalog"
+  },
+  "install.diagnostic_0d6496df1e17": {
+    "en": "read permissionProfile/list",
+    "ko": "read permissionProfile/list",
+    "zh": "read permissionProfile/list",
+    "ja": "read permissionProfile/list"
+  },
+  "install.diagnostic_bbde88b3361c": {
+    "en": "shut down native installation probe",
+    "ko": "shut down native installation probe",
+    "zh": "shut down native installation probe",
+    "ja": "shut down native installation probe"
+  },
+  "install.diagnostic_b8e810f6a08f": {
+    "en": "query official Codex account/read",
+    "ko": "query official Codex account/read",
+    "zh": "query official Codex account/read",
+    "ja": "query official Codex account/read"
+  },
+  "install.diagnostic_b9008a5c8306": {
+    "en": "start the official ChatGPT account login",
+    "ko": "start the official ChatGPT account login",
+    "zh": "start the official ChatGPT account login",
+    "ja": "start the official ChatGPT account login"
+  },
+  "install.diagnostic_9bb67b063a71": {
+    "en": "official ChatGPT login did not return a login ID",
+    "ko": "official ChatGPT login did not return a login ID",
+    "zh": "official ChatGPT login did not return a login ID",
+    "ja": "official ChatGPT login did not return a login ID"
+  },
+  "install.diagnostic_804d161cfb96": {
+    "en": "official ChatGPT login did not return an authorization URL",
+    "ko": "official ChatGPT login did not return an authorization URL",
+    "zh": "official ChatGPT login did not return an authorization URL",
+    "ja": "official ChatGPT login did not return an authorization URL"
+  },
+  "install.diagnostic_f7a7a98ad83b": {
+    "en": "timed out waiting for the official ChatGPT sign-in and MFA interaction",
+    "ko": "timed out waiting for the official ChatGPT sign-in and MFA interaction",
+    "zh": "timed out waiting for the official ChatGPT sign-in and MFA interaction",
+    "ja": "timed out waiting for the official ChatGPT sign-in and MFA interaction"
+  },
+  "install.diagnostic_9e2391b40a76": {
+    "en": "verify official ChatGPT account/read after login",
+    "ko": "verify official ChatGPT account/read after login",
+    "zh": "verify official ChatGPT account/read after login",
+    "ja": "verify official ChatGPT account/read after login"
+  },
+  "install.diagnostic_d2b430952bb1": {
+    "en": "start xdg-open for the official ChatGPT login URL",
+    "ko": "start xdg-open for the official ChatGPT login URL",
+    "zh": "start xdg-open for the official ChatGPT login URL",
+    "ja": "start xdg-open for the official ChatGPT login URL"
+  },
+  "install.diagnostic_8dc4f52e9de4": {
+    "en": "open the official ChatGPT login URL",
+    "ko": "open the official ChatGPT login URL",
+    "zh": "open the official ChatGPT login URL",
+    "ja": "open the official ChatGPT login URL"
+  },
+  "install.diagnostic_91c0511ac8a8": {
+    "en": "permissionProfile/list returned no data array",
+    "ko": "permissionProfile/list returned no data array",
+    "zh": "permissionProfile/list returned no data array",
+    "ja": "permissionProfile/list returned no data array"
+  },
+  "install.diagnostic_3dd1b499749a": {
+    "en": "the current native catalog has no allowed permission profiles",
+    "ko": "the current native catalog has no allowed permission profiles",
+    "zh": "the current native catalog has no allowed permission profiles",
+    "ja": "the current native catalog has no allowed permission profiles"
+  },
+  "install.diagnostic_ab07350c58fb": {
+    "en": "create setup runtime",
+    "ko": "create setup runtime",
+    "zh": "create setup runtime",
+    "ja": "create setup runtime"
+  },
+  "install.diagnostic_eeda37817ff9": {
+    "en": "file has no parent directory",
+    "ko": "file has no parent directory",
+    "zh": "file has no parent directory",
+    "ja": "file has no parent directory"
+  },
+  "install.diagnostic_b5f627a6f102": {
+    "en": "DISCODEX_LANGUAGE is not valid UTF-8",
+    "ko": "DISCODEX_LANGUAGE is not valid UTF-8",
+    "zh": "DISCODEX_LANGUAGE is not valid UTF-8",
+    "ja": "DISCODEX_LANGUAGE is not valid UTF-8"
+  },
+  "install.diagnostic_b4b016ec625c": {
+    "en": "legacy service migration is supported on Linux, macOS, and Windows",
+    "ko": "legacy service migration is supported on Linux, macOS, and Windows",
+    "zh": "legacy service migration is supported on Linux, macOS, and Windows",
+    "ja": "legacy service migration is supported on Linux, macOS, and Windows"
+  },
+  "install.diagnostic_3c5600a4946a": {
+    "en": "CODEX_HOME must not be empty",
+    "ko": "CODEX_HOME must not be empty",
+    "zh": "CODEX_HOME must not be empty",
+    "ja": "CODEX_HOME must not be empty"
+  },
+  "install.diagnostic_3d37c98e4a9e": {
+    "en": "Discord token was empty; no credential file was written",
+    "ko": "Discord token was empty; no credential file was written",
+    "zh": "Discord token was empty; no credential file was written",
+    "ja": "Discord token was empty; no credential file was written"
+  },
+  "install.diagnostic_4b81ea52867e": {
+    "en": "Discord validation omitted configured text channel {id}",
+    "ko": "Discord validation omitted configured text channel {id}",
+    "zh": "Discord validation omitted configured text channel {id}",
+    "ja": "Discord validation omitted configured text channel {id}"
+  },
+  "install.diagnostic_420f55e5184b": {
+    "en": "Discord validation omitted configured voice channel {id}",
+    "ko": "Discord validation omitted configured voice channel {id}",
+    "zh": "Discord validation omitted configured voice channel {id}",
+    "ja": "Discord validation omitted configured voice channel {id}"
+  },
+  "install.diagnostic_9b480a2bf359": {
+    "en": "enter an empty line to continue or q to cancel; service was not started",
+    "ko": "enter an empty line to continue or q to cancel; service was not started",
+    "zh": "enter an empty line to continue or q to cancel; service was not started",
+    "ja": "enter an empty line to continue or q to cancel; service was not started"
+  },
+  "install.diagnostic_b82477546429": {
+    "en": "mac-permissions accepts --config only once",
+    "ko": "mac-permissions accepts --config only once",
+    "zh": "mac-permissions accepts --config only once",
+    "ja": "mac-permissions accepts --config only once"
+  },
+  "install.diagnostic_62cca3e692a5": {
+    "en": "mac-permissions accepts --ownership only once",
+    "ko": "mac-permissions accepts --ownership only once",
+    "zh": "mac-permissions accepts --ownership only once",
+    "ja": "mac-permissions accepts --ownership only once"
+  },
+  "install.diagnostic_e68c2f87de9b": {
+    "en": "unknown mac-permissions option `{option}`",
+    "ko": "unknown mac-permissions option `{option}`",
+    "zh": "unknown mac-permissions option `{option}`",
+    "ja": "unknown mac-permissions option `{option}`"
+  },
+  "install.diagnostic_bd54b39419e5": {
+    "en": "mac-permissions accepts either --config or --ownership, not both",
+    "ko": "mac-permissions accepts either --config or --ownership, not both",
+    "zh": "mac-permissions accepts either --config or --ownership, not both",
+    "ja": "mac-permissions accepts either --config or --ownership, not both"
+  },
+  "install.diagnostic_e243417a7cfa": {
+    "en": "binary updates are supported on Linux, macOS, and Windows",
+    "ko": "binary updates are supported on Linux, macOS, and Windows",
+    "zh": "binary updates are supported on Linux, macOS, and Windows",
+    "ja": "binary updates are supported on Linux, macOS, and Windows"
+  },
+  "install.diagnostic_27fcf2fd7d5a": {
+    "en": "{option} may be used only once",
+    "ko": "{option} may be used only once",
+    "zh": "{option} may be used only once",
+    "ja": "{option} may be used only once"
+  },
+  "install.diagnostic_e40ad3baba80": {
+    "en": "--migrate-adhoc may be used only once",
+    "ko": "--migrate-adhoc may be used only once",
+    "zh": "--migrate-adhoc may be used only once",
+    "ja": "--migrate-adhoc may be used only once"
+  },
+  "install.diagnostic_b7da735e6985": {
+    "en": "unknown mac-update option `{option}`",
+    "ko": "unknown mac-update option `{option}`",
+    "zh": "unknown mac-update option `{option}`",
+    "ja": "unknown mac-update option `{option}`"
+  },
+  "install.diagnostic_2c084bf4155f": {
+    "en": "mac-update accepts either --config or --ownership, not both",
+    "ko": "mac-update accepts either --config or --ownership, not both",
+    "zh": "mac-update accepts either --config or --ownership, not both",
+    "ja": "mac-update accepts either --config or --ownership, not both"
+  },
+  "install.diagnostic_4e3878ff6400": {
+    "en": "the unpinned installation is not verified as ad-hoc signed; migration refused",
+    "ko": "the unpinned installation is not verified as ad-hoc signed; migration refused",
+    "zh": "the unpinned installation is not verified as ad-hoc signed; migration refused",
+    "ja": "the unpinned installation is not verified as ad-hoc signed; migration refused"
+  },
+  "install.diagnostic_6cd1d6e9da71": {
+    "en": "--config does not identify the config recorded by this ownership record",
+    "ko": "--config does not identify the config recorded by this ownership record",
+    "zh": "--config does not identify the config recorded by this ownership record",
+    "ja": "--config does not identify the config recorded by this ownership record"
+  },
+  "install.diagnostic_bef57dc59dc7": {
+    "en": "ownership record is not beside its owned profile config",
+    "ko": "ownership record is not beside its owned profile config",
+    "zh": "ownership record is not beside its owned profile config",
+    "ja": "ownership record is not beside its owned profile config"
+  },
+  "install.diagnostic_94b642856ac5": {
+    "en": "recorded worker path is not its canonical owned executable path",
+    "ko": "recorded worker path is not its canonical owned executable path",
+    "zh": "recorded worker path is not its canonical owned executable path",
+    "ja": "recorded worker path is not its canonical owned executable path"
+  },
+  "install.diagnostic_dc674acf33a2": {
+    "en": "ownership record does not identify an owned macOS LaunchAgent",
+    "ko": "ownership record does not identify an owned macOS LaunchAgent",
+    "zh": "ownership record does not identify an owned macOS LaunchAgent",
+    "ja": "ownership record does not identify an owned macOS LaunchAgent"
+  },
+  "install.diagnostic_d0b114a90d0e": {
+    "en": "recorded LaunchAgent path does not match this owned profile",
+    "ko": "recorded LaunchAgent path does not match this owned profile",
+    "zh": "recorded LaunchAgent path does not match this owned profile",
+    "ja": "recorded LaunchAgent path does not match this owned profile"
+  },
+  "install.diagnostic_2adf9a0f25aa": {
+    "en": "owned LaunchAgent plist is missing",
+    "ko": "owned LaunchAgent plist is missing",
+    "zh": "owned LaunchAgent plist is missing",
+    "ja": "owned LaunchAgent plist is missing"
+  },
+  "install.diagnostic_0eb67b8d59d0": {
+    "en": "update source must be separate from the installed worker executable",
+    "ko": "update source must be separate from the installed worker executable",
+    "zh": "update source must be separate from the installed worker executable",
+    "ja": "update source must be separate from the installed worker executable"
+  },
+  "install.diagnostic_597fa37ac63f": {
+    "en": "update signer does not match pinned installation identity",
+    "ko": "update signer does not match pinned installation identity",
+    "zh": "update signer does not match pinned installation identity",
+    "ja": "update signer does not match pinned installation identity"
+  },
+  "install.diagnostic_ddd9a54c3299": {
+    "en": "updated LaunchAgent did not load",
+    "ko": "updated LaunchAgent did not load",
+    "zh": "updated LaunchAgent did not load",
+    "ja": "updated LaunchAgent did not load"
+  },
+  "install.diagnostic_cedcca1a9642": {
+    "en": "previous LaunchAgent did not return to loaded state",
+    "ko": "previous LaunchAgent did not return to loaded state",
+    "zh": "previous LaunchAgent did not return to loaded state",
+    "ja": "previous LaunchAgent did not return to loaded state"
+  },
+  "install.diagnostic_7e333d014189": {
+    "en": "update failed ({error:#}); rollback failed ({restore:#})",
+    "ko": "update failed ({error:#}); rollback failed ({restore:#})",
+    "zh": "update failed ({error:#}); rollback failed ({restore:#})",
+    "ja": "update failed ({error:#}); rollback failed ({restore:#})"
+  },
+  "install.diagnostic_b47981e420bd": {
+    "en": "Antigravity terminal input failed",
+    "ko": "Antigravity terminal input failed",
+    "zh": "Antigravity terminal input failed",
+    "ja": "Antigravity terminal input failed"
+  },
+  "install.diagnostic_4fd06357f755": {
+    "en": "launchctl accepted {label}, but the owned LaunchAgent is not loaded",
+    "ko": "launchctl accepted {label}, but the owned LaunchAgent is not loaded",
+    "zh": "launchctl accepted {label}, but the owned LaunchAgent is not loaded",
+    "ja": "launchctl accepted {label}, but the owned LaunchAgent is not loaded"
+  },
+  "install.diagnostic_1f1662532541": {
+    "en": "user service installation is currently supported on Linux, macOS, and Windows",
+    "ko": "user service installation is currently supported on Linux, macOS, and Windows",
+    "zh": "user service installation is currently supported on Linux, macOS, and Windows",
+    "ja": "user service installation is currently supported on Linux, macOS, and Windows"
+  },
+  "install.diagnostic_01a0f907a18c": {
+    "en": "id -u returned an invalid user id for the LaunchAgent domain",
+    "ko": "id -u returned an invalid user id for the LaunchAgent domain",
+    "zh": "id -u returned an invalid user id for the LaunchAgent domain",
+    "ja": "id -u returned an invalid user id for the LaunchAgent domain"
+  },
+  "install.diagnostic_feb24905a75b": {
+    "en": "loaded LaunchAgent {label} runs unexpected program {program}",
+    "ko": "loaded LaunchAgent {label} runs unexpected program {program}",
+    "zh": "loaded LaunchAgent {label} runs unexpected program {program}",
+    "ja": "loaded LaunchAgent {label} runs unexpected program {program}"
+  },
+  "install.diagnostic_8de9fbdd3871": {
+    "en": "LaunchAgent {label} remained loaded after bootout timeout",
+    "ko": "LaunchAgent {label} remained loaded after bootout timeout",
+    "zh": "LaunchAgent {label} remained loaded after bootout timeout",
+    "ja": "LaunchAgent {label} remained loaded after bootout timeout"
+  },
+  "install.diagnostic_224c4d3829cb": {
+    "en": "unexpected Windows task inspection result; it was left unchanged",
+    "ko": "unexpected Windows task inspection result; it was left unchanged",
+    "zh": "unexpected Windows task inspection result; it was left unchanged",
+    "ja": "unexpected Windows task inspection result; it was left unchanged"
+  },
+  "install.diagnostic_12a24bd5e68d": {
+    "en": "invalid installer Windows SID; no elevated operation was started",
+    "ko": "invalid installer Windows SID; no elevated operation was started",
+    "zh": "invalid installer Windows SID; no elevated operation was started",
+    "ja": "invalid installer Windows SID; no elevated operation was started"
+  },
+  "install.diagnostic_e86757ea4e27": {
+    "en": "the owned Discord command marker exists, but its config or token is missing",
+    "ko": "the owned Discord command marker exists, but its config or token is missing",
+    "zh": "the owned Discord command marker exists, but its config or token is missing",
+    "ja": "the owned Discord command marker exists, but its config or token is missing"
+  },
+  "install.diagnostic_5d04a0d8705b": {
+    "en": "selected model is absent from the native provider catalog and configuration",
+    "ko": "selected model is absent from the native provider catalog and configuration",
+    "zh": "selected model is absent from the native provider catalog and configuration",
+    "ja": "selected model is absent from the native provider catalog and configuration"
+  },
+  "install.diagnostic_373bdb4550f5": {
+    "en": "official ChatGPT login failed: {reason}",
+    "ko": "official ChatGPT login failed: {reason}",
+    "zh": "official ChatGPT login failed: {reason}",
+    "ja": "official ChatGPT login failed: {reason}"
+  },
+  "install.diagnostic_feda221fb8f4": {
+    "en": "automatic browser opening is supported on Linux and Windows",
+    "ko": "automatic browser opening is supported on Linux and Windows",
+    "zh": "automatic browser opening is supported on Linux and Windows",
+    "ja": "automatic browser opening is supported on Linux and Windows"
+  },
+  "install.diagnostic_e6964835c5e0": {
+    "en": "Codex project/work path is not a directory",
+    "ko": "Codex project/work path is not a directory",
+    "zh": "Codex project/work path is not a directory",
+    "ja": "Codex project/work path is not a directory"
+  },
+  "install.diagnostic_aa067e9d7986": {
+    "en": "selected config is not the file recorded by ownership",
+    "ko": "selected config is not the file recorded by ownership",
+    "zh": "selected config is not the file recorded by ownership",
+    "ja": "selected config is not the file recorded by ownership"
+  },
+  "install.diagnostic_e17694f62595": {
+    "en": "migration requires an explicit config inside a legacy profile directory",
+    "ko": "migration requires an explicit config inside a legacy profile directory",
+    "zh": "migration requires an explicit config inside a legacy profile directory",
+    "ja": "migration requires an explicit config inside a legacy profile directory"
+  },
+  "install.diagnostic_c594010e9e5d": {
+    "en": "legacy ownership does not identify the expected codex-worker state layout",
+    "ko": "legacy ownership does not identify the expected codex-worker state layout",
+    "zh": "legacy ownership does not identify the expected codex-worker state layout",
+    "ja": "legacy ownership does not identify the expected codex-worker state layout"
+  },
+  "install.diagnostic_bea9199a527a": {
+    "en": "Discodex profile paths already exist; migration will not overwrite them",
+    "ko": "Discodex profile paths already exist; migration will not overwrite them",
+    "zh": "Discodex profile paths already exist; migration will not overwrite them",
+    "ja": "Discodex profile paths already exist; migration will not overwrite them"
+  },
+  "install.diagnostic_89fce816d4f2": {
+    "en": "unexpected systemctl {operation} state for {unit}: {state}",
+    "ko": "unexpected systemctl {operation} state for {unit}: {state}",
+    "zh": "unexpected systemctl {operation} state for {unit}: {state}",
+    "ja": "unexpected systemctl {operation} state for {unit}: {state}"
+  },
+  "install.diagnostic_c358b60a7a55": {
+    "en": "Windows task is in a transitional state; operation refused",
+    "ko": "Windows task is in a transitional state; operation refused",
+    "zh": "Windows task is in a transitional state; operation refused",
+    "ja": "Windows task is in a transitional state; operation refused"
+  },
+  "install.diagnostic_917b1e7f77a3": {
+    "en": "Windows task enabled flag and state disagree",
+    "ko": "Windows task enabled flag and state disagree",
+    "zh": "Windows task enabled flag and state disagree",
+    "ja": "Windows task enabled flag and state disagree"
+  },
+  "install.diagnostic_31159b309d22": {
+    "en": "legacy ownership does not identify the expected systemd user service",
+    "ko": "legacy ownership does not identify the expected systemd user service",
+    "zh": "legacy ownership does not identify the expected systemd user service",
+    "ja": "legacy ownership does not identify the expected systemd user service"
+  },
+  "install.diagnostic_d418873f3436": {
+    "en": "legacy systemd unit differs from its recorded executable and config",
+    "ko": "legacy systemd unit differs from its recorded executable and config",
+    "zh": "legacy systemd unit differs from its recorded executable and config",
+    "ja": "legacy systemd unit differs from its recorded executable and config"
+  },
+  "install.diagnostic_97ff8c9af3f1": {
+    "en": "legacy ownership does not identify the expected LaunchAgent",
+    "ko": "legacy ownership does not identify the expected LaunchAgent",
+    "zh": "legacy ownership does not identify the expected LaunchAgent",
+    "ja": "legacy ownership does not identify the expected LaunchAgent"
+  },
+  "install.diagnostic_850ce13f79d5": {
+    "en": "legacy LaunchAgent plist is missing",
+    "ko": "legacy LaunchAgent plist is missing",
+    "zh": "legacy LaunchAgent plist is missing",
+    "ja": "legacy LaunchAgent plist is missing"
+  },
+  "install.diagnostic_23255871ad6a": {
+    "en": "legacy ownership does not identify the expected Windows task",
+    "ko": "legacy ownership does not identify the expected Windows task",
+    "zh": "legacy ownership does not identify the expected Windows task",
+    "ja": "legacy ownership does not identify the expected Windows task"
+  },
+  "install.diagnostic_c2ef2a56007e": {
+    "en": "legacy Windows task differs from its ownership record",
+    "ko": "legacy Windows task differs from its ownership record",
+    "zh": "legacy Windows task differs from its ownership record",
+    "ja": "legacy Windows task differs from its ownership record"
+  },
+  "install.diagnostic_ef08fb43945b": {
+    "en": "existing legacy LaunchAgent differs from its ownership record",
+    "ko": "existing legacy LaunchAgent differs from its ownership record",
+    "zh": "existing legacy LaunchAgent differs from its ownership record",
+    "ja": "existing legacy LaunchAgent differs from its ownership record"
+  },
+  "install.diagnostic_8650902abb82": {
+    "en": "legacy ownership paths do not match the selected profile; refusing migration",
+    "ko": "legacy ownership paths do not match the selected profile; refusing migration",
+    "zh": "legacy ownership paths do not match the selected profile; refusing migration",
+    "ja": "legacy ownership paths do not match the selected profile; refusing migration"
+  },
+  "install.diagnostic_a44f1b8d1433": {
+    "en": "legacy config does not match its ownership record; refusing migration",
+    "ko": "legacy config does not match its ownership record; refusing migration",
+    "zh": "legacy config does not match its ownership record; refusing migration",
+    "ja": "legacy config does not match its ownership record; refusing migration"
+  },
+  "install.diagnostic_1424ce75108c": {
+    "en": "legacy installation list does not match its ownership record; refusing migration",
+    "ko": "legacy installation list does not match its ownership record; refusing migration",
+    "zh": "legacy installation list does not match its ownership record; refusing migration",
+    "ja": "legacy installation list does not match its ownership record; refusing migration"
+  },
+  "install.diagnostic_03de5da5fd76": {
+    "en": "legacy Discord credentials are not a regular file; refusing migration",
+    "ko": "legacy Discord credentials are not a regular file; refusing migration",
+    "zh": "legacy Discord credentials are not a regular file; refusing migration",
+    "ja": "legacy Discord credentials are not a regular file; refusing migration"
+  },
+  "install.diagnostic_b15a737b2feb": {
+    "en": "legacy worker executable is outside its recorded owned bin directory",
+    "ko": "legacy worker executable is outside its recorded owned bin directory",
+    "zh": "legacy worker executable is outside its recorded owned bin directory",
+    "ja": "legacy worker executable is outside its recorded owned bin directory"
+  },
+  "install.diagnostic_7c7e2a8500b1": {
+    "en": "legacy runtime directory does not match its owned data root",
+    "ko": "legacy runtime directory does not match its owned data root",
+    "zh": "legacy runtime directory does not match its owned data root",
+    "ja": "legacy runtime directory does not match its owned data root"
+  },
+  "install.diagnostic_3ee4bf519184": {
+    "en": "running Discodex executable is not a regular file",
+    "ko": "running Discodex executable is not a regular file",
+    "zh": "running Discodex executable is not a regular file",
+    "ja": "running Discodex executable is not a regular file"
+  },
+  "install.diagnostic_581590915fa1": {
+    "en": "staged Discodex signing identity differs from the legacy pin",
+    "ko": "staged Discodex signing identity differs from the legacy pin",
+    "zh": "staged Discodex signing identity differs from the legacy pin",
+    "ja": "staged Discodex signing identity differs from the legacy pin"
+  },
+  "install.diagnostic_d0dd4f6648e0": {
+    "en": "owned state directory does not match the worker data layout",
+    "ko": "owned state directory does not match the worker data layout",
+    "zh": "owned state directory does not match the worker data layout",
+    "ja": "owned state directory does not match the worker data layout"
+  },
+  "install.diagnostic_a941ba250b0c": {
+    "en": "recorded worker executable is not a regular file in its canonical owned bin directory",
+    "ko": "recorded worker executable is not a regular file in its canonical owned bin directory",
+    "zh": "recorded worker executable is not a regular file in its canonical owned bin directory",
+    "ja": "recorded worker executable is not a regular file in its canonical owned bin directory"
+  },
+  "install.diagnostic_351e759b3605": {
+    "en": "migration marker is not a regular file",
+    "ko": "migration marker is not a regular file",
+    "zh": "migration marker is not a regular file",
+    "ja": "migration marker is not a regular file"
+  },
+  "install.diagnostic_d7734e487e2d": {
+    "en": "migration marker does not map to the selected Discodex profile",
+    "ko": "migration marker does not map to the selected Discodex profile",
+    "zh": "migration marker does not map to the selected Discodex profile",
+    "ja": "migration marker does not map to the selected Discodex profile"
+  },
+  "install.diagnostic_8865c266dc73": {
+    "en": "staged migration worker is outside the new profile's owned bin directory",
+    "ko": "staged migration worker is outside the new profile's owned bin directory",
+    "zh": "staged migration worker is outside the new profile's owned bin directory",
+    "ja": "staged migration worker is outside the new profile's owned bin directory"
+  },
+  "install.diagnostic_8089c31470ad": {
+    "en": "migration marker does not match the selected legacy profile",
+    "ko": "migration marker does not match the selected legacy profile",
+    "zh": "migration marker does not match the selected legacy profile",
+    "ja": "migration marker does not match the selected legacy profile"
+  },
+  "install.diagnostic_a918d5505692": {
+    "en": "ownership record belongs to another profile; existing files were preserved",
+    "ko": "ownership record belongs to another profile; existing files were preserved",
+    "zh": "ownership record belongs to another profile; existing files were preserved",
+    "ja": "ownership record belongs to another profile; existing files were preserved"
+  },
+  "install.diagnostic_c7945795ba51": {
+    "en": "saved Discord credentials are not a regular file; refusing to replace them",
+    "ko": "saved Discord credentials are not a regular file; refusing to replace them",
+    "zh": "saved Discord credentials are not a regular file; refusing to replace them",
+    "ja": "saved Discord credentials are not a regular file; refusing to replace them"
+  },
+  "install.diagnostic_6f6a4d7d99ca": {
+    "en": "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged",
+    "ko": "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged",
+    "zh": "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged",
+    "ja": "no response received; service startup was cancelled before Full Disk Access guidance was acknowledged"
+  },
+  "install.diagnostic_f08eaba9eb78": {
+    "en": "owned worker signing identity does not match the configured identity",
+    "ko": "owned worker signing identity does not match the configured identity",
+    "zh": "owned worker signing identity does not match the configured identity",
+    "ja": "owned worker signing identity does not match the configured identity"
+  },
+  "install.diagnostic_7d3a5f57ddc0": {
+    "en": "unknown update option {option}",
+    "ko": "unknown update option {option}",
+    "zh": "unknown update option {option}",
+    "ja": "unknown update option {option}"
+  },
+  "install.diagnostic_8128e538f818": {
+    "en": "selected config is not inside a Discodex profile directory",
+    "ko": "selected config is not inside a Discodex profile directory",
+    "zh": "selected config is not inside a Discodex profile directory",
+    "ja": "selected config is not inside a Discodex profile directory"
+  },
+  "install.diagnostic_af3a8abf8d70": {
+    "en": "ownership record points at another profile config",
+    "ko": "ownership record points at another profile config",
+    "zh": "ownership record points at another profile config",
+    "ja": "ownership record points at another profile config"
+  },
+  "install.diagnostic_d6386fb7da7e": {
+    "en": "update source is not a regular file",
+    "ko": "update source is not a regular file",
+    "zh": "update source is not a regular file",
+    "ja": "update source is not a regular file"
+  },
+  "install.diagnostic_a6313acafb88": {
+    "en": "selected config differs from ownership record",
+    "ko": "selected config differs from ownership record",
+    "zh": "selected config differs from ownership record",
+    "ja": "selected config differs from ownership record"
+  },
+  "install.diagnostic_31060c2ac80c": {
+    "en": "owned state directory layout is invalid",
+    "ko": "owned state directory layout is invalid",
+    "zh": "owned state directory layout is invalid",
+    "ja": "owned state directory layout is invalid"
+  },
+  "install.diagnostic_d02f8f4e798c": {
+    "en": "update source must be separate from the installed executable",
+    "ko": "update source must be separate from the installed executable",
+    "zh": "update source must be separate from the installed executable",
+    "ja": "update source must be separate from the installed executable"
+  },
+  "install.diagnostic_c178f3990042": {
+    "en": "owned executable does not use the Discodex worker filename",
+    "ko": "owned executable does not use the Discodex worker filename",
+    "zh": "owned executable does not use the Discodex worker filename",
+    "ja": "owned executable does not use the Discodex worker filename"
+  },
+  "install.diagnostic_6908c0749f6d": {
+    "en": "profile config differs from ownership record",
+    "ko": "profile config differs from ownership record",
+    "zh": "profile config differs from ownership record",
+    "ja": "profile config differs from ownership record"
+  },
+  "install.diagnostic_1af89c028176": {
+    "en": "updated worker is empty",
+    "ko": "updated worker is empty",
+    "zh": "updated worker is empty",
+    "ja": "updated worker is empty"
+  },
+  "install.diagnostic_89de08f7ff1c": {
+    "en": "updated Discodex worker did not become active",
+    "ko": "updated Discodex worker did not become active",
+    "zh": "updated Discodex worker did not become active",
+    "ja": "updated Discodex worker did not become active"
+  },
+  "install.diagnostic_da3f8aab3a54": {
+    "en": "updated systemd unit did not retain its previous enabled state",
+    "ko": "updated systemd unit did not retain its previous enabled state",
+    "zh": "updated systemd unit did not retain its previous enabled state",
+    "ja": "updated systemd unit did not retain its previous enabled state"
+  },
+  "install.diagnostic_6a335578e771": {
+    "en": "updated scheduled task did not return to its previous enabled/running state",
+    "ko": "updated scheduled task did not return to its previous enabled/running state",
+    "zh": "updated scheduled task did not return to its previous enabled/running state",
+    "ja": "updated scheduled task did not return to its previous enabled/running state"
+  },
+  "install.diagnostic_114386292621": {
+    "en": "Windows task is still enabled or running",
+    "ko": "Windows task is still enabled or running",
+    "zh": "Windows task is still enabled or running",
+    "ja": "Windows task is still enabled or running"
+  },
+  "install.diagnostic_13f1d700bd34": {
+    "en": "previous systemd unit did not return to its prior active state",
+    "ko": "previous systemd unit did not return to its prior active state",
+    "zh": "previous systemd unit did not return to its prior active state",
+    "ja": "previous systemd unit did not return to its prior active state"
+  },
+  "install.diagnostic_bd8f8a030ecd": {
+    "en": "previous systemd unit did not retain its prior enabled state",
+    "ko": "previous systemd unit did not retain its prior enabled state",
+    "zh": "previous systemd unit did not retain its prior enabled state",
+    "ja": "previous systemd unit did not retain its prior enabled state"
+  },
+  "install.diagnostic_0e488bf464f1": {
+    "en": "previous scheduled task did not return to its prior enabled/running state",
+    "ko": "previous scheduled task did not return to its prior enabled/running state",
+    "zh": "previous scheduled task did not return to its prior enabled/running state",
+    "ja": "previous scheduled task did not return to its prior enabled/running state"
+  },
+  "install.diagnostic_a01bb3b4b68f": {
+    "en": "update source is empty",
+    "ko": "update source is empty",
+    "zh": "update source is empty",
+    "ja": "update source is empty"
+  },
+  "install.diagnostic_4377bddeb298": {
+    "en": "ownership does not identify the Discodex systemd user unit",
+    "ko": "ownership does not identify the Discodex systemd user unit",
+    "zh": "ownership does not identify the Discodex systemd user unit",
+    "ja": "ownership does not identify the Discodex systemd user unit"
+  },
+  "install.diagnostic_9ef0af33e93c": {
+    "en": "service unit path differs from this user's Discodex service path",
+    "ko": "service unit path differs from this user's Discodex service path",
+    "zh": "service unit path differs from this user's Discodex service path",
+    "ja": "service unit path differs from this user's Discodex service path"
+  },
+  "install.diagnostic_acb4f60f2f54": {
+    "en": "owned systemd unit differs from the verified worker/config",
+    "ko": "owned systemd unit differs from the verified worker/config",
+    "zh": "owned systemd unit differs from the verified worker/config",
+    "ja": "owned systemd unit differs from the verified worker/config"
+  },
+  "install.diagnostic_84f0109c4116": {
+    "en": "systemd unit is in a transitional or failed state; update refused",
+    "ko": "systemd unit is in a transitional or failed state; update refused",
+    "zh": "systemd unit is in a transitional or failed state; update refused",
+    "ja": "systemd unit is in a transitional or failed state; update refused"
+  },
+  "install.diagnostic_6de983621253": {
+    "en": "ownership does not identify the Discodex scheduled task",
+    "ko": "ownership does not identify the Discodex scheduled task",
+    "zh": "ownership does not identify the Discodex scheduled task",
+    "ja": "ownership does not identify the Discodex scheduled task"
+  },
+  "install.diagnostic_3721e34e3d6c": {
+    "en": "scheduled task differs from ownership record",
+    "ko": "scheduled task differs from ownership record",
+    "zh": "scheduled task differs from ownership record",
+    "ja": "scheduled task differs from ownership record"
+  },
+  "install.diagnostic_e00affd05477": {
+    "en": "Antigravity ownership record is invalid; its files were preserved",
+    "ko": "Antigravity ownership record is invalid; its files were preserved",
+    "zh": "Antigravity ownership record is invalid; its files were preserved",
+    "ja": "Antigravity ownership record is invalid; its files were preserved"
+  },
+  "install.diagnostic_ad89287ea4cb": {
+    "en": "managed runtime is outside this profile's runtime directory",
+    "ko": "managed runtime is outside this profile's runtime directory",
+    "zh": "managed runtime is outside this profile's runtime directory",
+    "ja": "managed runtime is outside this profile's runtime directory"
+  },
+  "install.diagnostic_a7bcb370082d": {
+    "en": "managed runtime ownership points to a different package",
+    "ko": "managed runtime ownership points to a different package",
+    "zh": "managed runtime ownership points to a different package",
+    "ja": "managed runtime ownership points to a different package"
+  },
+  "install.diagnostic_4d43bcb7f8f0": {
+    "en": "user data overlaps the managed runtime; preserving files",
+    "ko": "user data overlaps the managed runtime; preserving files",
+    "zh": "user data overlaps the managed runtime; preserving files",
+    "ja": "user data overlaps the managed runtime; preserving files"
+  },
+  "install.diagnostic_223d77f1eaa5": {
+    "en": "selected release is no longer the latest discovered release",
+    "ko": "selected release is no longer the latest discovered release",
+    "zh": "selected release is no longer the latest discovered release",
+    "ja": "selected release is no longer the latest discovered release"
+  },
+  "install.diagnostic_1a9cb0c37117": {
+    "en": "selected release is no longer pending",
+    "ko": "selected release is no longer pending",
+    "zh": "selected release is no longer pending",
+    "ja": "selected release is no longer pending"
+  },
+  "install.diagnostic_87701b24eac1": {
+    "en": "version has no major component",
+    "ko": "version has no major component",
+    "zh": "version has no major component",
+    "ja": "version has no major component"
+  },
+  "install.diagnostic_3b77c58d5a0c": {
+    "en": "version has no minor component",
+    "ko": "version has no minor component",
+    "zh": "version has no minor component",
+    "ja": "version has no minor component"
+  },
+  "install.diagnostic_c95d0487556e": {
+    "en": "version has no patch component",
+    "ko": "version has no patch component",
+    "zh": "version has no patch component",
+    "ja": "version has no patch component"
+  },
+  "install.diagnostic_036cff77c8e0": {
+    "en": "invalid version major component",
+    "ko": "invalid version major component",
+    "zh": "invalid version major component",
+    "ja": "invalid version major component"
+  },
+  "install.diagnostic_f45cbda91e3e": {
+    "en": "invalid version minor component",
+    "ko": "invalid version minor component",
+    "zh": "invalid version minor component",
+    "ja": "invalid version minor component"
+  },
+  "install.diagnostic_6a60ea6fa5ff": {
+    "en": "invalid version patch component",
+    "ko": "invalid version patch component",
+    "zh": "invalid version patch component",
+    "ja": "invalid version patch component"
+  },
+  "install.diagnostic_0cd650285794": {
+    "en": "parse pinned release version",
+    "ko": "parse pinned release version",
+    "zh": "parse pinned release version",
+    "ja": "parse pinned release version"
+  },
+  "install.diagnostic_e52039fde25b": {
+    "en": "parse installed version",
+    "ko": "parse installed version",
+    "zh": "parse installed version",
+    "ja": "parse installed version"
+  },
+  "install.diagnostic_610892505404": {
+    "en": "pending update disappeared",
+    "ko": "pending update disappeared",
+    "zh": "pending update disappeared",
+    "ja": "pending update disappeared"
+  },
+  "install.diagnostic_72c9a6ef6e99": {
+    "en": "update state path has no parent",
+    "ko": "update state path has no parent",
+    "zh": "update state path has no parent",
+    "ja": "update state path has no parent"
+  },
+  "install.diagnostic_278b366323ed": {
+    "en": "lock update state",
+    "ko": "lock update state",
+    "zh": "lock update state",
+    "ja": "lock update state"
+  },
+  "install.diagnostic_624bf0ed8cf2": {
+    "en": "stage update state",
+    "ko": "stage update state",
+    "zh": "stage update state",
+    "ja": "stage update state"
+  },
+  "install.diagnostic_a853e71cf0e9": {
+    "en": "serialize update state",
+    "ko": "serialize update state",
+    "zh": "serialize update state",
+    "ja": "serialize update state"
+  },
+  "install.diagnostic_8b00f75f71ab": {
+    "en": "flush update state",
+    "ko": "flush update state",
+    "zh": "flush update state",
+    "ja": "flush update state"
+  },
+  "install.diagnostic_45442495b9bb": {
+    "en": "replace update state",
+    "ko": "replace update state",
+    "zh": "replace update state",
+    "ja": "replace update state"
+  },
+  "install.diagnostic_79d9a2995b83": {
+    "en": "check Discodex releases",
+    "ko": "check Discodex releases",
+    "zh": "check Discodex releases",
+    "ja": "check Discodex releases"
+  },
+  "install.diagnostic_643e8f8e7d6e": {
+    "en": "GitHub releases endpoint returned an error",
+    "ko": "GitHub releases endpoint returned an error",
+    "zh": "GitHub releases endpoint returned an error",
+    "ja": "GitHub releases endpoint returned an error"
+  },
+  "install.diagnostic_fdecfd6fe9a8": {
+    "en": "parse latest stable Discodex release",
+    "ko": "parse latest stable Discodex release",
+    "zh": "parse latest stable Discodex release",
+    "ja": "parse latest stable Discodex release"
+  },
+  "install.diagnostic_542bd116eace": {
+    "en": "resolve release tag to a commit",
+    "ko": "resolve release tag to a commit",
+    "zh": "resolve release tag to a commit",
+    "ja": "resolve release tag to a commit"
+  },
+  "install.diagnostic_cd5fd6ca0570": {
+    "en": "GitHub could not resolve release tag",
+    "ko": "GitHub could not resolve release tag",
+    "zh": "GitHub could not resolve release tag",
+    "ja": "GitHub could not resolve release tag"
+  },
+  "install.diagnostic_6e5d7e7bf989": {
+    "en": "parse release commit",
+    "ko": "parse release commit",
+    "zh": "parse release commit",
+    "ja": "parse release commit"
+  },
+  "install.diagnostic_3a88bd9a293e": {
+    "en": "parse release version",
+    "ko": "parse release version",
+    "zh": "parse release version",
+    "ja": "parse release version"
+  },
+  "install.diagnostic_48d310271312": {
+    "en": "resolve selected GitHub release assets",
+    "ko": "resolve selected GitHub release assets",
+    "zh": "resolve selected GitHub release assets",
+    "ja": "resolve selected GitHub release assets"
+  },
+  "install.diagnostic_71d93bcc8845": {
+    "en": "GitHub could not resolve selected release",
+    "ko": "GitHub could not resolve selected release",
+    "zh": "GitHub could not resolve selected release",
+    "ja": "GitHub could not resolve selected release"
+  },
+  "install.diagnostic_6d7cf7312e9c": {
+    "en": "parse selected release assets",
+    "ko": "parse selected release assets",
+    "zh": "parse selected release assets",
+    "ja": "parse selected release assets"
+  },
+  "install.diagnostic_f2011d84507d": {
+    "en": "download prebuilt release executable",
+    "ko": "download prebuilt release executable",
+    "zh": "download prebuilt release executable",
+    "ja": "download prebuilt release executable"
+  },
+  "install.diagnostic_2cb846c66141": {
+    "en": "GitHub rejected prebuilt release executable download",
+    "ko": "GitHub rejected prebuilt release executable download",
+    "zh": "GitHub rejected prebuilt release executable download",
+    "ja": "GitHub rejected prebuilt release executable download"
+  },
+  "install.diagnostic_f03577ce5a7a": {
+    "en": "flush prepared release executable",
+    "ko": "flush prepared release executable",
+    "zh": "flush prepared release executable",
+    "ja": "flush prepared release executable"
+  },
+  "install.diagnostic_bc108a8229a4": {
+    "en": "GitHub release asset has no SHA-256 digest",
+    "ko": "GitHub release asset has no SHA-256 digest",
+    "zh": "GitHub release asset has no SHA-256 digest",
+    "ja": "GitHub release asset has no SHA-256 digest"
+  },
+  "install.diagnostic_6f743345eea2": {
+    "en": "GitHub release asset digest is not SHA-256",
+    "ko": "GitHub release asset digest is not SHA-256",
+    "zh": "GitHub release asset digest is not SHA-256",
+    "ja": "GitHub release asset digest is not SHA-256"
+  },
+  "install.diagnostic_d39b9cad0962": {
+    "en": "read prebuilt release executable",
+    "ko": "read prebuilt release executable",
+    "zh": "read prebuilt release executable",
+    "ja": "read prebuilt release executable"
+  },
+  "install.diagnostic_1923896ee2fc": {
+    "en": "save prebuilt release executable",
+    "ko": "save prebuilt release executable",
+    "zh": "save prebuilt release executable",
+    "ja": "save prebuilt release executable"
+  },
+  "install.diagnostic_9fce8fb11429": {
+    "en": "update-helper option requires a value",
+    "ko": "update-helper option requires a value",
+    "zh": "update-helper option requires a value",
+    "ja": "update-helper option requires a value"
+  },
+  "install.diagnostic_257de273ed28": {
+    "en": "update-helper requires --source",
+    "ko": "update-helper requires --source",
+    "zh": "update-helper requires --source",
+    "ja": "update-helper requires --source"
+  },
+  "install.diagnostic_78233a159b20": {
+    "en": "update-helper requires --config",
+    "ko": "update-helper requires --config",
+    "zh": "update-helper requires --config",
+    "ja": "update-helper requires --config"
+  },
+  "install.diagnostic_8fbfbddccdb4": {
+    "en": "update-helper requires --release-id",
+    "ko": "update-helper requires --release-id",
+    "zh": "update-helper requires --release-id",
+    "ja": "update-helper requires --release-id"
+  },
+  "install.diagnostic_66867cac2983": {
+    "en": "invalid update release ID",
+    "ko": "invalid update release ID",
+    "zh": "invalid update release ID",
+    "ja": "invalid update release ID"
+  },
+  "install.diagnostic_d273ee5b637d": {
+    "en": "update-helper requires --attempt-id",
+    "ko": "update-helper requires --attempt-id",
+    "zh": "update-helper requires --attempt-id",
+    "ja": "update-helper requires --attempt-id"
+  },
+  "install.diagnostic_2717a9b26564": {
+    "en": "resolve prepared updater executable",
+    "ko": "resolve prepared updater executable",
+    "zh": "resolve prepared updater executable",
+    "ja": "resolve prepared updater executable"
+  },
+  "install.diagnostic_8576ad30f675": {
+    "en": "resolve selected profile config",
+    "ko": "resolve selected profile config",
+    "zh": "resolve selected profile config",
+    "ja": "resolve selected profile config"
+  },
+  "install.diagnostic_97b8492c5c2e": {
+    "en": "applying update acknowledged startup without a helper process ID",
+    "ko": "applying update acknowledged startup without a helper process ID",
+    "zh": "applying update acknowledged startup without a helper process ID",
+    "ja": "applying update acknowledged startup without a helper process ID"
+  },
+  "install.diagnostic_831bbdc087d0": {
+    "en": "applying update acknowledged startup without prepared update metadata",
+    "ko": "applying update acknowledged startup without prepared update metadata",
+    "zh": "applying update acknowledged startup without prepared update metadata",
+    "ja": "applying update acknowledged startup without prepared update metadata"
+  },
+  "install.diagnostic_2745538d1417": {
+    "en": "inspect detached Scheduled Task updater",
+    "ko": "inspect detached Scheduled Task updater",
+    "zh": "inspect detached Scheduled Task updater",
+    "ja": "inspect detached Scheduled Task updater"
+  },
+  "install.diagnostic_d95a1e4124f6": {
+    "en": "inspect detached update helper process",
+    "ko": "inspect detached update helper process",
+    "zh": "inspect detached update helper process",
+    "ja": "inspect detached update helper process"
+  },
+  "install.diagnostic_c129b82a6b34": {
+    "en": "resolve detached update helper executable",
+    "ko": "resolve detached update helper executable",
+    "zh": "resolve detached update helper executable",
+    "ja": "resolve detached update helper executable"
+  },
+  "install.diagnostic_f3c587a43003": {
+    "en": "owned Windows worker executable is missing",
+    "ko": "owned Windows worker executable is missing",
+    "zh": "owned Windows worker executable is missing",
+    "ja": "owned Windows worker executable is missing"
+  },
+  "install.diagnostic_7aba8d1b8c71": {
+    "en": "write temporary updater task wrapper",
+    "ko": "write temporary updater task wrapper",
+    "zh": "write temporary updater task wrapper",
+    "ja": "write temporary updater task wrapper"
+  },
+  "install.diagnostic_f2044dc3295f": {
+    "en": "start independent Scheduled Task updater",
+    "ko": "start independent Scheduled Task updater",
+    "zh": "start independent Scheduled Task updater",
+    "ja": "start independent Scheduled Task updater"
+  },
+  "install.diagnostic_fe9b52e37ec8": {
+    "en": "remove temporary updater task wrapper after launch failure",
+    "ko": "remove temporary updater task wrapper after launch failure",
+    "zh": "remove temporary updater task wrapper after launch failure",
+    "ja": "remove temporary updater task wrapper after launch failure"
+  },
+  "install.diagnostic_3176247f832f": {
+    "en": "another release is already applying",
+    "ko": "another release is already applying",
+    "zh": "another release is already applying",
+    "ja": "another release is already applying"
+  },
+  "install.diagnostic_57cad3cca573": {
+    "en": "an update is already applying",
+    "ko": "an update is already applying",
+    "zh": "an update is already applying",
+    "ja": "an update is already applying"
+  },
+  "install.diagnostic_d81f83d33ba8": {
+    "en": "only a failed update can be retried",
+    "ko": "only a failed update can be retried",
+    "zh": "only a failed update can be retried",
+    "ja": "only a failed update can be retried"
+  },
+  "install.diagnostic_37a14ef0fa80": {
+    "en": "selected update changed before immediate request",
+    "ko": "selected update changed before immediate request",
+    "zh": "selected update changed before immediate request",
+    "ja": "selected update changed before immediate request"
+  },
+  "install.diagnostic_222434e89894": {
+    "en": "failed update changed before immediate retry",
+    "ko": "failed update changed before immediate retry",
+    "zh": "failed update changed before immediate retry",
+    "ja": "failed update changed before immediate retry"
+  },
+  "install.diagnostic_4b0efad9d2fb": {
+    "en": "update result notification identity is stale",
+    "ko": "update result notification identity is stale",
+    "zh": "update result notification identity is stale",
+    "ja": "update result notification identity is stale"
+  },
+  "install.diagnostic_b7273718376a": {
+    "en": "update result is not terminal",
+    "ko": "update result is not terminal",
+    "zh": "update result is not terminal",
+    "ja": "update result is not terminal"
+  },
+  "install.diagnostic_48c857bfcf03": {
+    "en": "release is not selected",
+    "ko": "release is not selected",
+    "zh": "release is not selected",
+    "ja": "release is not selected"
+  },
+  "install.diagnostic_7bb544aa8833": {
+    "en": "prepared binary does not match the selected pinned release",
+    "ko": "prepared binary does not match the selected pinned release",
+    "zh": "prepared binary does not match the selected pinned release",
+    "ja": "prepared binary does not match the selected pinned release"
+  },
+  "install.diagnostic_2c6947f7a61e": {
+    "en": "release is not ready to apply",
+    "ko": "release is not ready to apply",
+    "zh": "release is not ready to apply",
+    "ja": "release is not ready to apply"
+  },
+  "install.diagnostic_6c6df61cc415": {
+    "en": "release is not prepared",
+    "ko": "release is not prepared",
+    "zh": "release is not prepared",
+    "ja": "release is not prepared"
+  },
+  "install.diagnostic_7ef4ccd2c23c": {
+    "en": "release is no longer pending",
+    "ko": "release is no longer pending",
+    "zh": "release is no longer pending",
+    "ja": "release is no longer pending"
+  },
+  "install.diagnostic_f8ffa3f03312": {
+    "en": "update handoff is no longer active",
+    "ko": "update handoff is no longer active",
+    "zh": "update handoff is no longer active",
+    "ja": "update handoff is no longer active"
+  },
+  "install.diagnostic_3755e9e9ba46": {
+    "en": "helper target no longer matches selected release",
+    "ko": "helper target no longer matches selected release",
+    "zh": "helper target no longer matches selected release",
+    "ja": "helper target no longer matches selected release"
+  },
+  "install.diagnostic_84205e258b9e": {
+    "en": "helper binary no longer matches prepared target",
+    "ko": "helper binary no longer matches prepared target",
+    "zh": "helper binary no longer matches prepared target",
+    "ja": "helper binary no longer matches prepared target"
+  },
+  "install.diagnostic_e8ad54ea5b10": {
+    "en": "update handoff ticket is no longer active",
+    "ko": "update handoff ticket is no longer active",
+    "zh": "update handoff ticket is no longer active",
+    "ja": "update handoff ticket is no longer active"
+  },
+  "install.diagnostic_a4db314d9a42": {
+    "en": "update helper already claimed this handoff",
+    "ko": "update helper already claimed this handoff",
+    "zh": "update helper already claimed this handoff",
+    "ja": "update helper already claimed this handoff"
+  },
+  "install.diagnostic_74b7d13f8596": {
+    "en": "update state is unavailable; refusing updater actions",
+    "ko": "update state is unavailable; refusing updater actions",
+    "zh": "update state is unavailable; refusing updater actions",
+    "ja": "update state is unavailable; refusing updater actions"
+  },
+  "install.diagnostic_4b7866545b69": {
+    "en": "unsupported update state version",
+    "ko": "unsupported update state version",
+    "zh": "unsupported update state version",
+    "ja": "unsupported update state version"
+  },
+  "install.diagnostic_638443ca7ad7": {
+    "en": "pinned release has no commit SHA",
+    "ko": "pinned release has no commit SHA",
+    "zh": "pinned release has no commit SHA",
+    "ja": "pinned release has no commit SHA"
+  },
+  "install.diagnostic_668f3e4d7dc1": {
+    "en": "GitHub returned a different release ID",
+    "ko": "GitHub returned a different release ID",
+    "zh": "GitHub returned a different release ID",
+    "ja": "GitHub returned a different release ID"
+  },
+  "install.diagnostic_51ad6b300d32": {
+    "en": "pinned release asset does not match this platform",
+    "ko": "pinned release asset does not match this platform",
+    "zh": "pinned release asset does not match this platform",
+    "ja": "pinned release asset does not match this platform"
+  },
+  "install.diagnostic_e01d95f3f825": {
+    "en": "GitHub release asset SHA-256 digest is malformed",
+    "ko": "GitHub release asset SHA-256 digest is malformed",
+    "zh": "GitHub release asset SHA-256 digest is malformed",
+    "ja": "GitHub release asset SHA-256 digest is malformed"
+  },
+  "install.diagnostic_b3291c82dc18": {
+    "en": "release executable SHA-256 mismatch",
+    "ko": "release executable SHA-256 mismatch",
+    "zh": "release executable SHA-256 mismatch",
+    "ja": "release executable SHA-256 mismatch"
+  },
+  "install.diagnostic_965e62714c3d": {
+    "en": "unknown update-helper option {option}",
+    "ko": "unknown update-helper option {option}",
+    "zh": "unknown update-helper option {option}",
+    "ja": "unknown update-helper option {option}"
+  },
+  "install.diagnostic_2c98e5c33085": {
+    "en": "update-helper option requires a path",
+    "ko": "update-helper option requires a path",
+    "zh": "update-helper option requires a path",
+    "ja": "update-helper option requires a path"
+  },
+  "install.diagnostic_72fa85ab4134": {
+    "en": "helper executable does not match selected prepared binary",
+    "ko": "helper executable does not match selected prepared binary",
+    "zh": "helper executable does not match selected prepared binary",
+    "ja": "helper executable does not match selected prepared binary"
+  },
+  "install.diagnostic_7b1ffacb6948": {
+    "en": "prepared update binary is missing",
+    "ko": "prepared update binary is missing",
+    "zh": "prepared update binary is missing",
+    "ja": "prepared update binary is missing"
+  },
+  "install.diagnostic_2999c94050a3": {
+    "en": "profile does not use an owned Windows Scheduled Task",
+    "ko": "profile does not use an owned Windows Scheduled Task",
+    "zh": "profile does not use an owned Windows Scheduled Task",
+    "ja": "profile does not use an owned Windows Scheduled Task"
+  },
+  "install.diagnostic_8eea3118b97e": {
+    "en": "owned Windows worker task does not match its ownership record",
+    "ko": "owned Windows worker task does not match its ownership record",
+    "zh": "owned Windows worker task does not match its ownership record",
+    "ja": "owned Windows worker task does not match its ownership record"
+  },
+  "install.diagnostic_07c7b15fabf3": {
+    "en": "no managed runtime is available for this platform",
+    "ko": "no managed runtime is available for this platform",
+    "zh": "no managed runtime is available for this platform",
+    "ja": "no managed runtime is available for this platform"
+  },
+  "install.diagnostic_e735d32a17b2": {
+    "en": "read this release's managed Codex runtime manifest",
+    "ko": "read this release's managed Codex runtime manifest",
+    "zh": "read this release's managed Codex runtime manifest",
+    "ja": "read this release's managed Codex runtime manifest"
+  },
+  "install.diagnostic_fadaec66212c": {
+    "en": "runtime manifest names an unsupported platform target",
+    "ko": "runtime manifest names an unsupported platform target",
+    "zh": "runtime manifest names an unsupported platform target",
+    "ja": "runtime manifest names an unsupported platform target"
+  },
+  "install.diagnostic_f70950a542d7": {
+    "en": "publish staged managed runtime",
+    "ko": "publish staged managed runtime",
+    "zh": "publish staged managed runtime",
+    "ja": "publish staged managed runtime"
+  },
+  "install.diagnostic_03b57d1f8364": {
+    "en": "existing runtime belongs to a different release",
+    "ko": "existing runtime belongs to a different release",
+    "zh": "existing runtime belongs to a different release",
+    "ja": "existing runtime belongs to a different release"
+  },
+  "install.diagnostic_b8ade295b973": {
+    "en": "managed runtime Codex commit differs from this worker's pinned core",
+    "ko": "managed runtime Codex commit differs from this worker's pinned core",
+    "zh": "managed runtime Codex commit differs from this worker's pinned core",
+    "ja": "managed runtime Codex commit differs from this worker's pinned core"
+  },
+  "install.diagnostic_ca42f447972e": {
+    "en": "unsupported managed runtime manifest format",
+    "ko": "unsupported managed runtime manifest format",
+    "zh": "unsupported managed runtime manifest format",
+    "ja": "unsupported managed runtime manifest format"
+  },
+  "install.diagnostic_071b1b7a14af": {
+    "en": "managed runtime is not compatible with this worker version and platform",
+    "ko": "managed runtime is not compatible with this worker version and platform",
+    "zh": "managed runtime is not compatible with this worker version and platform",
+    "ja": "managed runtime is not compatible with this worker version and platform"
+  },
+  "install.diagnostic_095c867211ec": {
+    "en": "managed runtime manifest has no full Codex commit",
+    "ko": "managed runtime manifest has no full Codex commit",
+    "zh": "managed runtime manifest has no full Codex commit",
+    "ja": "managed runtime manifest has no full Codex commit"
+  },
+  "install.diagnostic_f818872960ce": {
+    "en": "managed runtime archive name differs from its platform",
+    "ko": "managed runtime archive name differs from its platform",
+    "zh": "managed runtime archive name differs from its platform",
+    "ja": "managed runtime archive name differs from its platform"
+  },
+  "install.diagnostic_b1bf0d2003fa": {
+    "en": "managed runtime archive checksum is invalid",
+    "ko": "managed runtime archive checksum is invalid",
+    "zh": "managed runtime archive checksum is invalid",
+    "ja": "managed runtime archive checksum is invalid"
+  },
+  "install.diagnostic_16fa8e175521": {
+    "en": "runtime manifest contains an invalid package path",
+    "ko": "runtime manifest contains an invalid package path",
+    "zh": "runtime manifest contains an invalid package path",
+    "ja": "runtime manifest contains an invalid package path"
+  },
+  "install.diagnostic_d566932879ec": {
+    "en": "runtime file checksum is invalid",
+    "ko": "runtime file checksum is invalid",
+    "zh": "runtime file checksum is invalid",
+    "ja": "runtime file checksum is invalid"
+  },
+  "install.diagnostic_0a67a2e96f40": {
+    "en": "Runtime package is missing required component {0}.",
+    "ko": "런타임 패키지에 필수 구성 요소 {0}이(가) 없습니다.",
+    "zh": "运行时包缺少必需组件 {0}。",
+    "ja": "ランタイムパッケージに必須コンポーネント {0} がありません。"
+  },
+  "install.diagnostic_5d5dece9007c": {
+    "en": "runtime archive entry escapes its package",
+    "ko": "runtime archive entry escapes its package",
+    "zh": "runtime archive entry escapes its package",
+    "ja": "runtime archive entry escapes its package"
+  },
+  "install.diagnostic_275f5114aa6f": {
+    "en": "runtime archive contains an unsupported link or device",
+    "ko": "runtime archive contains an unsupported link or device",
+    "zh": "runtime archive contains an unsupported link or device",
+    "ja": "runtime archive contains an unsupported link or device"
+  },
+  "install.diagnostic_51d161544bed": {
+    "en": "runtime archive contains an unrecorded file",
+    "ko": "runtime archive contains an unrecorded file",
+    "zh": "runtime archive contains an unrecorded file",
+    "ja": "runtime archive contains an unrecorded file"
+  },
+  "install.diagnostic_d65ad117f784": {
+    "en": "runtime archive entry escapes staging",
+    "ko": "runtime archive entry escapes staging",
+    "zh": "runtime archive entry escapes staging",
+    "ja": "runtime archive entry escapes staging"
+  },
+  "install.diagnostic_98a2d72efb23": {
+    "en": "{0} checksum differs from its release manifest",
+    "ko": "{0} 체크섬이 릴리스 매니페스트와 다릅니다.",
+    "zh": "{0} 的校验和与发布清单不一致。",
+    "ja": "{0} のチェックサムがリリースマニフェストと一致しません。"
+  },
+  "install.diagnostic_3f1c3fca7c97": {
+    "en": "managed runtime is not a directory",
+    "ko": "managed runtime is not a directory",
+    "zh": "managed runtime is not a directory",
+    "ja": "managed runtime is not a directory"
+  },
+  "install.diagnostic_3f4966d2495b": {
+    "en": "managed runtime component parent is not a directory",
+    "ko": "managed runtime component parent is not a directory",
+    "zh": "managed runtime component parent is not a directory",
+    "ja": "managed runtime component parent is not a directory"
+  },
+  "install.diagnostic_127aa0dc35f3": {
+    "en": "Managed runtime component is not a regular file: {0}",
+    "ko": "관리 런타임 구성 요소가 일반 파일이 아닙니다: {0}",
+    "zh": "托管运行时组件不是普通文件：{0}",
+    "ja": "管理対象ランタイムのコンポーネントが通常ファイルではありません: {0}"
+  },
+  "install.diagnostic_f4e7f5931179": {
+    "en": "read selected core identity",
+    "ko": "read selected core identity",
+    "zh": "read selected core identity",
+    "ja": "read selected core identity"
+  },
+  "install.diagnostic_95ac1727669c": {
+    "en": "read installed worker identity",
+    "ko": "read installed worker identity",
+    "zh": "read installed worker identity",
+    "ja": "read installed worker identity"
+  },
+  "install.diagnostic_3f9f034478d3": {
+    "en": "read installation observations",
+    "ko": "read installation observations",
+    "zh": "read installation observations",
+    "ja": "read installation observations"
+  },
+  "install.diagnostic_ab449b135292": {
+    "en": "parse installation observations",
+    "ko": "parse installation observations",
+    "zh": "parse installation observations",
+    "ja": "parse installation observations"
+  },
+  "install.diagnostic_de9c3b822f06": {
+    "en": "installed worker path missing",
+    "ko": "installed worker path missing",
+    "zh": "installed worker path missing",
+    "ja": "installed worker path missing"
+  },
+  "install.diagnostic_ef044f93e4ee": {
+    "en": "installation observation path has no parent",
+    "ko": "installation observation path has no parent",
+    "zh": "installation observation path has no parent",
+    "ja": "installation observation path has no parent"
+  },
+  "install.diagnostic_68513f2fa54e": {
+    "en": "installation observation lock poisoned",
+    "ko": "installation observation lock poisoned",
+    "zh": "installation observation lock poisoned",
+    "ja": "installation observation lock poisoned"
+  },
+  "install.diagnostic_aa680ba39534": {
+    "en": "create Codex project/work directory {0}",
+    "ko": "create Codex project/work directory {0}",
+    "zh": "create Codex project/work directory {0}",
+    "ja": "create Codex project/work directory {0}"
+  },
+  "install.diagnostic_3cc021f7a3dd": {
+    "en": "resolve Codex project/work directory {0}",
+    "ko": "resolve Codex project/work directory {0}",
+    "zh": "resolve Codex project/work directory {0}",
+    "ja": "resolve Codex project/work directory {0}"
+  },
+  "install.diagnostic_c6adae3fdf08": {
+    "en": "create {0}",
+    "ko": "create {0}",
+    "zh": "create {0}",
+    "ja": "create {0}"
+  },
+  "install.diagnostic_912bb1d451c2": {
+    "en": "resolve selected legacy config {0}",
+    "ko": "resolve selected legacy config {0}",
+    "zh": "resolve selected legacy config {0}",
+    "ja": "resolve selected legacy config {0}"
+  },
+  "install.diagnostic_f7830fbdf178": {
+    "en": "read legacy ownership {0}",
+    "ko": "read legacy ownership {0}",
+    "zh": "read legacy ownership {0}",
+    "ja": "read legacy ownership {0}"
+  },
+  "install.diagnostic_dcfa4939651a": {
+    "en": "restore legacy LaunchAgent {0}",
+    "ko": "restore legacy LaunchAgent {0}",
+    "zh": "restore legacy LaunchAgent {0}",
+    "ja": "restore legacy LaunchAgent {0}"
+  },
+  "install.diagnostic_281faf78b249": {
+    "en": "resolve recorded worker executable {0}",
+    "ko": "resolve recorded worker executable {0}",
+    "zh": "resolve recorded worker executable {0}",
+    "ja": "resolve recorded worker executable {0}"
+  },
+  "install.diagnostic_28d14fb54260": {
+    "en": "publish staged config at {0}",
+    "ko": "publish staged config at {0}",
+    "zh": "publish staged config at {0}",
+    "ja": "publish staged config at {0}"
+  },
+  "install.diagnostic_4b8a8700bc57": {
+    "en": "publish staged data at {0}",
+    "ko": "publish staged data at {0}",
+    "zh": "publish staged data at {0}",
+    "ja": "publish staged data at {0}"
+  },
+  "install.diagnostic_aa776bb1604d": {
+    "en": "inspect staged migration root {0}",
+    "ko": "inspect staged migration root {0}",
+    "zh": "inspect staged migration root {0}",
+    "ja": "inspect staged migration root {0}"
+  },
+  "install.diagnostic_881692e91342": {
+    "en": "remove staged data {0}",
+    "ko": "remove staged data {0}",
+    "zh": "remove staged data {0}",
+    "ja": "remove staged data {0}"
+  },
+  "install.diagnostic_cd6403acc7b1": {
+    "en": "remove staged config {0}",
+    "ko": "remove staged config {0}",
+    "zh": "remove staged config {0}",
+    "ja": "remove staged config {0}"
+  },
+  "install.diagnostic_2623a3580b2a": {
+    "en": "inspect migration source {0}",
+    "ko": "inspect migration source {0}",
+    "zh": "inspect migration source {0}",
+    "ja": "inspect migration source {0}"
+  },
+  "install.diagnostic_02ea288a4425": {
+    "en": "create staged migration file {0}",
+    "ko": "create staged migration file {0}",
+    "zh": "create staged migration file {0}",
+    "ja": "create staged migration file {0}"
+  },
+  "install.diagnostic_076fc971e1d9": {
+    "en": "inspect migration state directory {0}",
+    "ko": "inspect migration state directory {0}",
+    "zh": "inspect migration state directory {0}",
+    "ja": "inspect migration state directory {0}"
+  },
+  "install.diagnostic_ab53baf6f90a": {
+    "en": "read existing profile settings from {0}; refusing to replace an unreadable config",
+    "ko": "read existing profile settings from {0}; refusing to replace an unreadable config",
+    "zh": "read existing profile settings from {0}; refusing to replace an unreadable config",
+    "ja": "read existing profile settings from {0}; refusing to replace an unreadable config"
+  },
+  "install.diagnostic_704fe842a9e9": {
+    "en": "resolve previously owned worker {0}",
+    "ko": "resolve previously owned worker {0}",
+    "zh": "resolve previously owned worker {0}",
+    "ja": "resolve previously owned worker {0}"
+  },
+  "install.diagnostic_a87222c63841": {
+    "en": "read owned installation record {0}",
+    "ko": "read owned installation record {0}",
+    "zh": "read owned installation record {0}",
+    "ja": "read owned installation record {0}"
+  },
+  "install.diagnostic_9ed5bb9e9686": {
+    "en": "resolve the owned worker executable {0}",
+    "ko": "resolve the owned worker executable {0}",
+    "zh": "resolve the owned worker executable {0}",
+    "ja": "resolve the owned worker executable {0}"
+  },
+  "install.diagnostic_58cf8d0a006a": {
+    "en": "resolve selected worker {0}",
+    "ko": "resolve selected worker {0}",
+    "zh": "resolve selected worker {0}",
+    "ja": "resolve selected worker {0}"
+  },
+  "install.diagnostic_ab6608b1b871": {
+    "en": "inspect selected worker {0}",
+    "ko": "inspect selected worker {0}",
+    "zh": "inspect selected worker {0}",
+    "ja": "inspect selected worker {0}"
+  },
+  "install.diagnostic_396d376c6f15": {
+    "en": "open Full Disk Access guidance for signed worker {0}",
+    "ko": "open Full Disk Access guidance for signed worker {0}",
+    "zh": "open Full Disk Access guidance for signed worker {0}",
+    "ja": "open Full Disk Access guidance for signed worker {0}"
+  },
+  "install.diagnostic_0b7d33f9c127": {
+    "en": "resolve owned state directory {0}",
+    "ko": "resolve owned state directory {0}",
+    "zh": "resolve owned state directory {0}",
+    "ja": "resolve owned state directory {0}"
+  },
+  "install.diagnostic_49653bfdc84d": {
+    "en": "read profile ownership record {0}",
+    "ko": "read profile ownership record {0}",
+    "zh": "read profile ownership record {0}",
+    "ja": "read profile ownership record {0}"
+  },
+  "install.diagnostic_67b152f494bf": {
+    "en": "resolve compared executable path {0}",
+    "ko": "resolve compared executable path {0}",
+    "zh": "resolve compared executable path {0}",
+    "ja": "resolve compared executable path {0}"
+  },
+  "install.diagnostic_58c897a1e56b": {
+    "en": "resolve profile data root {0}",
+    "ko": "resolve profile data root {0}",
+    "zh": "resolve profile data root {0}",
+    "ja": "resolve profile data root {0}"
+  },
+  "install.diagnostic_cfc12728a10d": {
+    "en": "read existing installation ownership {0}; refusing to replace its plan",
+    "ko": "read existing installation ownership {0}; refusing to replace its plan",
+    "zh": "read existing installation ownership {0}; refusing to replace its plan",
+    "ja": "read existing installation ownership {0}; refusing to replace its plan"
+  },
+  "install.diagnostic_cb03cb68368b": {
+    "en": "read existing profile settings from {0}; refusing to replace its plan",
+    "ko": "read existing profile settings from {0}; refusing to replace its plan",
+    "zh": "read existing profile settings from {0}; refusing to replace its plan",
+    "ja": "read existing profile settings from {0}; refusing to replace its plan"
+  },
+  "install.diagnostic_9554ada7e65b": {
+    "en": "resolve owned bin directory {0}",
+    "ko": "resolve owned bin directory {0}",
+    "zh": "resolve owned bin directory {0}",
+    "ja": "resolve owned bin directory {0}"
+  },
+  "install.diagnostic_11c6d3c92a3a": {
+    "en": "resolve owned bin directory under {0}",
+    "ko": "resolve owned bin directory under {0}",
+    "zh": "resolve owned bin directory under {0}",
+    "ja": "resolve owned bin directory under {0}"
+  },
+  "install.diagnostic_5ee2f9ada056": {
+    "en": "resolve worker executable {0}",
+    "ko": "resolve worker executable {0}",
+    "zh": "resolve worker executable {0}",
+    "ja": "resolve worker executable {0}"
+  },
+  "install.diagnostic_79bd8f3d7936": {
+    "en": "{0}.service",
+    "ko": "{0}.service",
+    "zh": "{0}.service",
+    "ja": "{0}.service"
+  },
+  "install.diagnostic_11c27666c4cd": {
+    "en": "read existing unit {0}",
+    "ko": "read existing unit {0}",
+    "zh": "read existing unit {0}",
+    "ja": "read existing unit {0}"
+  },
+  "install.diagnostic_1f34c6ac9ed5": {
+    "en": "write {0}",
+    "ko": "write {0}",
+    "zh": "write {0}",
+    "ja": "write {0}"
+  },
+  "install.diagnostic_2170bcd5dab7": {
+    "en": "create LaunchAgents directory {0}",
+    "ko": "create LaunchAgents directory {0}",
+    "zh": "create LaunchAgents directory {0}",
+    "ja": "create LaunchAgents directory {0}"
+  },
+  "install.diagnostic_c82cd426a735": {
+    "en": "create {0} without replacing another service",
+    "ko": "create {0} without replacing another service",
+    "zh": "create {0} without replacing another service",
+    "ja": "create {0} without replacing another service"
+  },
+  "install.diagnostic_07af7d91b87a": {
+    "en": "flush {0}",
+    "ko": "flush {0}",
+    "zh": "flush {0}",
+    "ja": "flush {0}"
+  },
+  "install.diagnostic_d3ba697c4d8a": {
+    "en": "read LaunchAgent plist {0}",
+    "ko": "read LaunchAgent plist {0}",
+    "zh": "read LaunchAgent plist {0}",
+    "ja": "read LaunchAgent plist {0}"
+  },
+  "install.diagnostic_5d25436b8393": {
+    "en": "inspect LaunchAgent plist {0}",
+    "ko": "inspect LaunchAgent plist {0}",
+    "zh": "inspect LaunchAgent plist {0}",
+    "ja": "inspect LaunchAgent plist {0}"
+  },
+  "install.diagnostic_a5dd551668c7": {
+    "en": "remove `/discodex` only from configured guild {0}; token came from {1}",
+    "ko": "remove `/discodex` only from configured guild {0}; token came from {1}",
+    "zh": "remove `/discodex` only from configured guild {0}; token came from {1}",
+    "ja": "remove `/discodex` only from configured guild {0}; token came from {1}"
+  },
+  "install.diagnostic_3358863df77b": {
+    "en": "remove owned file {0}",
+    "ko": "remove owned file {0}",
+    "zh": "remove owned file {0}",
+    "ja": "remove owned file {0}"
+  },
+  "install.diagnostic_4b01c6cc2e58": {
+    "en": "read {0}",
+    "ko": "read {0}",
+    "zh": "read {0}",
+    "ja": "read {0}"
+  },
+  "install.diagnostic_35e644909ed4": {
+    "en": "parse {0}",
+    "ko": "parse {0}",
+    "zh": "parse {0}",
+    "ja": "parse {0}"
+  },
+  "install.diagnostic_24809c891d3a": {
+    "en": "replace owned secret file {0}",
+    "ko": "replace owned secret file {0}",
+    "zh": "replace owned secret file {0}",
+    "ja": "replace owned secret file {0}"
+  },
+  "install.diagnostic_25674aac2332": {
+    "en": "write secret file {0}",
+    "ko": "write secret file {0}",
+    "zh": "write secret file {0}",
+    "ja": "write secret file {0}"
+  },
+  "install.diagnostic_717e831a3658": {
+    "en": "restrict directory permissions for {0}",
+    "ko": "restrict directory permissions for {0}",
+    "zh": "restrict directory permissions for {0}",
+    "ja": "restrict directory permissions for {0}"
+  },
+  "install.diagnostic_ab8520f1e238": {
+    "en": "restrict file permissions for {0}",
+    "ko": "restrict file permissions for {0}",
+    "zh": "restrict file permissions for {0}",
+    "ja": "restrict file permissions for {0}"
+  },
+  "install.diagnostic_19693d52d60e": {
+    "en": "make {0} executable",
+    "ko": "make {0} executable",
+    "zh": "make {0} executable",
+    "ja": "make {0} executable"
+  },
+  "install.diagnostic_a677cb01c7e0": {
+    "en": "open update state lock {0}",
+    "ko": "open update state lock {0}",
+    "zh": "open update state lock {0}",
+    "ja": "open update state lock {0}"
+  },
+  "install.diagnostic_54c8b60fc5f4": {
+    "en": "read update state {0}",
+    "ko": "read update state {0}",
+    "zh": "read update state {0}",
+    "ja": "read update state {0}"
+  }
+}
