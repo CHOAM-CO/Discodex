@@ -1233,12 +1233,13 @@ pub(crate) async fn run(
             // Before launch, applying closes ingress while the worker interrupts
             // its active session. Once launched, the helper owns disk state.
             let dir = state.updates.state_dir.clone();
+            let language = state.config.language;
             let recovery = tokio::task::spawn_blocking(move || -> Result<UpdateStore> {
                 let mut store = UpdateStore::load(&dir)?;
                 let snapshot = store.snapshot();
                 if snapshot.status == UpdateStatus::Applying {
                     if let Some(attempt) = snapshot.apply_attempt_id {
-                        if !updates::helper_running(&dir, &attempt)? {
+                        if !updates::helper_running(&dir, &attempt, language)? {
                             store.fail_stopped_helper(
                                 &attempt,
                                 "Detached updater stopped before completing the update".into(),

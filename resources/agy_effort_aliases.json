@@ -1,0 +1,14 @@
+[
+  {
+    "requested": "xhigh",
+    "actual": "high",
+    "requires": ["high"],
+    "excludes": ["xhigh"]
+  },
+  {
+    "requested": "ultra",
+    "actual": "high",
+    "requires": ["high"],
+    "excludes": ["xhigh"]
+  }
+]

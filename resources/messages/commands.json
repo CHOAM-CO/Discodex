@@ -2075,6 +2075,18 @@
     "zh": "当前模型未列出推理强度 `{value}`。请查看 `/discodex models` 中的可用选项。",
     "ja": "現在のモデルでは推論強度 `{value}` が一覧にありません。`/discodex models` で利用可能な項目を確認してください。"
   },
+  "commands.agy_effort_alias_label": {
+    "en": "Extra high (AGY uses {actual})",
+    "ko": "매우 높음 (AGY는 {actual} 사용)",
+    "zh": "很高（AGY 使用{actual}）",
+    "ja": "非常に高い（AGY は「{actual}」を使用）"
+  },
+  "commands.agy_ultra_effort_alias_label": {
+    "en": "Ultra (Codex orchestration; AGY uses {actual})",
+    "ko": "Ultra (Codex 오케스트레이션; AGY는 {actual} 사용)",
+    "zh": "Ultra（Codex 编排；AGY 使用{actual}）",
+    "ja": "Ultra（Codex オーケストレーション、AGY は「{actual}」を使用）"
+  },
   "commands.tier_unavailable_for_model": {
     "en": "Service tier `{value}` is not listed for the current model. Check `/discodex models` for available options.",
     "ko": "현재 모델의 서비스 등급 목록에 `{value}`가 없습니다. `/discodex models`에서 사용할 수 있는 옵션을 확인하세요.",
