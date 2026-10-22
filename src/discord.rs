@@ -1588,10 +1588,10 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
         .and_then(|member| member.nick.as_deref())
         .or(msg.author.global_name.as_deref())
         .unwrap_or(&msg.author.name);
-    let source = if home_channel {
-        serde_json::json!({"author": author_name})
-    } else if msg.guild_id.is_none() {
+    let mut source = if msg.guild_id.is_none() {
         serde_json::json!({"channel": "DM", "dm_id": msg.channel_id.get().to_string(), "author": author_name})
+    } else if home_channel {
+        serde_json::json!({"author": author_name})
     } else {
         let channel_name = msg
             .channel_id
@@ -1615,6 +1615,12 @@ async fn message_input(msg: &Message, home_channel: bool, http: &serenity::http:
             "author": author_name,
         })
     };
+    source["channel_id"] = serde_json::json!(msg.channel_id.get().to_string());
+    source["message_id"] = serde_json::json!(msg.id.get().to_string());
+    source["home"] = serde_json::json!(home_channel);
+    if let Some(guild_id) = msg.guild_id {
+        source["guild_id"] = serde_json::json!(guild_id.get().to_string());
+    }
     let source = add_author_mention_metadata(source, msg.author.id.get());
     let source = add_bot_source_metadata(source, msg.author.bot);
     let forwarded = crate::attachments::forwarded_message_data(msg);
@@ -4897,7 +4903,7 @@ mod tests {
         assert_eq!(
             input,
             serde_json::json!({
-                "source": {"channel":"DM", "dm_id":"42", "author":"Display Name", "authorMention":"<@7>"},
+                "source": {"channel":"DM", "dm_id":"42", "channel_id":"42", "message_id":message.id.get().to_string(), "home":false, "author":"Display Name", "authorMention":"<@7>"},
                 "body":"private question"
             })
         );
@@ -4905,7 +4911,7 @@ mod tests {
         let home: serde_json::Value = serde_json::from_str(&home).unwrap();
         assert_eq!(
             home["source"],
-            serde_json::json!({"author":"Display Name", "authorMention":"<@7>"})
+            serde_json::json!({"channel":"DM", "dm_id":"42", "channel_id":"42", "message_id":message.id.get().to_string(), "home":true, "author":"Display Name", "authorMention":"<@7>"})
         );
     }
     #[test]
