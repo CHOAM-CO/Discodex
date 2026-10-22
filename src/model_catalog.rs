@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn discovered_variant_family_is_one_model_with_only_observed_efforts_and_legacy_aliases() {
+    fn discovered_variant_family_is_one_model_with_observed_efforts_and_aliases() {
         let mut catalog = json!({"data": []});
         add_antigravity_catalog(
             &mut catalog,
@@ -537,7 +537,14 @@ mod tests {
                 {"reasoningEffort":"high","source":"agy-model-variant"},
                 {"reasoningEffort":"medium","source":"agy-model-variant"},
                 {"reasoningEffort":"low","source":"agy-model-variant"},
-                {"reasoningEffort":"ultra","agyOrchestration":true}
+                {"reasoningEffort":"ultra","agyOrchestration":true,"agyEffort":"high"}
+            ])
+        );
+        assert_eq!(
+            family["reasoningEffortAliases"],
+            json!([
+                {"requested":"xhigh","actual":"high"},
+                {"requested":"ultra","actual":"high"}
             ])
         );
         assert_eq!(
@@ -562,7 +569,7 @@ mod tests {
             other["supportedReasoningEfforts"],
             json!([
                 {"reasoningEffort":"high","source":"agy-model-variant"},
-                {"reasoningEffort":"ultra","agyOrchestration":true}
+                {"reasoningEffort":"ultra","agyOrchestration":true,"agyEffort":"high"}
             ])
         );
         assert!(!catalog_has_model(&catalog, "sample-other-xhigh"));
