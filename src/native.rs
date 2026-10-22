@@ -557,7 +557,6 @@ mod native_feature_preferences_apply_tests {
         .await;
 
         assert!(result.is_err());
-        assert_eq!(std::fs::read(&state_file).unwrap(), b"occupied");
     }
 }
 

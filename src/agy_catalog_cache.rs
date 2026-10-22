@@ -320,17 +320,22 @@ mod tests {
             .get_or_refresh(100, false, || async { Ok(catalog("good")) })
             .await
             .unwrap();
-        let previous_bytes = std::fs::read(directory.path().join(CACHE_FILE)).unwrap();
         let error = cache
             .get_or_refresh(101, true, || async {
                 anyhow::bail!("discovery unavailable")
             })
             .await;
         assert!(error.is_err());
-        assert_eq!(
-            std::fs::read(directory.path().join(CACHE_FILE)).unwrap(),
-            previous_bytes
-        );
+
+        let restarted = CatalogCache::new(directory.path(), "profile-a/shared".into());
+        let after_failure = restarted
+            .get_or_refresh(102, false, || async {
+                anyhow::bail!("fresh snapshot should avoid rediscovery")
+            })
+            .await
+            .unwrap();
+        assert_eq!(after_failure.catalog, Some(catalog("good")));
+        assert_eq!(after_failure.warning, None);
     }
 
     #[tokio::test]

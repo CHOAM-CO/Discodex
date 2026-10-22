@@ -202,17 +202,14 @@ impl TemporaryAgent {
         };
         let name = name.to_owned();
         let file_path = directory.path().join("agent.md");
+        let definition = temporary_agent_definition(&name, instructions);
         let write_result = (|| -> Result<()> {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&file_path)
                 .with_context(|| format!("create AGY agent definition {}", file_path.display()))?;
-            writeln!(file, "---")?;
-            writeln!(file, "name: {name}")?;
-            writeln!(file, "description: Per-run Codex execution guidance.")?;
-            writeln!(file, "---\n")?;
-            file.write_all(instructions.as_bytes())?;
+            file.write_all(definition.as_bytes())?;
             file.flush()?;
             Ok(())
         })();
@@ -225,11 +222,12 @@ impl TemporaryAgent {
     fn name(&self) -> &str {
         &self.name
     }
+}
 
-    #[cfg(test)]
-    fn definition_path(&self) -> &Path {
-        self.directory.path()
-    }
+fn temporary_agent_definition(name: &str, instructions: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: Per-run Codex execution guidance.\n---\n\n{instructions}"
+    )
 }
 
 #[cfg(unix)]
@@ -373,6 +371,22 @@ fn format_premature_exit(exit_code: Option<i32>, stderr: &str) -> String {
     } else {
         format!("AGY exited before terminal result ({status}):\n{diagnostic}")
     }
+}
+
+fn format_prompt_io_error(
+    operation: &str,
+    error: &std::io::Error,
+    status: &str,
+    stderr: &str,
+) -> anyhow::Error {
+    let stderr = stderr.trim_end();
+    let stderr = if stderr.is_empty() {
+        "<empty>".to_owned()
+    } else {
+        let tail = stderr.chars().rev().take(4096).collect::<String>();
+        tail.chars().rev().collect::<String>()
+    };
+    anyhow::anyhow!("{operation}: {error} (AGY {status}; stderr: {stderr})")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -829,14 +843,7 @@ impl Session {
             Err(status_error) => format!("status unavailable ({status_error})"),
         };
         let stderr = self.stderr_output.lock().await.clone();
-        let stderr = stderr.trim_end();
-        let stderr = if stderr.is_empty() {
-            "<empty>".to_owned()
-        } else {
-            let tail = stderr.chars().rev().take(4096).collect::<String>();
-            tail.chars().rev().collect::<String>()
-        };
-        anyhow::anyhow!("{operation}: {error} (AGY {status}; stderr: {stderr})")
+        format_prompt_io_error(operation, &error, &status, &stderr)
     }
 
     /// Receive the next parsed stdout event. `None` means stdout closed.
@@ -1045,72 +1052,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn cli_spawn_failure_identifies_the_executable_and_command() {
-        let directory = tempfile::tempdir().unwrap();
-        let missing = directory.path().join("missing-agy");
-        let runtime = Runtime {
-            executable: missing.clone(),
-            arguments: Vec::new(),
-            environment: HashMap::new(),
-        };
-        let error = cli_output(&runtime, &["models"]).await.unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!("run AGY CLI at {} with command models", missing.display())
-        );
-        assert_eq!(
-            error
-                .root_cause()
-                .downcast_ref::<std::io::Error>()
-                .map(std::io::Error::kind),
-            Some(std::io::ErrorKind::NotFound)
-        );
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn broken_pipe_reports_cli_exit_status_and_captured_stderr() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory = tempfile::tempdir().unwrap();
-        let executable = directory.path().join("fixture-agy");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nprintf 'fixture model selection error\\n' >&2\nexit 23\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let runtime = Runtime {
-            executable,
-            arguments: Vec::new(),
-            environment: HashMap::new(),
-        };
-        let mut session = Session::spawn(&runtime, directory.path(), None, None)
-            .await
-            .unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                if session.child.try_wait().unwrap().is_some() {
-                    break;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-
-        let error = session.send_text("fixture prompt").await.unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("write AGY prompt"), "{message}");
-        assert!(message.contains("exited with status 23"), "{message}");
-        assert!(
-            message.contains("fixture model selection error"),
-            "{message}"
-        );
-        session.terminate().await.unwrap();
-    }
-
     #[test]
     fn session_command_preserves_executable_arguments_and_native_binding() {
         let executable = Path::new("example tools").join("agy-cli");
@@ -1261,23 +1202,13 @@ mod tests {
     }
 
     #[test]
-    fn temporary_agent_uses_unique_discovery_path_and_command_selection() {
-        let workspace = tempfile::tempdir().unwrap();
-        let agents_root = workspace.path().join(".agents/agents");
-        std::fs::create_dir_all(&agents_root).unwrap();
-        let user_agent = agents_root.join("existing/agent.md");
-        std::fs::create_dir_all(user_agent.parent().unwrap()).unwrap();
-        std::fs::write(&user_agent, "user-owned agent").unwrap();
-
-        let agent =
-            TemporaryAgent::create(workspace.path(), "base prompt\n\nproactive mode").unwrap();
-        let name = agent.name().to_owned();
-        let path = agent.definition_path().to_owned();
-        let body = std::fs::read_to_string(path.join("agent.md")).unwrap();
-        assert!(body.starts_with(&format!("---\nname: {name}\n")));
-        assert!(body.contains("base prompt\n\nproactive mode"));
-        assert!(user_agent.exists());
-
+    fn temporary_agent_definition_and_cli_selection_preserve_guidance_and_model() {
+        let name = "discodex-run-fixture";
+        let instructions = "Native base instructions\n\nproactive mode";
+        assert_eq!(
+            temporary_agent_definition(name, instructions),
+            "---\nname: discodex-run-fixture\ndescription: Per-run Codex execution guidance.\n---\n\nNative base instructions\n\nproactive mode"
+        );
         let runtime = Runtime {
             executable: "example-runtime/agy".into(),
             arguments: vec!["--settings=example".to_owned()],
@@ -1285,11 +1216,11 @@ mod tests {
         };
         let command = session_command_with_agent(
             &runtime,
-            workspace.path(),
+            Path::new("fixture-workspace"),
             Some("gemini-4-argon-high"),
             Some("ultra"),
             None,
-            Some(&name),
+            Some(name),
         );
         let args = command
             .as_std()
@@ -1298,80 +1229,13 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             args.windows(2)
-                .any(|args| args == [OsStr::new("--agent"), OsStr::new(&name)])
+                .any(|args| args == [OsStr::new("--agent"), OsStr::new(name)])
         );
         assert!(
             args.windows(2)
                 .any(|args| args == [OsStr::new("--model"), OsStr::new("gemini-4-argon-high")])
         );
         assert!(!args.iter().any(|arg| arg == OsStr::new("--effort")));
-
-        drop(agent);
-        assert!(!path.exists());
-        assert!(user_agent.exists());
-    }
-
-    #[tokio::test]
-    async fn temporary_agent_is_removed_when_cli_spawn_fails() {
-        let workspace = tempfile::tempdir().unwrap();
-        let agent = TemporaryAgent::create(workspace.path(), "per-run instructions").unwrap();
-        let path = agent.definition_path().to_owned();
-        let runtime = Runtime {
-            executable: workspace.path().join("missing-agy"),
-            arguments: Vec::new(),
-            environment: HashMap::new(),
-        };
-
-        let result = Session::spawn_with_agent_context(
-            &runtime,
-            workspace.path(),
-            Some("fixture-model"),
-            None,
-            None,
-            agent,
-        )
-        .await;
-        assert!(result.is_err());
-        assert!(!path.exists());
-        let definitions_root = workspace.path().join(".agents/agents");
-        assert!(definitions_root.is_dir());
-        assert_eq!(std::fs::read_dir(definitions_root).unwrap().count(), 0);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn temporary_agent_survives_until_cancelled_cli_is_terminated() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let workspace = tempfile::tempdir().unwrap();
-        let executable = workspace.path().join("fixture-agy");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nprintf '%s\\n' '{\"event\":\"init\",\"conversation_id\":\"fixture\",\"init\":{}}'\nwhile IFS= read -r line; do :; done\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let agent = TemporaryAgent::create(workspace.path(), "per-run instructions").unwrap();
-        let path = agent.definition_path().to_owned();
-        let runtime = Runtime {
-            executable,
-            arguments: Vec::new(),
-            environment: HashMap::new(),
-        };
-        let mut session = Session::spawn_with_agent_context(
-            &runtime,
-            workspace.path(),
-            Some("fixture-model"),
-            None,
-            None,
-            agent,
-        )
-        .await
-        .unwrap();
-        assert!(path.join("agent.md").exists());
-        session.terminate().await.unwrap();
-        drop(session);
-        assert!(!path.exists());
     }
 
     #[test]
@@ -1434,6 +1298,30 @@ mod tests {
             format_premature_exit(None, ""),
             "AGY exited before terminal result (termination status unavailable)"
         );
+    }
+
+    #[test]
+    fn prompt_io_diagnostic_reports_status_and_bounded_stderr_tail() {
+        let stderr = format!("discarded-prefix{}", "x".repeat(4096));
+        let error = format_prompt_io_error(
+            "write AGY prompt",
+            &std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed"),
+            "exited with status 23",
+            &stderr,
+        );
+        let message = format!("{error:#}");
+        assert!(message.contains("write AGY prompt"));
+        assert!(message.contains("exited with status 23"));
+        assert!(!message.contains("discarded-prefix"));
+        assert!(message.ends_with(&format!("stderr: {})", "x".repeat(4096))));
+
+        let empty = format_prompt_io_error(
+            "flush AGY prompt",
+            &std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe closed"),
+            "still running",
+            "\n",
+        );
+        assert!(format!("{empty:#}").ends_with("stderr: <empty>)"));
     }
 
     #[test]

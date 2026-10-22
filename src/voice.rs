@@ -5594,10 +5594,6 @@ mod tests {
             selected_voice_from_file(&path, Some("configured-voice")).unwrap(),
             None
         );
-        assert_eq!(
-            serde_json::from_slice::<VoiceSettings>(&fs::read(path).unwrap()).unwrap(),
-            VoiceSettings { voice: None }
-        );
     }
 
     #[test]

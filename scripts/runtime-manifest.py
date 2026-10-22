@@ -39,28 +39,39 @@ def package_files(package: Path) -> dict[str, str]:
     }
 
 
+def archive_entries(
+    source: tarfile.TarFile,
+) -> list[tuple[tarfile.TarInfo, PurePosixPath]]:
+    """Validate archive member values and return their normalized paths."""
+    entries: list[tuple[tarfile.TarInfo, PurePosixPath]] = []
+    seen: set[str] = set()
+    for member in source:
+        name = member.name
+        path = PurePosixPath(name)
+        windows_path = PureWindowsPath(name)
+        if (
+            not name
+            or "\\" in name
+            or path.is_absolute()
+            or windows_path.root
+            or windows_path.drive
+            or any(part == ".." for part in name.split("/"))
+            or path.as_posix() == "."
+            or path.as_posix() in seen
+            or not (member.isfile() or member.isdir())
+        ):
+            raise ValueError(f"invalid runtime archive entry: {name!r}")
+        seen.add(path.as_posix())
+        entries.append((member, path))
+    return entries
+
+
 def extract_archive(archive: Path, package: Path) -> None:
     """Extract regular package files without accepting links or path escapes."""
-    package.mkdir(parents=True, exist_ok=False)
     with tarfile.open(archive, "r:gz") as source:
-        seen: set[str] = set()
-        for member in source:
-            name = member.name
-            path = PurePosixPath(name)
-            windows_path = PureWindowsPath(name)
-            if (
-                not name
-                or "\\" in name
-                or path.is_absolute()
-                or windows_path.root
-                or windows_path.drive
-                or any(part == ".." for part in name.split("/"))
-                or path.as_posix() == "."
-                or path.as_posix() in seen
-                or not (member.isfile() or member.isdir())
-            ):
-                raise ValueError(f"invalid runtime archive entry: {name!r}")
-            seen.add(path.as_posix())
+        entries = archive_entries(source)
+        package.mkdir(parents=True, exist_ok=False)
+        for member, path in entries:
             destination = package.joinpath(*path.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             if member.isdir():
@@ -68,7 +79,7 @@ def extract_archive(archive: Path, package: Path) -> None:
                 continue
             stream = source.extractfile(member)
             if stream is None:
-                raise ValueError(f"runtime archive file has no contents: {name!r}")
+                raise ValueError(f"runtime archive file has no contents: {member.name!r}")
             with stream, destination.open("xb") as output:
                 output.write(stream.read())
             try:
@@ -77,8 +88,10 @@ def extract_archive(archive: Path, package: Path) -> None:
                 pass
 
 
-def rebind_manifest(*, source, version, commit, target, archive, package):
-    """Validate a prior runtime release and bind its identical archive to this worker."""
+def rebind_manifest_values(
+    *, source, version, commit, target, archive_name, actual_archive_sha256, actual_files
+):
+    """Validate runtime release values and bind the archive to this worker."""
     expected_archive = f"discodex-runtime-{target}.tar.gz"
     if source.get("formatVersion") != 1:
         raise ValueError("unsupported runtime manifest format")
@@ -95,14 +108,14 @@ def rebind_manifest(*, source, version, commit, target, archive, package):
         raise ValueError("this worker has no full Codex commit pin")
     if source.get("target") != target:
         raise ValueError("runtime manifest target differs from this build target")
-    if source.get("archive") != expected_archive or archive.name != expected_archive:
+    if source.get("archive") != expected_archive or archive_name != expected_archive:
         raise ValueError("runtime archive name differs from this build target")
     archive_sha256 = source.get("sha256")
     if (
         not isinstance(archive_sha256, str)
         or len(archive_sha256) != 64
         or any(char not in "0123456789abcdefABCDEF" for char in archive_sha256)
-        or archive_sha256.lower() != digest(archive)
+        or archive_sha256.lower() != actual_archive_sha256
     ):
         raise ValueError("runtime archive checksum does not match its manifest")
     files = source.get("files")
@@ -141,10 +154,22 @@ def rebind_manifest(*, source, version, commit, target, archive, package):
         })
     if not required.issubset(files):
         raise ValueError("runtime manifest is missing required package components")
-    actual_files = package_files(package)
     if files != actual_files:
         raise ValueError("runtime package files do not match their manifest checksums")
     return {**source, "workerVersion": version}
+
+
+def rebind_manifest(*, source, version, commit, target, archive, package):
+    """Validate a prior runtime release and bind its identical archive to this worker."""
+    return rebind_manifest_values(
+        source=source,
+        version=version,
+        commit=commit,
+        target=target,
+        archive_name=archive.name,
+        actual_archive_sha256=digest(archive),
+        actual_files=package_files(package),
+    )
 
 
 def main() -> None:

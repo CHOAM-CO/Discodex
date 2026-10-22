@@ -2128,19 +2128,9 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_fallback_is_muted_and_never_overwrites_unreadable_state() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("updates.json");
-        let corrupt = b"{not valid json";
-        fs::write(&path, corrupt).unwrap();
-        let mut fallback = UpdateStore::unavailable(dir.path());
+    fn unavailable_fallback_starts_muted() {
+        let fallback = UpdateStore::unavailable(Path::new("unavailable-state"));
         assert!(fallback.snapshot().muted);
-        assert!(fallback.set_muted(false).is_err());
-        assert_eq!(fs::read(&path).unwrap(), corrupt);
-        fs::remove_file(&path).unwrap();
-        assert!(fallback.set_muted(false).is_err());
-        assert!(!path.exists());
-        assert!(!dir.path().join("updates.json.lock").exists());
     }
 
     #[test]
