@@ -7,7 +7,11 @@ use serenity::all::{
     CreateMessage, EditInteractionResponse, MessageId,
 };
 
-use crate::{i18n::Language, reply_files::ReplyFile, table_render, table_source};
+use crate::{
+    i18n::{Language, MessageKey},
+    reply_files::ReplyFile,
+    table_render, table_source,
+};
 
 const PREFIX: &str = "discodex:table:";
 const SOURCE_PREFIX: &str = "discodex-table-";
@@ -145,7 +149,7 @@ fn table_pages(
             components: vec![CreateActionRow::Buttons(vec![
                 CreateButton::new(format!("{PREFIX}{key}"))
                     .style(ButtonStyle::Secondary)
-                    .label(language.text("View source", "원문 보기", "查看原文", "原文を表示")),
+                    .label(language.message(MessageKey::TableButtonSource)),
             ])],
         });
     }
@@ -234,23 +238,36 @@ pub(crate) async fn handle_component(
             .await?;
     }
     let result = source_response(ctx, &request, language).await;
-    let response = match result {
-        Ok(response) => response,
+    let (response, extra_pages) = match result {
+        Ok(response) => (response, Vec::new()),
         Err(error) => {
-            tracing::warn!(%error, "could not retrieve table Markdown from Discord");
-            EditInteractionResponse::new()
-                .content(language.text(
-                    "Could not load the original table. Please try again.",
-                    "표 원문을 불러오지 못했습니다. 다시 시도해 주세요.",
-                    "无法加载表格原文，请重试。",
-                    "表の原文を読み込めませんでした。もう一度お試しください。",
-                ))
-                .components(Vec::new())
+            let detail = crate::discord::sanitize_discord_diagnostic(&format!("{error:#}"));
+            tracing::warn!(%detail, "could not retrieve table Markdown from Discord");
+            let mut pages = table_source_failure_pages(language, &detail);
+            let first = pages.remove(0);
+            (
+                EditInteractionResponse::new()
+                    .content(first)
+                    .components(Vec::new()),
+                pages,
+            )
         }
     };
     interaction
         .edit_response(ctx, response.allowed_mentions(no_mentions()))
         .await?;
+    for page in extra_pages {
+        interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(page)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await
+            .context("deliver remaining table source error details in Discord")?;
+    }
     Ok(())
 }
 
@@ -321,13 +338,13 @@ async fn source_response(
     if request.page > 0 {
         buttons.push(request.button(
             request.page - 1,
-            language.text("Previous", "이전", "上一页", "前へ"),
+            language.message(MessageKey::TableButtonPrevious),
         ));
     }
     if request.page + 1 < pages.len() {
         buttons.push(request.button(
             request.page + 1,
-            language.text("Next", "다음", "下一页", "次へ"),
+            language.message(MessageKey::TableButtonNext),
         ));
     }
     if !buttons.is_empty() {
@@ -342,6 +359,13 @@ fn no_mentions() -> CreateAllowedMentions {
         .all_roles(false)
         .everyone(false)
         .replied_user(false)
+}
+
+fn table_source_failure_pages(language: Language, detail: &str) -> Vec<String> {
+    let notice = language
+        .message(MessageKey::TableSourceLoadFailed)
+        .replace("{error}", detail);
+    crate::commands::split_discord_content(&notice)
 }
 
 fn chunks(text: &str, bytes: usize) -> Vec<String> {
@@ -501,6 +525,16 @@ mod tests {
             let payload = serde_json::to_value(&pages[0].components).unwrap();
             assert_eq!(payload[0]["components"][0]["label"], expected);
         }
+    }
+
+    #[test]
+    fn source_failure_messages_preserve_full_diagnostic_across_discord_pages() {
+        let language = Language::English;
+        let diagnostic = format!("Discord returned status 503: {}", "x".repeat(5_000));
+        let pages = table_source_failure_pages(language, &diagnostic);
+        assert!(pages.len() > 1);
+        assert!(pages.iter().all(|page| page.chars().count() <= 2_000));
+        assert!(pages.concat().contains(&diagnostic));
     }
 
     #[test]

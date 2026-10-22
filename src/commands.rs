@@ -27,6 +27,7 @@ use crate::discord_plugins::{
     suggested_plugin_is_installed, suggested_plugin_target, suggestion_labels, uninstall_confirmed,
     verified_suggestion_accept,
 };
+use crate::i18n::MessageKey;
 use crate::message_access::{MessageAccess, MessagePolicy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,58 +100,20 @@ impl NativeFeatureKey {
 
     fn label(self, language: crate::i18n::Language) -> &'static str {
         match self {
-            Self::CodeMode => language.text("Code Mode", "Code Mode", "Code Mode", "Code Mode"),
-            Self::CodeModeHost => language.text(
-                "Code Mode host",
-                "Code Mode 호스트",
-                "Code Mode 主机",
-                "Code Mode ホスト",
-            ),
-            Self::MultiAgentV2 => language.text(
-                "Multi-agent v2",
-                "멀티 에이전트 v2",
-                "多代理 v2",
-                "マルチエージェント v2",
-            ),
-            Self::WaitAgent => language.text(
-                "Wait for agents",
-                "에이전트 대기",
-                "等待代理",
-                "エージェントを待つ",
-            ),
-            Self::AsyncNotifications => language.text(
-                "Async notifications",
-                "비동기 알림",
-                "异步通知",
-                "非同期通知",
-            ),
-            Self::RequestUserInput => language.text(
-                "Native questions",
-                "네이티브 질문",
-                "原生提问",
-                "ネイティブ質問",
-            ),
-            Self::Clock => language.text(
-                "Clock and time reminders",
-                "시계 및 시간 알림",
-                "时钟和时间提醒",
-                "時計と時刻リマインダー",
-            ),
-            Self::TokenBudget => {
-                language.text("Token budget", "토큰 예산", "令牌预算", "トークン予算")
+            Self::CodeMode => language.message(MessageKey::CommandsCodeMode004c354e),
+            Self::CodeModeHost => language.message(MessageKey::CommandsCodeModeHost4cb2e89d),
+            Self::MultiAgentV2 => language.message(MessageKey::CommandsMultiAgentV26dd758e9),
+            Self::WaitAgent => language.message(MessageKey::CommandsWaitForAgents032f9048),
+            Self::AsyncNotifications => {
+                language.message(MessageKey::CommandsAsyncNotifications0c673297)
             }
-            Self::HistoryNotes => language.text(
-                "History notes",
-                "대화 기록 메모",
-                "历史记录注释",
-                "履歴メモ",
-            ),
-            Self::SubagentModel => language.text(
-                "Default subagent model",
-                "기본 하위 에이전트 모델",
-                "默认子代理模型",
-                "既定のサブエージェントモデル",
-            ),
+            Self::RequestUserInput => language.message(MessageKey::CommandsNativeQuestionsD61baa04),
+            Self::Clock => language.message(MessageKey::CommandsClockAndTimeReminders4246b655),
+            Self::TokenBudget => language.message(MessageKey::CommandsTokenBudget6a6282bf),
+            Self::HistoryNotes => language.message(MessageKey::CommandsHistoryNotes234724c3),
+            Self::SubagentModel => {
+                language.message(MessageKey::CommandsDefaultSubagentModel9811e108)
+            }
         }
     }
 
@@ -230,107 +193,60 @@ pub(crate) struct PluginMenuState {
 }
 
 pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
-    let mut command = CreateCommand::new("discodex").description(language.text(
-        "Manage the current Discodex conversation and settings",
-        "현재 Discodex 대화와 설정을 관리합니다",
-        "管理当前 Discodex 对话和设置",
-        "現在の Discodex 会話と設定を管理します",
-    ));
+    let mut command = CreateCommand::new("discodex").description(
+        language.message(MessageKey::CommandsManageTheCurrentDiscodexConversationAndSet831a7659),
+    );
     command = command
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "update",
-            language.text(
-                "Check for the latest Discodex update and confirm installation",
-                "최신 Discodex 업데이트를 확인하고 설치 여부를 선택합니다",
-                "检查最新 Discodex 更新并确认安装",
-                "最新の Discodex 更新を確認し、インストールを選択します",
-            ),
+            language.message(MessageKey::CommandsCheckForTheLatestDiscodexUpdateAndConfirm68b53c7f),
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "settings",
-            language.text(
-                "Choose conversation settings with buttons",
-                "버튼으로 대화 설정을 선택합니다",
-                "使用按钮选择对话设置",
-                "ボタンで会話設定を選択します",
-            ),
+            language.message(MessageKey::CommandsChooseConversationSettingsWithButtons70876a9a),
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "voice",
-            language.text(
-                "Choose a voice profile with buttons",
-                "버튼으로 음성 프로필을 선택합니다",
-                "使用按钮选择语音配置",
-                "ボタンで音声プロファイルを選択します",
-            ),
+            language.message(MessageKey::CommandsChooseAVoiceProfileWithButtons89280fb4),
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "status",
-            language.text(
-                "Show conversation connection and settings",
-                "현재 대화 연결과 설정을 조회합니다",
-                "查看当前对话连接和设置",
-                "会話の接続状態と設定を表示します",
-            ),
+            language.message(MessageKey::CommandsShowConversationConnectionAndSettings181cc827),
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "interrupt",
-            language.text(
-                "Stop the current response",
-                "현재 진행 중인 응답을 중단합니다",
-                "中断当前回复",
-                "現在の応答を中断します",
-            ),
+            language.message(MessageKey::CommandsStopTheCurrentResponseCa339947),
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "compact",
-            language.text(
-                "Compact conversation context, replacing any active response",
-                "진행 중인 응답을 중단하고 대화 문맥을 압축합니다",
-                "压缩对话上下文，替换正在进行的回复",
-                "進行中の応答を中断して会話のコンテキストを圧縮します",
-            ),
+            language
+                .message(MessageKey::CommandsCompactConversationContextReplacingAnyActiv6fcab920),
         ))
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "new",
-                language.text(
-                    "Start a new Codex conversation",
-                    "새 Codex 대화를 시작합니다",
-                    "开始新的 Codex 对话",
-                    "新しい Codex 会話を開始します",
-                ),
+                language.message(MessageKey::CommandsStartANewCodexConversation0a33cf04),
             )
             .add_sub_option(
                 CreateCommandOption::new(
                     CommandOptionType::String,
                     "active-turn",
-                    language.text(
-                        "How to handle the active response",
-                        "진행 중인 응답의 처리 방식",
-                        "如何处理正在进行的回复",
-                        "進行中の応答の扱い",
-                    ),
+                    language.message(MessageKey::CommandsHowToHandleTheActiveResponse0bfb7119),
                 )
                 .required(false)
                 .add_string_choice(
-                    language.text(
-                        "Finish, then start a new conversation",
-                        "마친 뒤 새 대화",
-                        "完成后开始新对话",
-                        "完了後に新しい会話を開始",
-                    ),
+                    language.message(MessageKey::CommandsFinishThenStartANewConversationB9003cb8),
                     "finish",
                 )
                 .add_string_choice(
-                    language.text("Interrupt first", "먼저 중단", "先中断", "先に中断"),
+                    language.message(MessageKey::CommandsInterruptFirst84068a6d),
                     "interrupt",
                 ),
             ),
@@ -338,34 +254,19 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "voice-leave",
-            language.text(
-                "Leave the current voice call",
-                "현재 음성 통화를 종료합니다",
-                "离开当前语音通话",
-                "現在の音声通話から退出します",
-            ),
+            language.message(MessageKey::CommandsLeaveTheCurrentVoiceCall04af42c5),
         ))
         .add_option(
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "voice-join",
-                language.text(
-                    "Join an allowed voice channel",
-                    "허용한 음성 채널에 참여합니다",
-                    "加入允许的语音频道",
-                    "許可された音声チャンネルに参加します",
-                ),
+                language.message(MessageKey::CommandsJoinAnAllowedVoiceChannelC1945831),
             )
             .add_sub_option(
                 CreateCommandOption::new(
                     CommandOptionType::Channel,
                     "channel",
-                    language.text(
-                        "Allowed voice channel to join",
-                        "참여할 허용 음성 채널",
-                        "要加入的允许语音频道",
-                        "参加する許可済み音声チャンネル",
-                    ),
+                    language.message(MessageKey::CommandsAllowedVoiceChannelToJoin4e5d0bf6),
                 )
                 .required(true),
             ),
@@ -374,31 +275,21 @@ pub fn definitions(language: crate::i18n::Language) -> Vec<CreateCommand> {
         CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "plugins",
-            language.text(
-                "Browse, install, or remove native Codex plugins",
-                "Codex 플러그인을 찾아 설치하거나 제거합니다",
-                "浏览、安装或移除 Codex 插件",
-                "Codex プラグインを閲覧、インストール、削除します",
-            ),
+            language.message(MessageKey::CommandsBrowseInstallOrRemoveNativeCodexPlugins7a3ef886),
         )
         .add_sub_option(
             CreateCommandOption::new(
                 CommandOptionType::String,
                 "view",
-                language.text(
-                    "Catalog or installed plugins",
-                    "카탈로그 또는 설치된 플러그인",
-                    "目录或已安装插件",
-                    "カタログまたはインストール済みプラグイン",
-                ),
+                language.message(MessageKey::CommandsCatalogOrInstalledPluginsD3704ecb),
             )
             .required(false)
             .add_string_choice(
-                language.text("Catalog", "카탈로그", "目录", "カタログ"),
+                language.message(MessageKey::CommandsCatalogFe5df316),
                 "catalog",
             )
             .add_string_choice(
-                language.text("Installed", "설치됨", "已安装", "インストール済み"),
+                language.message(MessageKey::CommandsInstalledA4c359ee),
                 "installed",
             ),
         ),
@@ -414,7 +305,8 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
         interaction.user.id,
         state.config.language,
     ) {
-        let chunks = split_discord_content(&format!("{error:#}"));
+        let detail = crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+        let chunks = split_discord_content(&detail);
         interaction
             .create_response(
                 ctx,
@@ -446,18 +338,16 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
             match crate::discord_updates::manual_update(&state, interaction.user.id.get()).await {
                 Ok(response) => response,
                 Err(error) => {
-                    tracing::warn!(%error, "could not check manual update");
+                    let detail =
+                        settings_error_detail(&error, state.config.language, Some(&state.config));
+                    tracing::warn!(error = %detail, "could not check manual update");
                     (
-                        state
-                            .config
-                            .language
-                            .text(
-                                "Could not check for updates. Please try again.",
-                                "업데이트를 확인하지 못했습니다. 다시 시도해 주세요.",
-                                "无法检查更新，请重试。",
-                                "更新を確認できませんでした。再試行してください。",
-                            )
-                            .to_owned(),
+                        localized_failure_message(
+                            state.config.language.message(
+                                MessageKey::CommandsCouldNotCheckForUpdatesPleaseTryAgainAf2aa53e,
+                            ),
+                            &detail,
+                        ),
                         Vec::new(),
                     )
                 }
@@ -479,18 +369,19 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
                 send_command_settings_panel(ctx, interaction, &content, rows).await
             }
             Err(error) => {
-                tracing::warn!(error = ?error, "failed to build Discord settings menu");
+                let detail =
+                    settings_error_detail(&error, state.config.language, Some(&state.config));
+                tracing::warn!(error = %detail, "failed to build Discord settings menu");
                 interaction
                     .edit_response(
                         ctx,
-                        serenity::builder::EditInteractionResponse::new().content(
-                            state.config.language.text(
-                                "Could not load the current settings choices.",
-                                "현재 설정 선택지를 불러오지 못했습니다.",
-                                "无法加载当前设置选项。",
-                                "現在の設定候補を読み込めませんでした。",
+                        serenity::builder::EditInteractionResponse::new()
+                            .content(localized_failure_message(
+                            state.config.language.message(
+                                MessageKey::CommandsCouldNotLoadTheCurrentSettingsChoices0a0afc4d,
                             ),
-                        ),
+                            &detail,
+                        )),
                     )
                     .await
                     .map(|_| ())
@@ -520,13 +411,13 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
                 send_command_settings_panel(ctx, interaction, &rendered.0, rendered.1).await
             }
             Err(error) => {
-                tracing::warn!(error = ?error, "failed to build Discord plugin menu");
+                let detail =
+                    settings_error_detail(&error, state.config.language, Some(&state.config));
+                tracing::warn!(error = %detail, "failed to build Discord plugin menu");
                 interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(
-                    state.config.language.text(
-                        "Could not load the native plugin list. Check Codex account access and try again.",
-                        "네이티브 플러그인 목록을 불러오지 못했습니다. Codex 계정 접근을 확인한 뒤 다시 시도하세요.",
-                        "无法加载原生插件列表。请检查 Codex 账户访问权限后重试。",
-                        "ネイティブプラグイン一覧を読み込めませんでした。Codex アカウントへのアクセスを確認して再試行してください。",
+                    localized_failure_message(
+                        state.config.language.message(MessageKey::CommandsCouldNotLoadTheNativePluginListCheckCodeC2348bb5),
+                        &detail,
                     ),
                 )).await.map(|_| ())
             }
@@ -538,7 +429,8 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
     let content = match handle_authorized(ctx, interaction, state.clone()).await {
         Ok(content) => content,
         Err(error) => {
-            tracing::warn!(error = ?error, "Discord Codex command failed");
+            let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
+            tracing::warn!(error = %detail, "Discord Codex command failed");
             if let Some(checks) = &state.installation_checks {
                 if interaction.data.options.first().is_some_and(|sub| {
                     matches!(
@@ -555,16 +447,13 @@ pub async fn handle(ctx: &Context, interaction: &CommandInteraction) -> anyhow::
                     );
                 }
             }
-            state
-                .config
-                .language
-                .text(
-                    "The Discodex request failed. Check the input and connection status.",
-                    "Discodex 요청을 처리하지 못했습니다. 입력과 연결 상태를 확인해 주세요.",
-                    "Discodex 请求未能处理。请检查输入和连接状态。",
-                    "Discodex リクエストを処理できませんでした。入力と接続状態を確認してください。",
-                )
-                .to_owned()
+            localized_failure_message(
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsTheDiscodexRequestFailedCheckTheInputAnd71994868),
+                &detail,
+            )
         }
     };
     let chunks = split_discord_content(&content);
@@ -612,12 +501,7 @@ async fn handle_authorized(
     let language = state.config.language;
     let Some(subcommand) = interaction.data.options.first() else {
         return Ok(language
-            .text(
-                "Use `/discodex status`.",
-                "`/discodex status`를 사용하세요.",
-                "请使用 `/discodex status`。",
-                "`/discodex status` を使用してください。",
-            )
+            .message(MessageKey::CommandsUseDiscodexStatus29fe8772)
             .to_owned());
     };
     let sub = subcommand.name.as_str();
@@ -636,81 +520,54 @@ async fn handle_authorized(
                 Ok(value) => {
                     output = format!(
                         "{}\n{}: {}\n{}: {}",
-                        language.text(
-                            "Current Codex conversation status",
-                            "현재 Codex 대화 상태",
-                            "当前 Codex 对话状态",
-                            "現在の Codex 会話の状態"
-                        ),
-                        language.text("Voice call", "음성 통화", "语音通话", "音声通話"),
+                        language
+                            .message(MessageKey::CommandsCurrentCodexConversationStatus3da97baf),
+                        language.message(MessageKey::CommandsVoiceCall7fee09b5),
                         if state
                             .voice
                             .is_active(GuildId::new(state.config.guild_id))
                             .await
                         {
-                            language.text("Connected", "연결됨", "已连接", "接続中")
+                            language.message(MessageKey::CommandsConnected1881bcc7)
                         } else {
-                            language.text("Not connected", "연결되지 않음", "未连接", "未接続")
+                            language.message(MessageKey::CommandsNotConnected97df72d5)
                         },
-                        language.text("Settings", "현재 설정", "当前设置", "現在の設定"),
+                        language.message(MessageKey::CommandsSettings2dd4ab86),
                         format_settings_with_language(&settings_snapshot(&value), language)
                     )
                 }
                 Err(error) => {
                     tracing::warn!(error = ?error, "failed to refresh native thread state for Discord status");
                     output = language
-                        .text(
-                            "Could not read the current conversation status.",
-                            "현재 대화 상태를 조회하지 못했습니다.",
-                            "无法读取当前对话状态。",
-                            "現在の会話状態を取得できませんでした。",
+                        .message(
+                            MessageKey::CommandsCouldNotReadTheCurrentConversationStatusA4f36a29,
                         )
                         .to_owned()
                 }
             }
             output.push_str(&format!(
                 "\n{}: {}",
-                language.text(
-                    "Input delivery",
-                    "입력 전달 방식",
-                    "输入传递方式",
-                    "入力の送信方法"
-                ),
+                language.message(MessageKey::CommandsInputDelivery47ae354d),
                 input_mode(*state.input_mode.read().await, language)
             ));
             output.push_str(&format!(
                 "\n{}: {}",
-                language.text(
-                    "Active response",
-                    "진행 중인 응답",
-                    "正在进行的回复",
-                    "進行中の応答"
-                ),
+                language.message(MessageKey::CommandsActiveResponse007ef48b),
                 if state.current_turn.lock().await.is_some() {
-                    language.text("Yes", "있음", "有", "あり")
+                    language.message(MessageKey::CommandsYes528feda9)
                 } else {
-                    language.text("No", "없음", "没有", "なし")
+                    language.message(MessageKey::CommandsNoA97f680d)
                 }
             ));
             output.push_str(&format!(
                 "\n{}: {}",
-                language.text(
-                    "Queued inputs",
-                    "대기 중인 입력",
-                    "排队的输入",
-                    "待機中の入力"
-                ),
+                language.message(MessageKey::CommandsQueuedInputs61de5fed),
                 crate::discord::pending_input_count(&*state.queued_inputs.lock().await)
             ));
             if let Some(checks) = &state.installation_checks {
                 output.push_str(&format!(
                     "\n{}\n",
-                    language.text(
-                        "Installation feature checks",
-                        "설치 기능 확인",
-                        "安装功能检查",
-                        "インストール機能の確認"
-                    )
+                    language.message(MessageKey::CommandsInstallationFeatureChecksC6ab7b32)
                 ));
                 output.push_str(&checks.summary());
             }
@@ -731,19 +588,17 @@ async fn handle_authorized(
                 .await?;
             let _ = result;
             output = language
-                .text(
-                    "Asked the current response to stop.",
-                    "현재 진행 중인 응답의 중단을 요청했습니다.",
-                    "已请求中断当前回复。",
-                    "現在の応答に中断を要求しました。",
-                )
+                .message(MessageKey::CommandsAskedTheCurrentResponseToStopCc19104e)
                 .to_owned();
         }
         "compact" => {
             let _settings_change = state.settings_change_lock.lock().await;
-            output = request_compaction(&state.native.thread_id(), language, |method, params| {
-                state.native.request(method, params)
-            })
+            output = request_compaction_with_config(
+                &state.native.thread_id(),
+                language,
+                Some(&state.config),
+                |method, params| state.native.request(method, params),
+            )
             .await;
         }
         "new" => {
@@ -752,7 +607,9 @@ async fn handle_authorized(
             let active_choice = arg_string();
             if active_turn.is_some() && active_choice.is_none() {
                 bail!(
-                    language.text("A response is in progress. Choose how to handle it before starting a new conversation.", "진행 중인 응답이 있습니다. 새 대화를 시작하기 전에 처리 방식을 선택해 주세요.", "有回复正在进行。开始新对话前，请选择如何处理。", "応答が進行中です。新しい会話を始める前に処理方法を選択してください。")
+                    language.message(
+                        MessageKey::CommandsAResponseIsInProgressChooseHowToHandleID71652a8
+                    )
                 );
             }
             if let Some(turn_id) = active_turn {
@@ -766,25 +623,20 @@ async fn handle_authorized(
                             )
                             .await?;
                         let _ = result;
-                        output.push_str(language.text(
-                            "Asked the existing response to stop.\n",
-                            "기존 응답의 중단을 요청했습니다.\n",
-                            "已请求中断现有回复。\n",
-                            "既存の応答に中断を要求しました。\n",
-                        ));
+                        output.push_str(
+                            language.message(
+                                MessageKey::CommandsAskedTheExistingResponseToStop31ecef20,
+                            ),
+                        );
                     }
-                    Some("finish") => output.push_str(language.text(
-                        "The existing response will continue in the previous conversation.\n",
-                        "기존 응답은 이전 대화에서 계속 생성됩니다.\n",
-                        "现有回复将继续在之前的对话中生成。\n",
-                        "既存の応答は前の会話で引き続き生成されます。\n",
+                    Some("finish") => output.push_str(language.message(
+                        MessageKey::CommandsTheExistingResponseWillContinueInThePrevi758e7673,
                     )),
-                    _ => bail!(language.text(
-                        "Choose how to handle the active response.",
-                        "진행 중인 응답의 처리 방식을 선택해 주세요",
-                        "请选择如何处理正在进行的回复。",
-                        "進行中の応答の扱いを選択してください。"
-                    )),
+                    _ => {
+                        bail!(language.message(
+                            MessageKey::CommandsChooseHowToHandleTheActiveResponse8f647f6b
+                        ))
+                    }
                 }
             }
             if !state.voice.input_gate.state.lock().await.allow_ordinary() {
@@ -795,12 +647,11 @@ async fn handle_authorized(
             }
             let input_phase = state.voice.input_gate.state.lock().await;
             if !input_phase.allow_ordinary() {
-                bail!(language.text(
-                    "Wait for the voice call to end before starting a new conversation.",
-                    "음성 통화 종료가 확인된 뒤 새 대화를 시작해 주세요.",
-                    "请先确认语音通话已结束，再开始新对话。",
-                    "音声通話の終了を確認してから新しい会話を始めてください。"
-                ));
+                bail!(
+                    language.message(
+                        MessageKey::CommandsWaitForTheVoiceCallToEndBeforeStartingA051a4271
+                    )
+                );
             }
             let _settings_change = state.settings_change_lock.lock().await;
             let previous_thread_id = state.native.thread_id();
@@ -812,7 +663,9 @@ async fn handle_authorized(
                             | crate::discord::QueueDelivery::Submitting
                     )
             }) {
-                bail!(language.text("Wait for queued messages in this conversation to finish before starting a new one.", "현재 대화의 대기 메시지가 처리된 뒤 새 대화를 시작해 주세요.", "请等待当前对话中的排队消息处理完毕后再开始新对话。", "この会話の待機中メッセージが処理されてから新しい会話を始めてください。"));
+                bail!(language.message(
+                    MessageKey::CommandsWaitForQueuedMessagesInThisConversationTo64053425
+                ));
             }
             // Input observation must not pair the new thread with the previous turn.
             let mut current = state.current_turn.lock().await;
@@ -821,7 +674,9 @@ async fn handle_authorized(
                 .is_some_and(|turn| Some(turn) != expected_active_turn.as_ref())
             {
                 bail!(
-                    language.text("A queued message has started. Choose again how to handle the active work before starting a new conversation.", "대기 메시지의 작업이 시작되었습니다. 새 대화를 시작하기 전에 진행 중인 작업의 처리 방식을 다시 선택해 주세요.", "排队消息已开始处理。开始新对话前，请重新选择如何处理当前任务。", "待機中のメッセージの処理が始まりました。新しい会話を始める前に、進行中の作業の扱いを再度選択してください。")
+                    language.message(
+                        MessageKey::CommandsAQueuedMessageHasStartedChooseAgainHowTo117bdf62
+                    )
                 );
             }
             let started = state.native.start_new().await;
@@ -833,24 +688,18 @@ async fn handle_authorized(
             if let Some(checks) = &state.installation_checks {
                 checks.reset_thread(&thread_id);
             }
-            output.push_str(language.text(
-                "Started a new Codex conversation.",
-                "새 Codex 대화를 시작했습니다.",
-                "已开始新的 Codex 对话。",
-                "新しい Codex 会話を開始しました。",
-            ));
+            output.push_str(
+                language.message(MessageKey::CommandsStartedANewCodexConversation5b85b8f3),
+            );
         }
         "voice-join" => {
             let channel_id = arg
                 .and_then(option_channel)
                 .ok_or_else(|| anyhow!("음성 채널을 지정하세요"))?;
             if !state.config.voice_channel_ids.contains(&channel_id.get()) {
-                bail!(language.text(
-                    "This voice channel is not allowlisted.",
-                    "허용 목록에 없는 음성 채널입니다",
-                    "此语音频道不在允许列表中。",
-                    "この音声チャンネルは許可リストにありません。"
-                ));
+                bail!(
+                    language.message(MessageKey::CommandsThisVoiceChannelIsNotAllowlisted62b54e80)
+                );
             }
             state
                 .voice
@@ -862,14 +711,9 @@ async fn handle_authorized(
                 .await?;
             output = format!(
                 "{} <#{}>{}",
-                language.text(
-                    "Joined voice channel",
-                    "음성 채널에 참여했습니다",
-                    "已加入语音频道",
-                    "音声チャンネルに参加しました"
-                ),
+                language.message(MessageKey::CommandsJoinedVoiceChannelB6c9416a),
                 channel_id.get(),
-                language.text(".", ".", "。", "。")
+                language.message(MessageKey::CommandsMessage3a07098d)
             );
         }
         "voice-leave" => {
@@ -878,22 +722,12 @@ async fn handle_authorized(
                 .leave(GuildId::new(state.config.guild_id))
                 .await?;
             output = language
-                .text(
-                    "Left the voice call.",
-                    "음성 통화를 종료했습니다.",
-                    "已退出语音通话。",
-                    "音声通話から退出しました。",
-                )
+                .message(MessageKey::CommandsLeftTheVoiceCallFb14decf)
                 .to_owned();
         }
         _ => bail!(
             "{}: {sub}",
-            language.text(
-                "Unknown `/discodex` command",
-                "알 수 없는 `/discodex` 명령입니다",
-                "未知的 `/discodex` 命令",
-                "不明な `/discodex` コマンドです"
-            )
+            language.message(MessageKey::CommandsUnknownDiscodexCommandC126ecfd)
         ),
     }
     Ok(output)
@@ -908,25 +742,29 @@ where
     F: FnOnce(&'static str, Value) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Value>>,
 {
+    request_compaction_with_config(thread_id, language, None, request).await
+}
+
+async fn request_compaction_with_config<F, Fut>(
+    thread_id: &str,
+    language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
+    request: F,
+) -> String
+where
+    F: FnOnce(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Value>>,
+{
     match request("thread/compact/start", json!({ "threadId": thread_id })).await {
         Ok(_) => language
-            .text(
-                "Requested compaction of the current conversation.",
-                "현재 대화의 문맥 압축을 요청했습니다.",
-                "已请求压缩当前对话的上下文。",
-                "現在の会話のコンテキスト圧縮を要求しました。",
-            )
+            .message(MessageKey::CommandsRequestedCompactionOfTheCurrentConversationEfa9704c)
             .to_owned(),
         Err(error) => {
-            tracing::warn!(error = ?error, "could not request native conversation compaction");
+            let detail = settings_error_detail(&error, language, config);
+            tracing::warn!(error = %detail, "could not request native conversation compaction");
             format!(
-                "{}\n{error:#}",
-                language.text(
-                    "Could not request conversation compaction:",
-                    "대화 문맥 압축을 요청하지 못했습니다:",
-                    "无法请求压缩对话上下文：",
-                    "会話のコンテキスト圧縮を要求できませんでした：",
-                )
+                "{}\n{detail}",
+                language.message(MessageKey::CommandsCouldNotRequestConversationCompaction092a77b5)
             )
         }
     }
@@ -1084,9 +922,9 @@ async fn build_settings_menu_with_catalog(
         ),
         SettingsKind::SubagentModel => {
             let snapshot = state.native.read_native_feature_snapshot().await?;
-            let catalog = model_catalog
-                .as_ref()
-                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
+            let catalog = model_catalog.as_ref().ok_or_else(|| {
+                anyhow!(language.message(MessageKey::CommandsModelCatalogUnavailable))
+            })?;
             subagent_model_settings_values(&thread, &snapshot, &catalog, language)
         }
         SettingsKind::NativeFeatures => {
@@ -1111,21 +949,16 @@ async fn build_settings_menu_with_catalog(
                 vec![
                     SettingsChoice {
                         value: "on".to_owned(),
-                        label: language.text("On", "켜기", "开启", "オン").to_owned(),
+                        label: language.message(MessageKey::CommandsOn65845774).to_owned(),
                     },
                     SettingsChoice {
                         value: "off".to_owned(),
-                        label: language.text("Off", "끄기", "关闭", "オフ").to_owned(),
+                        label: language.message(MessageKey::CommandsOff5677591d).to_owned(),
                     },
                     SettingsChoice {
                         value: "native-default".to_owned(),
                         label: language
-                            .text(
-                                "Native default",
-                                "네이티브 기본값",
-                                "原生默认值",
-                                "ネイティブ既定値",
-                            )
+                            .message(MessageKey::CommandsNativeDefault308250fc)
                             .to_owned(),
                     },
                 ]
@@ -1133,8 +966,9 @@ async fn build_settings_menu_with_catalog(
             let current_value = if key == NativeFeatureKey::SubagentModel {
                 subagent_catalog
                     .and_then(|catalog| {
-                        subagent_preference_scope(&snapshot.preferences, catalog)
-                            .and_then(|value| normalized_model_value(catalog, &value))
+                        subagent_preference_scope(&snapshot.preferences, catalog).and_then(
+                            |value| normalized_model_value_with_language(catalog, &value, language),
+                        )
                     })
                     .or_else(|| saved.clone())
                     .unwrap_or_else(|| "native-default".to_owned())
@@ -1151,29 +985,15 @@ async fn build_settings_menu_with_catalog(
                 .unwrap_or(current_value.as_str());
             let current = format!(
                 "{}: {}\n{}: {}\n{}",
-                language.text(
-                    "Saved preference",
-                    "저장된 설정",
-                    "已保存的偏好",
-                    "保存済みの設定"
-                ),
+                language.message(MessageKey::CommandsSavedPreference47ce2cf1),
                 desired,
-                language.text(
-                    "Effective Codex config",
-                    "실효 Codex 설정",
-                    "Codex 当前生效配置",
-                    "有効な Codex 設定"
-                ),
+                language.message(MessageKey::CommandsEffectiveCodexConfigEeb899f3),
                 effective,
                 if key == NativeFeatureKey::SubagentModel {
                     child_default_timing(language)
                 } else {
-                    language.text(
-                        "Restart required to apply this preference.",
-                        "이 설정을 적용하려면 재시작이 필요합니다.",
-                        "此偏好需要重启后生效。",
-                        "この設定の適用には再起動が必要です。",
-                    )
+                    language
+                        .message(MessageKey::CommandsRestartRequiredToApplyThisPreference4ac207b7)
                 }
             );
             (Some(current_value), current, choices)
@@ -1183,20 +1003,15 @@ async fn build_settings_menu_with_catalog(
             let selected = format!("policy:{}", message_policy_key(access.policy));
             let current = format!(
                 "{}: {}\n{}: {} · {}: {} · {}: {} · {}: {}",
-                language.text("Current policy", "현재 정책", "当前策略", "現在のポリシー"),
+                language.message(MessageKey::CommandsCurrentPolicy7ed3f9e2),
                 message_policy_label(access.policy, language),
-                language.text("Paired", "페어링", "已配对", "ペアリング済み"),
+                language.message(MessageKey::CommandsPairedDb2c2b0b),
                 access.paired_user_ids.len(),
-                language.text("Whitelist", "화이트리스트", "白名单", "許可リスト"),
+                language.message(MessageKey::CommandsWhitelist4df98d9d),
                 access.whitelist.len(),
-                language.text("Blacklist", "블랙리스트", "黑名单", "ブロックリスト"),
+                language.message(MessageKey::CommandsBlacklistD5332ba7),
                 access.blacklist.len(),
-                language.text(
-                    "Registered channels",
-                    "등록 채널",
-                    "已登记频道",
-                    "登録チャンネル"
-                ),
+                language.message(MessageKey::CommandsRegisteredChannels5a818eab),
                 access.channel_ids.len()
             );
             let choices = [
@@ -1218,39 +1033,19 @@ async fn build_settings_menu_with_catalog(
                 ),
                 (
                     "list:paired",
-                    language.text(
-                        "Edit paired accounts",
-                        "페어링 계정 편집",
-                        "编辑已配对账号",
-                        "ペアリング済みアカウントを編集",
-                    ),
+                    language.message(MessageKey::CommandsEditPairedAccountsAceb36c6),
                 ),
                 (
                     "list:whitelist",
-                    language.text(
-                        "Edit whitelist",
-                        "화이트리스트 편집",
-                        "编辑白名单",
-                        "許可リストを編集",
-                    ),
+                    language.message(MessageKey::CommandsEditWhitelist82750902),
                 ),
                 (
                     "list:blacklist",
-                    language.text(
-                        "Edit blocklist",
-                        "차단 목록 편집",
-                        "编辑屏蔽列表",
-                        "ブロックリストを編集",
-                    ),
+                    language.message(MessageKey::CommandsEditBlocklistF37f514b),
                 ),
                 (
                     "list:channels",
-                    language.text(
-                        "Edit registered channels",
-                        "등록 채널 편집",
-                        "编辑已登记频道",
-                        "登録チャンネルを編集",
-                    ),
+                    language.message(MessageKey::CommandsEditRegisteredChannelsCca7da5c),
                 ),
             ]
             .into_iter()
@@ -1289,21 +1084,11 @@ async fn build_settings_menu_with_catalog(
                             .map(|channel| channel.name.clone())
                             .unwrap_or_else(|| {
                                 language
-                                    .text(
-                                        "Unavailable",
-                                        "사용할 수 없음",
-                                        "不可用",
-                                        "利用できません",
-                                    )
+                                    .message(MessageKey::CommandsUnavailable9a54161b)
                                     .to_owned()
                             }),
                         Err(_) => language
-                            .text(
-                                "Unavailable in this server",
-                                "이 서버에서 사용할 수 없음",
-                                "在此服务器中不可用",
-                                "このサーバーでは利用できません",
-                            )
+                            .message(MessageKey::CommandsUnavailableInThisServerEb964050)
                             .to_owned(),
                     }
                 } else {
@@ -1319,7 +1104,7 @@ async fn build_settings_menu_with_catalog(
             }
             let current = format!(
                 "{}: {}",
-                language.text("Entries", "항목", "条目", "項目"),
+                language.message(MessageKey::CommandsEntries9281e703),
                 ids.len()
             );
             (None, current, choices)
@@ -1327,8 +1112,8 @@ async fn build_settings_menu_with_catalog(
         SettingsKind::Updates => {
             let muted = state.updates.muted().await;
             let choices = [
-                ("on", language.text("On", "켜기", "开启", "オン")),
-                ("off", language.text("Off", "끄기", "关闭", "オフ")),
+                ("on", language.message(MessageKey::CommandsOn65845774)),
+                ("off", language.message(MessageKey::CommandsOff5677591d)),
             ]
             .into_iter()
             .map(|(value, label)| SettingsChoice {
@@ -1341,31 +1126,27 @@ async fn build_settings_menu_with_catalog(
             (Some(value.to_owned()), current, choices)
         }
         SettingsKind::Model => {
-            let catalog = model_catalog
-                .as_ref()
-                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
+            let catalog = model_catalog.as_ref().ok_or_else(|| {
+                anyhow!(language.message(MessageKey::CommandsModelCatalogUnavailable))
+            })?;
             let choices = catalog_model_choices(&catalog);
             let selected = model_scope
                 .as_deref()
-                .and_then(|value| normalized_model_value(&catalog, value));
-            let provider = thread_model_provider(&thread).unwrap_or("unknown");
+                .and_then(|value| normalized_model_value_with_language(&catalog, value, language));
+            let provider = thread_model_provider(&thread)
+                .unwrap_or_else(|| language.message(MessageKey::CommandsModelProviderUnknown));
             let current = format!(
                 "{}\n{}: {provider}",
                 choice_current_label(&choices, selected.as_deref(), language),
-                language.text(
-                    "Active model provider",
-                    "현재 모델 제공자",
-                    "当前模型提供方",
-                    "現在のモデルプロバイダー"
-                )
+                language.message(MessageKey::CommandsActiveModelProviderEa54b5ed)
             );
             (selected, model_catalog_warnings(current, &catalog), choices)
         }
         SettingsKind::Effort | SettingsKind::Fast => {
-            let catalog = model_catalog
-                .as_ref()
-                .ok_or_else(|| anyhow!("model catalog is unavailable"))?;
-            let model = selected_model(&catalog, &model_scope)?;
+            let catalog = model_catalog.as_ref().ok_or_else(|| {
+                anyhow!(language.message(MessageKey::CommandsModelCatalogUnavailable))
+            })?;
+            let model = selected_model_with_language(&catalog, &model_scope, language)?;
             if kind == SettingsKind::Effort {
                 let choices = model
                     .get("supportedReasoningEfforts")
@@ -1390,7 +1171,7 @@ async fn build_settings_menu_with_catalog(
             } else {
                 let mut choices = vec![SettingsChoice {
                     value: "off".to_owned(),
-                    label: language.text("Off", "끔", "关闭", "オフ").to_owned(),
+                    label: language.message(MessageKey::CommandsOff4d374cce).to_owned(),
                 }];
                 choices.extend(
                     model
@@ -1486,12 +1267,7 @@ async fn build_settings_menu_with_catalog(
                 .await
                 .context("load thread/realtime/listVoices catalog")?;
             let default_label = language
-                .text(
-                    "Codex default",
-                    "Codex 기본 설정",
-                    "Codex 默认设置",
-                    "Codex の既定設定",
-                )
+                .message(MessageKey::CommandsCodexDefault3029befd)
                 .to_owned();
             let mut choices = vec![SettingsChoice {
                 value: String::new(),
@@ -1549,14 +1325,14 @@ fn effort_settings_choice(item: &Value, language: crate::i18n::Language) -> Opti
         .and_then(Value::as_str)
         .or_else(|| item.as_str())?;
     let label = match value {
-        "none" => language.text("None", "없음", "无", "なし"),
-        "minimal" => language.text("Minimal", "최소", "最低", "最小"),
-        "low" => language.text("Low", "낮음", "低", "低"),
-        "medium" => language.text("Medium", "보통", "中", "中"),
-        "high" => language.text("High", "높음", "高", "高"),
-        "xhigh" => language.text("Extra high", "매우 높음", "很高", "非常に高い"),
-        "max" => language.text("Maximum", "최대", "最高", "最大"),
-        "ultra" => language.text("Ultra", "울트라", "超高", "ウルトラ"),
+        "none" => language.message(MessageKey::CommandsNone45e9a015),
+        "minimal" => language.message(MessageKey::CommandsMinimalB4fec1ec),
+        "low" => language.message(MessageKey::CommandsLowCbc3febe),
+        "medium" => language.message(MessageKey::CommandsMediumEd9c6849),
+        "high" => language.message(MessageKey::CommandsHigh454ac2f1),
+        "xhigh" => language.message(MessageKey::CommandsExtraHighFd13615e),
+        "max" => language.message(MessageKey::CommandsMaximumAe40202b),
+        "ultra" => language.message(MessageKey::CommandsUltra0f57cfc1),
         _ => value,
     };
     Some(SettingsChoice {
@@ -1572,12 +1348,7 @@ fn model_effort_settings_choice(
     let mut choice = effort_settings_choice(item, language)?;
     if item.get("agyOrchestration").and_then(Value::as_bool) == Some(true) {
         choice.label = language
-            .text(
-                "Ultra (Codex proactive orchestration; AGY default effort)",
-                "Ultra (Codex 선제적 오케스트레이션; AGY 기본 추론 강도)",
-                "Ultra（Codex 主动编排；AGY 默认推理强度）",
-                "Ultra（Codex プロアクティブなオーケストレーション、AGY 既定の推論強度）",
-            )
+            .message(MessageKey::CommandsUltraCodexProactiveOrchestrationAgyDefault5b74f52a)
             .to_owned();
     }
     Some(choice)
@@ -1603,9 +1374,9 @@ fn service_tier_settings_choice(
         .and_then(Value::as_str)
         .or_else(|| item.as_str())?;
     let label = match value {
-        "priority" => language.text("Priority", "우선 처리", "优先", "優先"),
-        "standard" => language.text("Standard", "표준", "标准", "標準"),
-        "flex" => language.text("Flex", "유연 처리", "灵活", "フレックス"),
+        "priority" => language.message(MessageKey::CommandsPriorityE9c80c39),
+        "standard" => language.message(MessageKey::CommandsStandard0dd9d07b),
+        "flex" => language.message(MessageKey::CommandsFlex0f24853f),
         _ => item.get("name").and_then(Value::as_str).unwrap_or(value),
     };
     Some(SettingsChoice {
@@ -1634,7 +1405,7 @@ fn choice_current_label(
         .or_else(|| current.map(str::to_owned))
         .unwrap_or_else(|| {
             language
-                .text("Not reported", "확인할 수 없음", "未报告", "未取得")
+                .message(MessageKey::CommandsNotReported0a1fa855)
                 .to_owned()
         })
 }
@@ -1662,115 +1433,53 @@ fn settings_home_values(
     let mut current = format_settings_with_language(&settings_snapshot(thread), language);
     current.push_str(&format!(
         "\n{}: {}",
-        language.text(
-            "Input delivery",
-            "입력 전달 방식",
-            "输入传递方式",
-            "入力の送信方法"
-        ),
+        language.message(MessageKey::CommandsInputDelivery47ae354d),
         input_mode(mode, language)
     ));
     if let Some(provider) = thread_model_provider(thread) {
         current.push_str(&format!(
             "\n{}: {provider}",
-            language.text(
-                "Active model provider",
-                "현재 모델 제공자",
-                "当前模型提供方",
-                "現在のモデルプロバイダー"
-            )
+            language.message(MessageKey::CommandsActiveModelProviderEa54b5ed)
         ));
     }
     let voice = selected_voice.unwrap_or_else(|| {
         language
-            .text(
-                "Codex default",
-                "Codex 기본 설정",
-                "Codex 默认设置",
-                "Codex の既定設定",
-            )
+            .message(MessageKey::CommandsCodexDefault3029befd)
             .to_owned()
     });
     current.push_str(&format!(
         "\n{}: {voice}",
-        language.text(
-            "Voice profile",
-            "음성 프로필",
-            "语音配置",
-            "音声プロファイル"
-        )
+        language.message(MessageKey::CommandsVoiceProfile2f25af45)
     ));
     let choices = [
-        ("model", "Model", "모델", "模型", "モデル"),
+        ("model", MessageKey::CommandsSettingsHomeModel),
         (
             "subagent-model",
-            "Default subagent model",
-            "기본 하위 에이전트 모델",
-            "默认子代理模型",
-            "既定のサブエージェントモデル",
+            MessageKey::CommandsSettingsHomeSubagentModel,
         ),
-        (
-            "effort",
-            "Reasoning effort",
-            "추론 강도",
-            "推理强度",
-            "推論の強さ",
-        ),
-        ("fast", "Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
-        (
-            "updates",
-            "Update notifications",
-            "업데이트 알림",
-            "更新通知",
-            "更新通知",
-        ),
-        (
-            "permissions",
-            "Permission profile",
-            "권한 프로필",
-            "权限配置",
-            "権限プロファイル",
-        ),
+        ("effort", MessageKey::CommandsSettingsHomeEffort),
+        ("fast", MessageKey::CommandsSettingsHomeFast),
+        ("updates", MessageKey::CommandsSettingsHomeUpdates),
+        ("permissions", MessageKey::CommandsSettingsHomePermissions),
         (
             "approval-policy",
-            "Approval policy",
-            "승인 방식",
-            "审批策略",
-            "承認ポリシー",
+            MessageKey::CommandsSettingsHomeApprovalPolicy,
         ),
-        (
-            "input",
-            "Input delivery",
-            "입력 전달 방식",
-            "输入传递方式",
-            "入力の送信方法",
-        ),
+        ("input", MessageKey::CommandsSettingsHomeInput),
         (
             "message-access",
-            "Message reception policy",
-            "메시지 수신 정책",
-            "消息接收策略",
-            "メッセージ受信ポリシー",
+            MessageKey::CommandsSettingsHomeMessageAccess,
         ),
-        (
-            "voice",
-            "Voice profile",
-            "음성 프로필",
-            "语音配置",
-            "音声プロファイル",
-        ),
+        ("voice", MessageKey::CommandsSettingsHomeVoice),
         (
             "native-features",
-            "Advanced settings",
-            "고급 설정",
-            "高级设置",
-            "詳細設定",
+            MessageKey::CommandsSettingsHomeNativeFeatures,
         ),
     ]
     .into_iter()
-    .map(|(value, en, ko, zh, ja)| SettingsChoice {
+    .map(|(value, label)| SettingsChoice {
         value: value.to_owned(),
-        label: language.text(en, ko, zh, ja).to_owned(),
+        label: language.message(label).to_owned(),
     })
     .collect();
     (None, current, choices)
@@ -1789,7 +1498,7 @@ fn subagent_model_settings_values(
         language,
     );
     let selected = subagent_preference_scope(&snapshot.preferences, catalog)
-        .and_then(|value| normalized_model_value(catalog, &value));
+        .and_then(|value| normalized_model_value_with_language(catalog, &value, language));
     let saved_label = saved.as_ref().map(|model| {
         format!(
             "{} — {} / {}",
@@ -1803,41 +1512,19 @@ fn subagent_model_settings_values(
                 .preferences
                 .subagent_model_provider
                 .as_deref()
-                .unwrap_or_else(|| language.text(
-                    "Native default",
-                    "네이티브 기본값",
-                    "原生默认值",
-                    "ネイティブ既定値"
-                )),
+                .unwrap_or_else(|| language.message(MessageKey::CommandsNativeDefault308250fc)),
         )
     });
     let current = format!(
         "{}: {}\n{}: {}\n{}: {}\n{}",
-        language.text(
-            "Saved preference",
-            "저장된 설정",
-            "已保存的偏好",
-            "保存済みの設定"
-        ),
-        saved_label.as_deref().unwrap_or_else(|| language.text(
-            "Native default",
-            "네이티브 기본값",
-            "原生默认值",
-            "ネイティブ既定値"
-        )),
-        language.text(
-            "Active model provider",
-            "현재 모델 제공자",
-            "当前模型提供方",
-            "現在のモデルプロバイダー"
-        ),
-        thread_model_provider(thread).unwrap_or("unknown"),
-        language.text(
-            "Effective Codex config",
-            "실효 Codex 설정",
-            "Codex 当前生效配置",
-            "有効な Codex 設定"
-        ),
+        language.message(MessageKey::CommandsSavedPreference47ce2cf1),
+        saved_label
+            .as_deref()
+            .unwrap_or_else(|| language.message(MessageKey::CommandsNativeDefault308250fc)),
+        language.message(MessageKey::CommandsActiveModelProviderEa54b5ed),
+        thread_model_provider(thread)
+            .unwrap_or_else(|| language.message(MessageKey::CommandsModelProviderUnknown)),
+        language.message(MessageKey::CommandsEffectiveCodexConfigEeb899f3),
         effective,
         child_default_timing(language)
     );
@@ -1853,18 +1540,13 @@ fn subagent_model_settings_values(
 }
 
 fn child_default_timing(language: crate::i18n::Language) -> &'static str {
-    language.text(
-        "The saved child default applies on the next thread creation or resume, including after a worker restart. The current thread keeps its effective settings until resumed.",
-        "저장한 하위 에이전트 기본값은 다음 스레드 생성·재개 시 적용되며, 워커 재시작 후 재개할 때도 적용됩니다. 현재 스레드의 실효 설정은 재개 전까지 유지됩니다.",
-        "保存的子代理默认值在下次创建或恢复线程时生效，包括工作进程重启后的恢复。当前线程在恢复前保持其有效设置。",
-        "保存した子エージェントの既定値は、ワーカー再起動後を含め、次のスレッド作成・再開時に適用されます。現在のスレッドは再開するまで有効な設定を保持します。",
-    )
+    language.message(MessageKey::CommandsTheSavedChildDefaultAppliesOnTheNextThre8f9e7706)
 }
 
 fn child_default_saved_notice(language: crate::i18n::Language) -> String {
     format!(
         "{}\n{}",
-        language.text("Saved.", "저장했습니다.", "已保存。", "保存しました。"),
+        language.message(MessageKey::CommandsSaved7b6b2c9c),
         child_default_timing(language)
     )
 }
@@ -1875,12 +1557,7 @@ fn advanced_settings_values(
 ) -> (Option<String>, String, Vec<SettingsChoice>) {
     let descriptors = preferences.settings();
     let mut current = language
-        .text(
-            "Native feature switches apply after the Discodex worker restarts. Antigravity settings apply on the next model selection or AGY session start.",
-            "네이티브 기능 스위치는 Discodex 워커 재시작 후 적용됩니다. Antigravity 설정은 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
-            "原生功能开关在 Discodex 工作进程重启后生效。Antigravity 设置在下次模型选择或 AGY 会话启动时生效。",
-            "ネイティブ機能の切り替えは Discodex ワーカーの再起動後に適用されます。Antigravity 設定は次のモデル選択または AGY セッション開始時に適用されます。",
-        )
+        .message(MessageKey::CommandsNativeFeatureSwitchesApplyAfterTheDiscodex1ea6deb2)
         .to_owned();
     for key in NativeFeatureKey::ALL {
         let value = native_feature_saved_value(preferences, key);
@@ -1893,9 +1570,9 @@ fn advanced_settings_values(
     current.push_str(&format!(
         "\n• Antigravity: {}",
         if preferences.antigravity_enabled {
-            language.text("On", "켜짐", "已开启", "オン")
+            language.message(MessageKey::CommandsOn2666c335)
         } else {
-            language.text("Off", "꺼짐", "已关闭", "オフ")
+            language.message(MessageKey::CommandsOff38c695fb)
         }
     ));
     let mut choices = descriptors
@@ -1916,74 +1593,38 @@ fn advanced_settings_values(
 
 fn settings_kind_title(kind: SettingsKind, language: crate::i18n::Language) -> &'static str {
     match kind {
-        SettingsKind::Hub => language.text("Settings", "설정", "设置", "設定"),
+        SettingsKind::Hub => language.message(MessageKey::CommandsSettings6f9676eb),
         SettingsKind::NativeFeatures => {
-            language.text("Advanced settings", "고급 설정", "高级设置", "詳細設定")
+            language.message(MessageKey::CommandsAdvancedSettingsC1402b86)
         }
         SettingsKind::NativeFeature(key) => key.label(language),
         SettingsKind::Antigravity => "Antigravity",
-        SettingsKind::Updates => language.text(
-            "Update notifications",
-            "업데이트 알림",
-            "更新通知",
-            "更新通知",
-        ),
-        SettingsKind::Model => language.text("Model", "모델", "模型", "モデル"),
-        SettingsKind::SubagentModel => language.text(
-            "Default subagent model",
-            "기본 하위 에이전트 모델",
-            "默认子代理模型",
-            "既定のサブエージェントモデル",
-        ),
-        SettingsKind::Effort => {
-            language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ")
+        SettingsKind::Updates => language.message(MessageKey::CommandsUpdateNotifications6a160463),
+        SettingsKind::Model => language.message(MessageKey::CommandsModel704caa01),
+        SettingsKind::SubagentModel => {
+            language.message(MessageKey::CommandsDefaultSubagentModel9811e108)
         }
-        SettingsKind::Fast => language.text("Fast mode", "Fast 모드", "Fast 模式", "Fastモード"),
-        SettingsKind::Permissions => language.text(
-            "Permission profile",
-            "권한 프로필",
-            "权限配置",
-            "権限プロファイル",
-        ),
+        SettingsKind::Effort => language.message(MessageKey::CommandsReasoningEffortCeade6e1),
+        SettingsKind::Fast => language.message(MessageKey::CommandsFastMode86774341),
+        SettingsKind::Permissions => {
+            language.message(MessageKey::CommandsPermissionProfileC7e4bb80)
+        }
         SettingsKind::ApprovalPolicy => {
-            language.text("Approval policy", "승인 방식", "审批策略", "承認ポリシー")
+            language.message(MessageKey::CommandsApprovalPolicyBe6ee113)
         }
-        SettingsKind::Input => language.text(
-            "Input delivery",
-            "입력 전달 방식",
-            "输入传递方式",
-            "入力の送信方法",
-        ),
-        SettingsKind::MessageAccess => language.text(
-            "Message reception policy",
-            "메시지 수신 정책",
-            "消息接收策略",
-            "メッセージ受信ポリシー",
-        ),
-        SettingsKind::PairedAccounts => language.text(
-            "Paired accounts",
-            "페어링 계정",
-            "已配对账号",
-            "ペアリング済みアカウント",
-        ),
-        SettingsKind::Whitelist => {
-            language.text("Whitelist", "화이트리스트", "白名单", "許可リスト")
+        SettingsKind::Input => language.message(MessageKey::CommandsInputDelivery47ae354d),
+        SettingsKind::MessageAccess => {
+            language.message(MessageKey::CommandsMessageReceptionPolicy13952d44)
         }
-        SettingsKind::Blacklist => {
-            language.text("Blacklist", "블랙리스트", "黑名单", "ブロックリスト")
+        SettingsKind::PairedAccounts => {
+            language.message(MessageKey::CommandsPairedAccounts263399a8)
         }
-        SettingsKind::RegisteredChannels => language.text(
-            "Registered channels",
-            "등록 채널",
-            "已登记频道",
-            "登録チャンネル",
-        ),
-        SettingsKind::Voice => language.text(
-            "Voice profile",
-            "음성 프로필",
-            "语音配置",
-            "音声プロファイル",
-        ),
+        SettingsKind::Whitelist => language.message(MessageKey::CommandsWhitelist4df98d9d),
+        SettingsKind::Blacklist => language.message(MessageKey::CommandsBlacklistD5332ba7),
+        SettingsKind::RegisteredChannels => {
+            language.message(MessageKey::CommandsRegisteredChannels5a818eab)
+        }
+        SettingsKind::Voice => language.message(MessageKey::CommandsVoiceProfile2f25af45),
     }
 }
 
@@ -1995,7 +1636,7 @@ fn render_settings_menu(
     let mut content = format!(
         "{}\n{}: {}",
         settings_kind_title(menu.kind, language),
-        language.text("Current", "현재", "当前", "現在"),
+        language.message(MessageKey::CommandsCurrent46b1c35d),
         menu.current
     );
     if menu.kind != SettingsKind::Hub {
@@ -2007,35 +1648,20 @@ fn render_settings_menu(
         if pages > 1 {
             content.push_str(&format!(
                 "\n{} {}/{}",
-                language.text(
-                    "Choose an option · page",
-                    "선택지 · 페이지",
-                    "选择一项 · 页码",
-                    "選択肢 · ページ"
-                ),
+                language.message(MessageKey::CommandsChooseAnOptionPage9bb1942d),
                 menu.page + 1,
                 pages
             ));
         } else {
             content.push_str(&format!(
                 "\n{}",
-                language.text(
-                    "Choose an option",
-                    "선택지를 선택하세요",
-                    "请选择一项",
-                    "項目を選んでください"
-                )
+                language.message(MessageKey::CommandsChooseAnOption6254cba9)
             ));
         }
     } else {
         content.push_str(&format!(
             "\n{}",
-            language.text(
-                "Choose a setting",
-                "설정을 선택하세요",
-                "请选择设置",
-                "設定を選んでください"
-            )
+            language.message(MessageKey::CommandsChooseASettingA7d20000)
         ));
     }
 
@@ -2115,7 +1741,7 @@ fn render_settings_menu(
                     "codex:settings:{menu_id}:p{}",
                     menu.page.saturating_sub(1)
                 ))
-                .label(language.text("Previous", "이전", "上一页", "前へ"))
+                .label(language.message(MessageKey::CommandsPrevious9be71e5f))
                 .style(ButtonStyle::Secondary)
                 .disabled(menu.page == 0),
             );
@@ -2137,7 +1763,7 @@ fn render_settings_menu(
                 "codex:settings:{menu_id}:{}",
                 if is_access_list { "b" } else { "h" }
             ))
-            .label(language.text("Back", "뒤로가기", "返回", "戻る"))
+            .label(language.message(MessageKey::CommandsBackC2e16a99))
             .style(ButtonStyle::Primary),
         );
         if pages > 1 {
@@ -2146,21 +1772,21 @@ fn render_settings_menu(
                     "codex:settings:{menu_id}:n{}",
                     (menu.page + 1).min(pages - 1)
                 ))
-                .label(language.text("Next", "다음", "下一页", "次へ"))
+                .label(language.message(MessageKey::CommandsNext8a0c8241))
                 .style(ButtonStyle::Secondary)
                 .disabled(menu.page + 1 >= pages),
             );
         }
         controls.push(
             CreateButton::new(format!("codex:settings:{menu_id}:x"))
-                .label(language.text("Exit", "나가기", "退出", "閉じる"))
+                .label(language.message(MessageKey::CommandsExit82c65349))
                 .style(ButtonStyle::Secondary),
         );
     }
     if menu.kind == SettingsKind::Hub {
         controls.push(
             CreateButton::new(format!("codex:settings:{menu_id}:x"))
-                .label(language.text("Exit", "나가기", "退出", "閉じる"))
+                .label(language.message(MessageKey::CommandsExit82c65349))
                 .style(ButtonStyle::Secondary),
         );
     }
@@ -2217,30 +1843,16 @@ fn message_policy_key(policy: MessagePolicy) -> &'static str {
 
 fn message_policy_label(policy: MessagePolicy, language: crate::i18n::Language) -> &'static str {
     match policy {
-        MessagePolicy::Everyone => language.text(
-            "Everyone, including DMs",
-            "DM을 포함한 모든 사용자",
-            "所有人（包括私信）",
-            "DMを含む全員",
-        ),
-        MessagePolicy::RegisteredServer => language.text(
-            "All members in registered server",
-            "등록 서버의 모든 구성원",
-            "已登记服务器中的所有成员",
-            "登録サーバーの全メンバー",
-        ),
-        MessagePolicy::RegisteredChannels => language.text(
-            "Registered channels",
-            "등록 채널",
-            "已登记频道",
-            "登録チャンネル",
-        ),
-        MessagePolicy::Paired => language.text(
-            "Paired accounts",
-            "페어링 계정",
-            "已配对账号",
-            "ペアリング済みアカウント",
-        ),
+        MessagePolicy::Everyone => {
+            language.message(MessageKey::CommandsEveryoneIncludingDms3d00363e)
+        }
+        MessagePolicy::RegisteredServer => {
+            language.message(MessageKey::CommandsAllMembersInRegisteredServerE81e3e9f)
+        }
+        MessagePolicy::RegisteredChannels => {
+            language.message(MessageKey::CommandsRegisteredChannels5a818eab)
+        }
+        MessagePolicy::Paired => language.message(MessageKey::CommandsPairedAccounts263399a8),
     }
 }
 
@@ -2301,12 +1913,7 @@ async fn account_display_name(
     match http.get_user(user).await {
         Ok(user) => member_display_name(None, user.global_name.as_deref(), &user.name).to_owned(),
         Err(_) => language
-            .text(
-                "Account unavailable",
-                "계정을 조회할 수 없음",
-                "无法查询账号",
-                "アカウントを取得できません",
-            )
+            .message(MessageKey::CommandsAccountUnavailableDfa33901)
             .to_owned(),
     }
 }
@@ -2326,38 +1933,28 @@ fn access_list_action_label(
 ) -> String {
     match (kind, add) {
         (SettingsKind::PairedAccounts, true) => language
-            .text("Add ID", "ID 추가", "添加 ID", "ID を追加")
+            .message(MessageKey::CommandsAddIdD1e7598c)
             .to_owned(),
         (SettingsKind::PairedAccounts, false) => language
-            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .message(MessageKey::CommandsRemoveIdB4666e69)
             .to_owned(),
         (SettingsKind::Whitelist, true) => language
-            .text("Allow ID", "ID 허용", "允许 ID", "ID を許可")
+            .message(MessageKey::CommandsAllowId0e9d741b)
             .to_owned(),
         (SettingsKind::Whitelist, false) => language
-            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .message(MessageKey::CommandsRemoveIdB4666e69)
             .to_owned(),
         (SettingsKind::Blacklist, true) => language
-            .text("Block ID", "ID 차단", "屏蔽 ID", "ID をブロック")
+            .message(MessageKey::CommandsBlockId396144c0)
             .to_owned(),
         (SettingsKind::Blacklist, false) => language
-            .text("Remove ID", "ID 제거", "移除 ID", "ID を削除")
+            .message(MessageKey::CommandsRemoveIdB4666e69)
             .to_owned(),
         (_, true) => language
-            .text(
-                "Add channel ID",
-                "채널 ID 추가",
-                "添加频道 ID",
-                "チャンネル ID を追加",
-            )
+            .message(MessageKey::CommandsAddChannelIdAea94df4)
             .to_owned(),
         (_, false) => language
-            .text(
-                "Remove channel ID",
-                "채널 ID 제거",
-                "移除频道 ID",
-                "チャンネル ID を削除",
-            )
+            .message(MessageKey::CommandsRemoveChannelId72d40c77)
             .to_owned(),
     }
 }
@@ -2445,16 +2042,11 @@ fn native_feature_saved_value(
 
 fn native_preference_label(value: Option<&String>, language: crate::i18n::Language) -> String {
     match value.map(String::as_str) {
-        Some("true") => language.text("On", "켜기", "开启", "オン").to_owned(),
-        Some("false") => language.text("Off", "끄기", "关闭", "オフ").to_owned(),
+        Some("true") => language.message(MessageKey::CommandsOn65845774).to_owned(),
+        Some("false") => language.message(MessageKey::CommandsOff5677591d).to_owned(),
         Some(value) => value.to_owned(),
         None => language
-            .text(
-                "Native default",
-                "네이티브 기본값",
-                "原生默认值",
-                "ネイティブ既定値",
-            )
+            .message(MessageKey::CommandsNativeDefault308250fc)
             .to_owned(),
     }
 }
@@ -2471,7 +2063,7 @@ fn effective_native_feature_text(
                 .map(Value::to_string)
                 .unwrap_or_else(|| {
                     language
-                        .text("not reported", "보고되지 않음", "未报告", "未報告")
+                        .message(MessageKey::CommandsNotReportedEb1c723f)
                         .to_owned()
                 });
             let origin = native_config
@@ -2589,65 +2181,41 @@ fn antigravity_settings_values(
         "off"
     };
     let status = if preferences.antigravity_enabled {
-        language.text("On", "켜짐", "已开启", "オン")
+        language.message(MessageKey::CommandsOn2666c335)
     } else {
-        language.text("Off", "꺼짐", "已关闭", "オフ")
+        language.message(MessageKey::CommandsOff38c695fb)
     };
     let models = if preferences.antigravity_models.is_empty() {
         language
-            .text(
-                "No model IDs configured",
-                "설정한 모델 ID 없음",
-                "未配置模型 ID",
-                "モデル ID 未設定",
-            )
+            .message(MessageKey::CommandsNoModelIdsConfiguredA4c9e21b)
             .to_owned()
     } else {
         preferences.antigravity_models.join("\n")
     };
     let sharing = match preferences.antigravity_share_settings {
-        Some(true) => language.text(
-            "Shared existing settings",
-            "기존 설정 공유",
-            "共享现有设置",
-            "既存の設定を共有",
-        ),
-        Some(false) => language.text("Separate settings", "별도 설정", "独立设置", "個別の設定"),
-        None => language.text(
-            "Choose during setup",
-            "활성화 시 선택",
-            "启用时选择",
-            "セットアップ時に選択",
-        ),
+        Some(true) => language.message(MessageKey::CommandsSharedExistingSettingsAfa9effe),
+        Some(false) => language.message(MessageKey::CommandsSeparateSettings016de9e5),
+        None => language.message(MessageKey::CommandsChooseDuringSetup9558c853),
     };
-    let current = format!("{status}\n{sharing}\n{}:\n{models}\n{}",
-        language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
-        language.text(
-            "Discodex manages its own AGY CLI. Enabling it starts installation and sign-in when needed. Settings changes apply to the next AGY session.",
-            "Discodex 전용 AGY CLI를 관리합니다. 활성화하면 필요한 설치와 로그인을 시작합니다. 설정 변경은 다음 AGY 세션에 적용됩니다.",
-            "Discodex 管理独立的 AGY CLI。启用时会按需启动安装和登录。设置更改将在下次 AGY 会话中生效。",
-            "Discodex 専用の AGY CLI を管理します。有効にすると必要なインストールとログインを開始します。設定変更は次の AGY セッションに適用されます。",
-        ),
+    let current = format!(
+        "{status}\n{sharing}\n{}:\n{models}\n{}",
+        language.message(MessageKey::CommandsModelIdsF17651aa),
+        language.message(MessageKey::CommandsDiscodexManagesItsOwnAgyCliEnablingItSta9ab1e631),
     );
     let choices = [
-        ("on", language.text("On", "켜기", "开启", "オン")),
-        ("off", language.text("Off", "끄기", "关闭", "オフ")),
+        ("on", language.message(MessageKey::CommandsOn65845774)),
+        ("off", language.message(MessageKey::CommandsOff5677591d)),
         (
             "sharing",
-            language.text("Settings sharing", "설정 공유", "设置共享", "設定の共有"),
+            language.message(MessageKey::CommandsSettingsSharing2e85b807),
         ),
         (
             "models",
-            language.text("Model IDs", "모델 ID", "模型 ID", "モデル ID"),
+            language.message(MessageKey::CommandsModelIdsF17651aa),
         ),
         (
             "refresh-models",
-            language.text(
-                "Update model list",
-                "모델 목록 업데이트",
-                "更新模型列表",
-                "モデル一覧を更新",
-            ),
+            language.message(MessageKey::CommandsUpdateModelList3e0facf2),
         ),
     ]
     .into_iter()
@@ -2677,12 +2245,7 @@ where
         .count();
     let notice = format!(
         "{} ({count})",
-        language.text(
-            "Updated the Antigravity model list",
-            "Antigravity 모델 목록을 업데이트했습니다",
-            "已更新 Antigravity 模型列表",
-            "Antigravity モデル一覧を更新しました",
-        )
+        language.message(MessageKey::CommandsUpdatedTheAntigravityModelListD912f16d)
     );
     Ok((catalog, notice))
 }
@@ -2704,24 +2267,9 @@ fn antigravity_text_modal(
 ) -> anyhow::Result<CreateModal> {
     let (title, label, placeholder, value, style) = match field {
         "models" => (
-            language.text(
-                "Antigravity models",
-                "Antigravity 모델",
-                "Antigravity 模型",
-                "Antigravity モデル",
-            ),
-            language.text(
-                "Model IDs (one per line)",
-                "모델 ID (줄마다 하나)",
-                "模型 ID（每行一个）",
-                "モデル ID（1 行に 1 つ）",
-            ),
-            language.text(
-                "Exact model IDs from your AGY CLI",
-                "AGY CLI에서 확인한 정확한 모델 ID",
-                "AGY CLI 中的准确模型 ID",
-                "AGY CLI の正確なモデル ID",
-            ),
+            language.message(MessageKey::CommandsAntigravityModels977cb98b),
+            language.message(MessageKey::CommandsModelIdsOnePerLine5bc970c7),
+            language.message(MessageKey::CommandsExactModelIdsFromYourAgyCliAc57b51e),
             preferences.antigravity_models.join("\n"),
             InputTextStyle::Paragraph,
         ),
@@ -2848,7 +2396,8 @@ fn settings_choice_freshness(
         && previous_model_scope != current_model_scope
     {
         SettingsChoiceFreshness::ModelChanged
-    } else if choices.iter().any(|choice| choice.value == requested) {
+    } else if kind == SettingsKind::Model || choices.iter().any(|choice| choice.value == requested)
+    {
         SettingsChoiceFreshness::Current
     } else {
         SettingsChoiceFreshness::Unavailable
@@ -2858,20 +2407,18 @@ fn settings_choice_freshness(
 fn settings_apply_notice(
     result: anyhow::Result<String>,
     language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
 ) -> String {
     match result {
         Ok(result) => result,
         Err(error) => {
-            tracing::warn!(error = ?error, "failed to apply Discord settings choice");
+            let detail = settings_error_detail(&error, language, config);
+            tracing::warn!(error = %detail, "failed to apply Discord settings choice");
             format!(
                 "{}\n{}",
-                language.text(
-                    "Could not apply that setting. The current choices are shown below.",
-                    "설정을 적용하지 못했습니다. 현재 선택지를 아래에 표시합니다.",
-                    "无法应用该设置。当前选项如下。",
-                    "設定を適用できませんでした。現在の選択肢を表示します。",
-                ),
-                settings_error_detail(&error)
+                language
+                    .message(MessageKey::CommandsCouldNotApplyThatSettingTheCurrentChoices1c140555),
+                detail
             )
         }
     }
@@ -2913,24 +2460,12 @@ async fn handle_settings_component(
         Err(reason) => {
             let language = state.config.language;
             let content = match reason {
-                SettingsClaimError::Missing => language.text(
-                    "This panel is no longer active. Open `/discodex settings` again.",
-                    "이 설정 화면은 더 이상 유효하지 않습니다. `/discodex settings`를 다시 여세요.",
-                    "此设置面板已失效。请重新打开 `/discodex settings`。",
-                    "このパネルは無効です。`/discodex settings` を開き直してください。",
-                ),
-                SettingsClaimError::OtherUser => language.text(
-                    "Only the person who opened this settings panel can use it.",
-                    "이 설정 화면을 연 사용자만 사용할 수 있습니다.",
-                    "只有打开此设置面板的用户可以使用它。",
-                    "この設定パネルを開いたユーザーだけが操作できます。",
-                ),
-                SettingsClaimError::Busy => language.text(
-                    "This setting is still being processed. Please wait a moment.",
-                    "설정을 처리 중입니다. 잠시 기다려 주세요.",
-                    "正在处理设置，请稍候。",
-                    "設定を処理中です。少々お待ちください。",
-                ),
+                SettingsClaimError::Missing => language
+                    .message(MessageKey::CommandsThisPanelIsNoLongerActiveOpenDiscodexSetA4e5b13c),
+                SettingsClaimError::OtherUser => language
+                    .message(MessageKey::CommandsOnlyThePersonWhoOpenedThisSettingsPanelC4f357438),
+                SettingsClaimError::Busy => language
+                    .message(MessageKey::CommandsThisSettingIsStillBeingProcessedPleaseWaiCd1fb4ef),
             };
             interaction
                 .create_response(
@@ -2964,12 +2499,10 @@ async fn handle_settings_component(
             access_list_key(menu.kind).ok_or_else(|| anyhow!("invalid message access list"))?;
         let add = action == "a";
         let title = if menu.kind == SettingsKind::RegisteredChannels {
-            state.config.language.text(
-                "Edit registered channels",
-                "등록 채널 편집",
-                "编辑已登记频道",
-                "登録チャンネルを編集",
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::CommandsEditRegisteredChannelsCca7da5c)
         } else {
             settings_kind_title(menu.kind, state.config.language)
         };
@@ -2977,19 +2510,17 @@ async fn handle_settings_component(
             state
                 .config
                 .language
-                .text("Channel ID", "채널 ID", "频道 ID", "チャンネル ID")
+                .message(MessageKey::CommandsChannelId7e46e03a)
         } else {
             state
                 .config
                 .language
-                .text("Account ID", "계정 ID", "账号 ID", "アカウント ID")
+                .message(MessageKey::CommandsAccountIdCb6e9f3a)
         };
-        let placeholder = state.config.language.text(
-            "Enter a Discord numeric ID",
-            "Discord 숫자 ID를 입력하세요",
-            "输入 Discord 数字 ID",
-            "Discord 数字 ID を入力してください",
-        );
+        let placeholder = state
+            .config
+            .language
+            .message(MessageKey::CommandsEnterADiscordNumericId03937d9b);
         let modal_id = format!(
             "codex:access:{menu_id}:{key}:{}",
             if add { "add" } else { "remove" }
@@ -3032,11 +2563,8 @@ async fn handle_settings_component(
                 .edit_response(
                     ctx,
                     serenity::builder::EditInteractionResponse::new()
-                        .content(state.config.language.text(
-                            "The Codex connection changed. Open settings again.",
-                            "Codex 연결이 변경되었습니다. 설정을 다시 여세요.",
-                            "Codex 连接已更改，请重新打开设置。",
-                            "Codex 接続が変わりました。設定を開き直してください。",
+                        .content(state.config.language.message(
+                            MessageKey::CommandsTheCodexConnectionChangedOpenSettingsAgainE9c70d30,
                         ))
                         .components(Vec::new()),
                 )
@@ -3050,24 +2578,20 @@ async fn handle_settings_component(
     if let Err(error) = result {
         tracing::warn!(error = ?error, "Discord settings action failed; existing buttons remain retryable");
         let notice = if action == "x" {
-            state.config.language.text(
-                "Could not close settings. You can retry Exit.",
-                "설정 화면을 닫지 못했습니다. 나가기를 다시 눌러 주세요.",
-                "无法关闭设置。请重试退出。",
-                "設定を閉じられませんでした。もう一度「閉じる」を押してください。",
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::CommandsCouldNotCloseSettingsYouCanRetryExitAd305cd1)
         } else {
-            state.config.language.text(
-                "Could not update settings. You can retry the existing settings panel.",
-                "설정을 갱신하지 못했습니다. 기존 설정 화면에서 다시 시도할 수 있습니다.",
-                "无法更新设置。可以在原设置面板中重试。",
-                "設定を更新できませんでした。元の設定画面で再試行できます。",
-            )
+            state
+                .config
+                .language
+                .message(MessageKey::CommandsCouldNotUpdateSettingsYouCanRetryTheExisD59486a7)
         };
         // An edit error can mean the new panel reached Discord but its response
         // was lost. Never overwrite either visible version with a recovery edit.
         release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
-        let detail = settings_error_detail(&error);
+        let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
         for chunk in split_discord_content(&format!("{notice}\n{detail}")) {
             interaction
                 .create_followup(
@@ -3083,7 +2607,11 @@ async fn handle_settings_component(
     Ok(())
 }
 
-fn settings_error_detail(error: &anyhow::Error) -> String {
+fn settings_error_detail(
+    error: &anyhow::Error,
+    language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
+) -> String {
     // HTTP errors can contain interaction-token URLs. The API error itself is
     // enough to explain a failed edit without displaying those URLs.
     for cause in error.chain() {
@@ -3091,16 +2619,35 @@ fn settings_error_detail(error: &anyhow::Error) -> String {
             response,
         ))) = cause.downcast_ref::<serenity::Error>()
         {
-            return format!(
-                "Discord {}: {} ({})",
-                response.status_code, response.error.message, response.error.code
+            let detail = format!(
+                "{} {}: {} ({})",
+                language.message(MessageKey::CommandsDiscordErrorLabel),
+                response.status_code,
+                response.error.message,
+                response.error.code
             );
+            return config
+                .map(|config| crate::discord::sanitize_discord_error(config, &detail))
+                .unwrap_or(detail);
         }
         if cause.downcast_ref::<serenity::Error>().is_some() {
-            return format!("Discord: {}", error);
+            let detail = format!(
+                "{}: {error}",
+                language.message(MessageKey::CommandsDiscordErrorLabel)
+            );
+            return config
+                .map(|config| crate::discord::sanitize_discord_error(config, &detail))
+                .unwrap_or(detail);
         }
     }
-    format!("{error:#}")
+    let detail = format!("{error:#}");
+    config
+        .map(|config| crate::discord::sanitize_discord_error(config, &detail))
+        .unwrap_or(detail)
+}
+
+fn localized_failure_message(prefix: &str, detail: &str) -> String {
+    format!("{prefix}\n{detail}")
 }
 
 async fn handle_claimed_settings_action(
@@ -3228,12 +2775,10 @@ async fn handle_claimed_settings_action(
                     save_message_policy(state, &selected.value[7..]).await?;
                     format!(
                         "{}: {}",
-                        state.config.language.text(
-                            "Policy saved",
-                            "정책 저장됨",
-                            "策略已保存",
-                            "ポリシーを保存しました"
-                        ),
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsPolicySaved6bb6f2da),
                         selected.label
                     )
                 }
@@ -3301,12 +2846,10 @@ async fn handle_claimed_settings_action(
                 return update_settings_panel(ctx, interaction, state, menu_id, fresh).await;
             }
             SettingsChoiceFreshness::Unavailable => {
-                let stale = state.config.language.text(
-                    "That choice is no longer available. Current choices were refreshed.",
-                    "선택한 항목을 더 이상 사용할 수 없어 최신 선택지를 표시했습니다.",
-                    "此选项已不可用，已刷新当前选项。",
-                    "選んだ項目は利用できなくなったため、選択肢を更新しました。",
-                );
+                let stale = state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsThatChoiceIsNoLongerAvailableCurrentChoicB53f72ff);
                 return update_settings_panel_with_notice(
                     ctx,
                     interaction,
@@ -3347,7 +2890,51 @@ async fn handle_claimed_settings_action(
             .await?;
             return update_settings_panel(ctx, interaction, state, menu_id, refreshed).await;
         }
-        let result = settings_apply_notice(applied, state.config.language);
+        let outcome = match applied {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let notice =
+                    settings_apply_notice(Err(error), state.config.language, Some(&state.config));
+                let refreshed = build_settings_menu_with_catalog(
+                    ctx,
+                    state,
+                    menu.kind,
+                    menu.page,
+                    menu.requester_id,
+                    menu.connection_generation,
+                    model_catalog.as_ref(),
+                )
+                .await?;
+                return update_settings_panel_with_notice(
+                    ctx,
+                    interaction,
+                    state,
+                    menu_id,
+                    refreshed,
+                    &notice,
+                )
+                .await;
+            }
+        };
+        let (result, pending) = match outcome {
+            SettingChoiceOutcome::Applied(notice) => (notice, None),
+            SettingChoiceOutcome::Pending {
+                ticket,
+                requested,
+                model_selection,
+                live_notice,
+                current_applied,
+            } => (
+                format_pending_settings_update(&requested, &live_notice, state.config.language),
+                Some((
+                    ticket,
+                    requested,
+                    model_selection,
+                    live_notice,
+                    current_applied,
+                )),
+            ),
+        };
         let refreshed = build_settings_menu_with_catalog(
             ctx,
             state,
@@ -3358,6 +2945,44 @@ async fn handle_claimed_settings_action(
             model_catalog.as_ref(),
         )
         .await?;
+        if let Some((ticket, requested, model_selection, live_notice, current_applied)) = pending {
+            let panel_update = update_settings_panel_with_notice_and_id(
+                ctx,
+                interaction,
+                state,
+                menu_id,
+                refreshed.clone(),
+                &result,
+            )
+            .await;
+            let (pending_menu_id, panel_was_delivered) = match &panel_update {
+                Ok(pending_menu_id) => (pending_menu_id.clone(), true),
+                Err(_) => (menu_id.to_owned(), false),
+            };
+            spawn_settings_confirmation(
+                ctx.clone(),
+                interaction.clone(),
+                state.clone(),
+                pending_menu_id,
+                menu.kind,
+                menu.page,
+                menu.requester_id,
+                menu.connection_generation,
+                menu.thread_id.clone(),
+                model_catalog,
+                ticket,
+                requested,
+                model_selection,
+                live_notice,
+                current_applied,
+                interaction.id.get(),
+                panel_was_delivered,
+            );
+            if let Err(error) = panel_update {
+                return Err(error);
+            }
+            return Ok(());
+        }
         return update_settings_panel_with_notice(
             ctx,
             interaction,
@@ -3416,9 +3041,22 @@ async fn update_settings_panel_with_notice(
     interaction: &ComponentInteraction,
     state: &Arc<BridgeState>,
     previous_id: &str,
-    mut menu: SettingsMenuState,
+    menu: SettingsMenuState,
     notice: &str,
 ) -> anyhow::Result<()> {
+    update_settings_panel_with_notice_and_id(ctx, interaction, state, previous_id, menu, notice)
+        .await
+        .map(|_| ())
+}
+
+async fn update_settings_panel_with_notice_and_id(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &Arc<BridgeState>,
+    previous_id: &str,
+    mut menu: SettingsMenuState,
+    notice: &str,
+) -> anyhow::Result<String> {
     let menu_id = Uuid::new_v4().simple().to_string();
     let (content, rows) = render_settings_menu(&menu_id, &menu, state.config.language);
     let content = if notice.is_empty() {
@@ -3460,10 +3098,23 @@ async fn update_settings_panel_with_notice(
             )
             .await
         {
-            tracing::warn!(%error, "settings panel updated but continuation delivery failed");
+            let error = anyhow::Error::new(error);
+            tracing::warn!(error = %settings_error_detail(&error, state.config.language, Some(&state.config)), "settings panel updated but continuation delivery failed");
+            return Err(error);
         }
     }
-    Ok(())
+    Ok(menu_id)
+}
+
+enum SettingChoiceOutcome {
+    Applied(String),
+    Pending {
+        ticket: crate::native::ThreadSettingUpdateTicket,
+        requested: String,
+        model_selection: Option<crate::model_catalog::ModelSelection>,
+        live_notice: String,
+        current_applied: bool,
+    },
 }
 
 async fn apply_setting_choice(
@@ -3475,7 +3126,7 @@ async fn apply_setting_choice(
     expected_generation: Option<u64>,
     expected_model_scope: Option<String>,
     model_catalog: Option<&Value>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<SettingChoiceOutcome> {
     // Match new-session admission order: input gate, settings, then active turn.
     // Keep incoming Discord input outside a provider detach/resume transition.
     let input_phase = if kind == SettingsKind::Model {
@@ -3505,12 +3156,11 @@ async fn apply_setting_choice(
                 .native
                 .apply_native_feature_preferences(&preferences)
                 .await?;
-            Ok(language.text(
-                "Antigravity preference saved. It applies on the next model selection or AGY session start.",
-                "Antigravity 설정을 저장했습니다. 다음 모델 선택 또는 AGY 세션 시작 때 적용됩니다.",
-                "Antigravity 设置已保存。将在下次选择模型或启动 AGY 会话时生效。",
-                "Antigravity の設定を保存しました。次のモデル選択または AGY セッション開始時に適用されます。",
-            ).to_owned())
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(MessageKey::CommandsAntigravityPreferenceSavedItAppliesOnTheN85aacfc8)
+                    .to_owned(),
+            ))
         }
         SettingsKind::Updates => {
             let muted = match requested {
@@ -3518,15 +3168,14 @@ async fn apply_setting_choice(
                 "off" => true,
                 _ => bail!("unknown update notification choice"),
             };
-            state.updates.set_muted(muted).await?;
-            Ok(language
-                .text(
-                    "Update notification preference saved. Manual updates remain available.",
-                    "업데이트 알림 설정을 저장했습니다. 수동 업데이트는 계속 사용할 수 있습니다.",
-                    "更新通知设置已保存。仍可手动更新。",
-                    "更新通知の設定を保存しました。手動更新は引き続き利用できます。",
-                )
-                .to_owned())
+            state.updates.set_muted(muted, language).await?;
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(
+                        MessageKey::CommandsUpdateNotificationPreferenceSavedManualUpda807290ea,
+                    )
+                    .to_owned(),
+            ))
         }
         SettingsKind::Permissions => {
             let catalog = full_catalog(
@@ -3554,27 +3203,24 @@ async fn apply_setting_choice(
                     None,
                 );
             }
-            Ok(format_permission_settings_result_with_language(
-                &display_name,
-                &settings,
-                active_turn,
-                language,
+            Ok(SettingChoiceOutcome::Applied(
+                format_permission_settings_result_with_language(
+                    &display_name,
+                    &settings,
+                    active_turn,
+                    language,
+                ),
             ))
         }
         SettingsKind::ApprovalPolicy => {
             let policy: Value =
                 serde_json::from_str(requested).context("parse native approval policy choice")?;
             let settings = state.native.set_approval_policy_and_confirm(policy).await?;
-            Ok(format!(
+            Ok(SettingChoiceOutcome::Applied(format!(
                 "{}: {}",
-                language.text(
-                    "Approval policy applied and saved",
-                    "승인 방식을 적용하고 저장했습니다",
-                    "审批策略已应用并保存",
-                    "承認ポリシーを適用して保存しました"
-                ),
+                language.message(MessageKey::CommandsApprovalPolicyAppliedAndSavedA6d52828),
                 format_approval_policy_with_language(&settings["approvalPolicy"], language),
-            ))
+            )))
         }
         SettingsKind::Input => {
             let mode = match requested {
@@ -3585,16 +3231,11 @@ async fn apply_setting_choice(
             let mut current_mode = state.input_mode.write().await;
             crate::discord::save_input_mode(&state.input_mode_path, mode)?;
             *current_mode = mode;
-            Ok(format!(
+            Ok(SettingChoiceOutcome::Applied(format!(
                 "{} `{}`",
-                language.text(
-                    "Input delivery set to",
-                    "입력 전달 방식:",
-                    "输入传递方式已设为",
-                    "入力の送信方法:"
-                ),
+                language.message(MessageKey::CommandsInputDeliverySetToDd4696ee),
                 input_mode(mode, language)
-            ))
+            )))
         }
         SettingsKind::Voice => {
             let voices = state
@@ -3609,7 +3250,10 @@ async fn apply_setting_choice(
                 .filter_map(Value::as_str)
                 .any(|voice| voice == requested);
             if !requested.is_empty() && !allowed {
-                bail!("voice is no longer available");
+                bail!(
+                    "{}",
+                    language.message(MessageKey::CommandsVoiceNoLongerAvailable)
+                );
             }
             let selected = if requested.is_empty() {
                 None
@@ -3617,12 +3261,11 @@ async fn apply_setting_choice(
                 Some(requested)
             };
             state.voice.set_voice(selected)?;
-            Ok(language.text(
-                "Voice profile saved for the next call; the active call is unchanged.",
-                "음성 프로필을 저장했습니다. 현재 통화에는 적용되지 않고 다음 통화부터 적용됩니다.",
-                "语音配置已保存，将用于下次通话；当前通话不变。",
-                "音声プロファイルを保存しました。現在の通話は変わらず、次回の通話から適用されます。",
-            ).to_owned())
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(MessageKey::CommandsVoiceProfileSavedForTheNextCallTheActive468592de)
+                    .to_owned(),
+            ))
         }
         SettingsKind::Model => {
             let thread = state.native.refresh_thread_state().await?;
@@ -3636,18 +3279,9 @@ async fn apply_setting_choice(
                 Some(catalog) => catalog.clone(),
                 None => state.native.model_catalog().await?,
             };
-            let selection = crate::model_catalog::resolve_selection(&catalog, requested)?;
-            if thread_model_scope(&thread).as_deref() == Some(selection.value().as_str()) {
-                return Ok(format_settings_with_language(
-                    &settings_snapshot(&thread),
-                    language,
-                ));
-            }
-            let active_provider = thread
-                .get("modelProvider")
-                .and_then(Value::as_str)
-                .or_else(|| catalog.get("provider").and_then(Value::as_str))
-                .ok_or_else(|| anyhow!("current model provider is unavailable"))?;
+            let selection = model_selection_for_choice(&catalog, requested, &thread, language)?;
+            let active_provider = thread_model_provider(&thread)
+                .or_else(|| catalog.get("provider").and_then(Value::as_str));
             let active_executor = thread
                 .get("modelExecutor")
                 .cloned()
@@ -3655,12 +3289,9 @@ async fn apply_setting_choice(
                 .transpose()
                 .context("read current model executor")?
                 .unwrap_or_default();
-            if model_change_requires_resume(
-                active_executor,
-                active_provider,
-                thread.get("model").and_then(Value::as_str),
-                &selection,
-            ) {
+            if active_provider.is_none_or(|provider| {
+                model_change_requires_resume(active_executor, provider, &selection)
+            }) {
                 let current_turn = state.current_turn.lock().await;
                 ensure_provider_switch_idle(
                     input_phase
@@ -3670,39 +3301,24 @@ async fn apply_setting_choice(
                     language,
                 )?;
                 let snapshot = state.native.set_model_selection(&selection).await?;
-                return Ok(format_settings_update_result_with_language(
-                    &format!("{} — {}", selection.model, selection.provider),
-                    Some(&snapshot),
-                    None,
-                    language,
+                return Ok(SettingChoiceOutcome::Applied(
+                    format_settings_update_result_with_language(
+                        &format!("{} — {}", selection.model, selection.provider),
+                        Some(&snapshot),
+                        None,
+                        language,
+                    ),
                 ));
             }
-            state
+            let update = state
                 .native
-                .request(
-                    "thread/settings/update",
-                    json!({
-                        "threadId":thread_id,"model":selection.model
-                    }),
+                .request_thread_setting_update(
+                    &thread_id,
+                    json!({"threadId":thread_id,"model":selection.model}),
+                    "model",
+                    Value::String(selection.model.clone()),
                 )
                 .await?;
-            if let Err(error) = state.native.save_model_selection(&selection) {
-                let previous_model =
-                    thread.get("model").and_then(Value::as_str).ok_or_else(|| {
-                        anyhow!("could not persist model selection or determine previous model")
-                    })?;
-                let restored = state
-                    .native
-                    .request(
-                        "thread/settings/update",
-                        json!({"threadId":thread_id,"model":previous_model}),
-                    )
-                    .await;
-                return match restored {
-                    Ok(_)=>Err(error).context("could not persist selected model; restored the previous conversation default"),
-                    Err(restore_error)=>Err(error).context(format!("could not persist selected model; restoring previous default also failed: {restore_error:#}")),
-                };
-            }
             let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
                 Some(
                     state
@@ -3718,13 +3334,42 @@ async fn apply_setting_choice(
             } else {
                 None
             };
-            let snapshot = state.native.refresh_thread_state().await?;
-            Ok(format_settings_update_result_with_language(
-                &format!("{} — {}", selection.model, selection.provider),
-                Some(&snapshot),
-                live_result.as_ref(),
-                language,
-            ))
+            let requested = format!("{} — {}", selection.model, selection.provider);
+            let live_notice =
+                current_turn_notice(live_result.as_ref(), language, Some(&state.config));
+            let current_applied = live_result.as_ref().is_none_or(|result| {
+                result
+                    .as_ref()
+                    .ok()
+                    .and_then(|result| result.get("status"))
+                    .and_then(Value::as_str)
+                    == Some("applied")
+            });
+            match update {
+                crate::native::ThreadSettingUpdate::Confirmed(snapshot) => {
+                    state
+                        .native
+                        .save_model_selection(&selection)
+                        .context("native conversation model was applied, but its saved selection could not be persisted")?;
+                    Ok(SettingChoiceOutcome::Applied(
+                        format_settings_update_result_with_language(
+                            &requested,
+                            Some(&snapshot),
+                            live_result.as_ref(),
+                            language,
+                        ),
+                    ))
+                }
+                crate::native::ThreadSettingUpdate::Pending(ticket) => {
+                    Ok(SettingChoiceOutcome::Pending {
+                        ticket,
+                        requested,
+                        model_selection: Some(selection),
+                        live_notice,
+                        current_applied,
+                    })
+                }
+            }
         }
         SettingsKind::SubagentModel | SettingsKind::Effort | SettingsKind::Fast => {
             let sub = match kind {
@@ -3762,9 +3407,18 @@ async fn apply_setting_choice(
                     .native
                     .apply_native_feature_preferences_with_catalog(&preferences, Some(&catalog))
                     .await?;
-                return Ok(child_default_saved_notice(language));
+                return Ok(SettingChoiceOutcome::Applied(child_default_saved_notice(
+                    language,
+                )));
             }
-            validate_setting_choice(sub, requested, &catalog, &current_model).await?;
+            validate_setting_choice_with_language(
+                sub,
+                requested,
+                &catalog,
+                &current_model,
+                language,
+            )
+            .await?;
             let (field, value) = match kind {
                 SettingsKind::Model => ("model", Value::String(requested.to_owned())),
                 SettingsKind::SubagentModel => unreachable!(),
@@ -3781,9 +3435,9 @@ async fn apply_setting_choice(
             };
             let mut params = json!({"threadId":thread_id});
             params[field] = value.clone();
-            state
+            let update = state
                 .native
-                .request("thread/settings/update", params)
+                .request_thread_setting_update(&thread_id, params, field, value.clone())
                 .await?;
             let live_result = if let Some(turn_id) = state.current_turn.lock().await.clone() {
                 let mut live = json!({"threadId":thread_id,"turnId":turn_id});
@@ -3797,7 +3451,28 @@ async fn apply_setting_choice(
             } else {
                 None
             };
-            let snapshot = state.native.refresh_thread_state().await;
+            let snapshot = match update {
+                crate::native::ThreadSettingUpdate::Confirmed(snapshot) => Ok(snapshot),
+                crate::native::ThreadSettingUpdate::Pending(ticket) => {
+                    let live_notice =
+                        current_turn_notice(live_result.as_ref(), language, Some(&state.config));
+                    let current_applied = live_result.as_ref().is_none_or(|result| {
+                        result
+                            .as_ref()
+                            .ok()
+                            .and_then(|result| result.get("status"))
+                            .and_then(Value::as_str)
+                            == Some("applied")
+                    });
+                    return Ok(SettingChoiceOutcome::Pending {
+                        ticket,
+                        requested: requested.to_owned(),
+                        model_selection: None,
+                        live_notice,
+                        current_applied,
+                    });
+                }
+            };
             if let Some(Err(error)) = live_result.as_ref() {
                 tracing::warn!(error = ?error, "failed to update settings for active native turn");
             }
@@ -3833,14 +3508,23 @@ async fn apply_setting_choice(
                     error.as_deref(),
                 );
             }
-            Ok(format_settings_update_result_with_language(
+            let mut notice = format_settings_update_result_with_config(
                 requested,
                 snapshot.as_ref().ok(),
                 live_result.as_ref(),
                 language,
-            ))
+                Some(&state.config),
+            );
+            if let Err(error) = &snapshot {
+                notice.push('\n');
+                notice.push_str(&settings_error_detail(error, language, Some(&state.config)));
+            }
+            Ok(SettingChoiceOutcome::Applied(notice))
         }
-        SettingsKind::NativeFeatures => bail!("Choose a native feature first."),
+        SettingsKind::NativeFeatures => bail!(
+            "{}",
+            language.message(MessageKey::CommandsChooseNativeFeatureFirst)
+        ),
         SettingsKind::NativeFeature(key) => {
             let mut preferences = state.native.read_native_feature_preferences()?;
             let selection =
@@ -3879,22 +3563,29 @@ async fn apply_setting_choice(
                 )
                 .await?;
             if key == NativeFeatureKey::SubagentModel {
-                return Ok(child_default_saved_notice(language));
+                return Ok(SettingChoiceOutcome::Applied(child_default_saved_notice(
+                    language,
+                )));
             }
-            Ok(language.text(
-                "Saved for the next Discodex worker start. Restart required; the effective native config shown above is unchanged for this running process.",
-                "다음 Discodex 워커 시작을 위해 저장했습니다. 재시작이 필요하며, 실행 중인 프로세스의 실효 네이티브 설정은 위에 표시된 그대로입니다.",
-                "已保存，供下次 Discodex 工作进程启动时使用。需要重启；当前运行进程的有效原生配置未变。",
-                "次回の Discodex ワーカー起動用に保存しました。再起動が必要です。現在のプロセスの有効なネイティブ設定は上記のままです。",
-            ).to_owned())
+            Ok(SettingChoiceOutcome::Applied(
+                language
+                    .message(MessageKey::CommandsSavedForTheNextDiscodexWorkerStartRestart0f175de2)
+                    .to_owned(),
+            ))
         }
-        SettingsKind::Hub => bail!("Choose a setting first."),
+        SettingsKind::Hub => bail!(
+            "{}",
+            language.message(MessageKey::CommandsChooseSettingFirst)
+        ),
         SettingsKind::MessageAccess
         | SettingsKind::PairedAccounts
         | SettingsKind::Whitelist
         | SettingsKind::Blacklist
         | SettingsKind::RegisteredChannels => {
-            bail!("Message access settings are handled by their own menu.")
+            bail!(
+                "{}",
+                language.message(MessageKey::CommandsMessageAccessSettingsHaveASeparateMenu)
+            )
         }
     }
 }
@@ -4061,7 +3752,11 @@ pub(crate) async fn handle_component(
         interaction
             .edit_response(
                 ctx,
-                approval_delivery_failure_response(&error, state.config.language),
+                approval_delivery_failure_response(
+                    &error,
+                    state.config.language,
+                    Some(&state.config),
+                ),
             )
             .await?;
         return Ok(());
@@ -4069,12 +3764,12 @@ pub(crate) async fn handle_component(
     let response_edit = interaction
         .edit_response(
             ctx,
-            serenity::builder::EditInteractionResponse::new().content(state.config.language.text(
-                "Choice sent to the request.",
-                "요청에 선택을 전달했습니다.",
-                "已向请求发送选择。",
-                "リクエストに選択を送信しました。",
-            )),
+            serenity::builder::EditInteractionResponse::new().content(
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsChoiceSentToTheRequestB2a9b18b),
+            ),
         )
         .await;
     let mut message = interaction.message.clone();
@@ -4126,12 +3821,12 @@ async fn handle_antigravity_settings_modal(
             || menu.connection_generation != state.native.current_generation()
             || menu.thread_id != state.native.thread_id()
         {
-            bail!(state.config.language.text(
-                "This settings panel is no longer active. Open settings again.",
-                "설정 화면이 만료되었습니다. 설정을 다시 여세요.",
-                "此设置面板已失效。请重新打开设置。",
-                "この設定パネルは無効です。設定を開き直してください。",
-            ));
+            bail!(
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsThisSettingsPanelIsNoLongerActiveOpenSet7d065fd5)
+            );
         }
         interaction
             .create_response(ctx, CreateInteractionResponse::Acknowledge)
@@ -4233,11 +3928,8 @@ async fn handle_message_access_modal(
                 ctx,
                 CreateInteractionResponse::Message(
                     CreateInteractionResponseMessage::new()
-                        .content(state.config.language.text(
-                            "This message-access panel is no longer active. Open settings again.",
-                            "메시지 접근 설정이 만료되었습니다. 설정을 다시 여세요.",
-                            "此消息接收设置已失效。请重新打开设置。",
-                            "メッセージ受信設定の有効期限が切れました。設定を開き直してください。",
+                        .content(state.config.language.message(
+                            MessageKey::CommandsThisMessageAccessPanelIsNoLongerActiveOpB96a7437,
                         ))
                         .ephemeral(true),
                 ),
@@ -4249,28 +3941,26 @@ async fn handle_message_access_modal(
     let mut values = serde_json::Map::new();
     collect_modal_values(&raw_components, &mut values);
     let raw_id = values.get("id").and_then(Value::as_str).unwrap_or_default();
-    let id = match parse_message_access_id(raw_id) {
-        Ok(id) => id,
-        Err(()) => {
-            release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
-            interaction
-                .create_response(
-                    ctx,
-                    CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(state.config.language.text(
-                                "Enter a nonzero Discord numeric ID.",
-                                "0이 아닌 Discord 숫자 ID를 입력하세요.",
-                                "请输入非零 Discord 数字 ID。",
-                                "0 以外の Discord 数字 ID を入力してください。",
-                            ))
-                            .ephemeral(true),
-                    ),
-                )
-                .await?;
-            return Ok(());
-        }
-    };
+    let id =
+        match parse_message_access_id(raw_id) {
+            Ok(id) => id,
+            Err(()) => {
+                release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+                interaction
+                    .create_response(
+                        ctx,
+                        CreateInteractionResponse::Message(
+                            CreateInteractionResponseMessage::new()
+                                .content(state.config.language.message(
+                                    MessageKey::CommandsEnterANonzeroDiscordNumericId5a3a739d,
+                                ))
+                                .ephemeral(true),
+                        ),
+                    )
+                    .await?;
+                return Ok(());
+            }
+        };
     if let Err(error) = interaction
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await
@@ -4281,7 +3971,8 @@ async fn handle_message_access_modal(
     let update = update_message_access_list(state, kind, add, id).await;
     if let Err(error) = update {
         release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
-        let notice = localized_access_update_error(error.to_string(), state.config.language);
+        let detail = crate::discord::sanitize_discord_error(&state.config, &error.to_string());
+        let notice = localized_access_update_error(detail, state.config.language);
         interaction
             .edit_response(
                 ctx,
@@ -4305,16 +3996,15 @@ async fn handle_message_access_modal(
         Ok(menu) => menu,
         Err(error) => {
             release_settings_menu(&mut *state.settings_menus.lock().await, menu_id);
+            let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
             interaction
                 .edit_response(
                     ctx,
                     serenity::builder::EditInteractionResponse::new()
-                        .content(format!("{}\n{error:#}", state.config.language.text(
-                    "Saved, but could not refresh the list. Reopen settings to view it.",
-                    "저장했지만 목록을 새로고침하지 못했습니다. 설정을 다시 열어 확인하세요.",
-                    "已保存，但无法刷新列表。请重新打开设置查看。",
-                    "保存しましたが一覧を更新できませんでした。設定を開き直してください。",
-                )))
+                        .content(localized_failure_message(
+                            state.config.language.message(MessageKey::CommandsSavedButCouldNotRefreshTheListReopenSett05e90f73),
+                            &detail,
+                        ))
                         .allowed_mentions(no_mentions()),
                 )
                 .await?;
@@ -4323,12 +4013,10 @@ async fn handle_message_access_modal(
     };
     fresh.claimed = false;
     let (content, rows) = render_settings_menu(menu_id, &fresh, state.config.language);
-    let notice = state.config.language.text(
-        "Account list updated.",
-        "계정 목록을 업데이트했습니다.",
-        "账号列表已更新。",
-        "アカウントリストを更新しました。",
-    );
+    let notice = state
+        .config
+        .language
+        .message(MessageKey::CommandsAccountListUpdatedE892e513);
     let result = interaction
         .edit_response(
             ctx,
@@ -4362,31 +4050,16 @@ fn parse_message_access_id(input: &str) -> Result<u64, ()> {
 fn localized_access_update_error(error: String, language: crate::i18n::Language) -> String {
     if error.contains("already registered") {
         language
-            .text(
-                "That ID is already in this list.",
-                "해당 ID가 이미 목록에 있습니다.",
-                "该 ID 已在列表中。",
-                "その ID はすでに一覧にあります。",
-            )
+            .message(MessageKey::CommandsThatIdIsAlreadyInThisList70f3b901)
             .to_owned()
     } else if error.contains("not registered") {
         language
-            .text(
-                "That ID is not in this list.",
-                "해당 ID가 이 목록에 없습니다.",
-                "该 ID 不在此列表中。",
-                "その ID はこの一覧にありません。",
-            )
+            .message(MessageKey::CommandsThatIdIsNotInThisList15844bf5)
             .to_owned()
     } else {
         format!(
             "{}: {error}",
-            language.text(
-                "Could not save message access settings",
-                "메시지 접근 설정을 저장하지 못했습니다",
-                "无法保存消息接收设置",
-                "メッセージ受信設定を保存できませんでした"
-            )
+            language.message(MessageKey::CommandsCouldNotSaveMessageAccessSettingsDfe7562c)
         )
     }
 }
@@ -4449,16 +4122,17 @@ pub(crate) async fn handle_modal(
     let result = match result {
         Ok(result) => result,
         Err(error) => {
-            tracing::warn!(error = ?error, "failed to read Discord modal answer");
+            let detail = settings_error_detail(&error, state.config.language, Some(&state.config));
+            tracing::warn!(error = %detail, "failed to read Discord modal answer");
             interaction
                 .edit_response(
                     ctx,
                     serenity::builder::EditInteractionResponse::new()
-                        .content(state.config.language.text(
-                        "Could not read the answer. Use the displayed format and try again.",
-                        "답변을 읽지 못했습니다. 표시된 형식에 맞게 입력한 뒤 다시 시도해 주세요.",
-                        "无法读取答案。请按显示的格式输入后重试。",
-                        "回答を読み取れませんでした。表示された形式で入力して再試行してください。",
+                        .content(localized_failure_message(
+                        state.config.language.message(
+                            MessageKey::CommandsCouldNotReadTheAnswerUseTheDisplayedFormBe586209,
+                        ),
+                        &detail,
                     )),
                 )
                 .await?;
@@ -4492,7 +4166,11 @@ pub(crate) async fn handle_modal(
         interaction
             .edit_response(
                 ctx,
-                approval_delivery_failure_response(&error, state.config.language),
+                approval_delivery_failure_response(
+                    &error,
+                    state.config.language,
+                    Some(&state.config),
+                ),
             )
             .await?;
         return Ok(());
@@ -4500,12 +4178,12 @@ pub(crate) async fn handle_modal(
     let response_edit = interaction
         .edit_response(
             ctx,
-            serenity::builder::EditInteractionResponse::new().content(state.config.language.text(
-                "Answer sent to the request.",
-                "요청에 답변을 전달했습니다.",
-                "已向请求发送答案。",
-                "リクエストに回答を送信しました。",
-            )),
+            serenity::builder::EditInteractionResponse::new().content(
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsAnswerSentToTheRequestDaffc8b1),
+            ),
         )
         .await;
     let card_edit = if let Some(mut message) = pending_message(ctx, &pending).await {
@@ -4695,21 +4373,22 @@ fn claim_pending(
 fn approval_delivery_failure_message(
     error: &anyhow::Error,
     language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
 ) -> String {
-    format!("{}\n{}", language.text(
-        "The approval response could not be confirmed as sent. This does not establish whether the command ran.",
-        "승인 응답 전달을 확인하지 못했습니다. 이 오류만으로 명령 실행 여부를 판단할 수 없습니다.",
-        "无法确认审批响应已发送。此错误不能证明命令是否已执行。",
-        "承認応答の送信を確認できませんでした。このエラーだけではコマンドが実行されたかは判断できません。"
-    ), settings_error_detail(error))
+    format!(
+        "{}\n{}",
+        language.message(MessageKey::CommandsTheApprovalResponseCouldNotBeConfirmedAs36c4b12d),
+        settings_error_detail(error, language, config)
+    )
 }
 
 fn approval_delivery_failure_response(
     error: &anyhow::Error,
     language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
 ) -> serenity::builder::EditInteractionResponse {
     serenity::builder::EditInteractionResponse::new()
-        .content(approval_delivery_failure_message(error, language))
+        .content(approval_delivery_failure_message(error, language, config))
 }
 
 fn claim_approval(
@@ -4780,15 +4459,15 @@ fn command_approval_label_with_language(
     {
         let (label, style) = match amendment.get("action").and_then(Value::as_str) {
             Some("allow") => (
-                language.text("Allow host", "호스트 허용 규칙", "允许主机", "ホストを許可"),
+                language.message(MessageKey::CommandsAllowHost420b5fac),
                 ButtonStyle::Primary,
             ),
             Some("deny") => (
-                language.text("Deny host", "호스트 거부 규칙", "拒绝主机", "ホストを拒否"),
+                language.message(MessageKey::CommandsDenyHostFd5846c5),
                 ButtonStyle::Secondary,
             ),
             _ => (
-                language.text("Host rule", "호스트 규칙", "主机规则", "ホストルール"),
+                language.message(MessageKey::CommandsHostRule795adbfa),
                 ButtonStyle::Secondary,
             ),
         };
@@ -4802,47 +4481,27 @@ fn command_approval_label_with_language(
     }
     let (label, style) = match decision.as_str() {
         Some("accept") => (
-            language.text("Allow", "허용", "允许", "許可"),
+            language.message(MessageKey::CommandsAllow8557860a),
             ButtonStyle::Success,
         ),
         Some("acceptForSession") => (
-            language.text(
-                "Allow for session",
-                "세션 허용",
-                "本次会话允许",
-                "セッション中は許可",
-            ),
+            language.message(MessageKey::CommandsAllowForSession5daec59d),
             ButtonStyle::Primary,
         ),
         Some("decline") => (
-            language.text(
-                "Decline and continue",
-                "거절 후 계속",
-                "拒绝并继续",
-                "拒否して続行",
-            ),
+            language.message(MessageKey::CommandsDeclineAndContinue2f0154e7),
             ButtonStyle::Danger,
         ),
         Some("cancel") => (
-            language.text(
-                "Decline and stop",
-                "거절·중단",
-                "拒绝并停止",
-                "拒否して中止",
-            ),
+            language.message(MessageKey::CommandsDeclineAndStopFa4203c2),
             ButtonStyle::Secondary,
         ),
         _ if decision.get("acceptWithExecpolicyAmendment").is_some() => (
-            language.text(
-                "Allow with policy change",
-                "정책 수정 후 허용",
-                "修改策略后允许",
-                "ポリシーを変更して許可",
-            ),
+            language.message(MessageKey::CommandsAllowWithPolicyChangeC36cdbe2),
             ButtonStyle::Primary,
         ),
         _ => (
-            language.text("Choose", "선택", "选择", "選択"),
+            language.message(MessageKey::CommandsChoose92fc12fb),
             ButtonStyle::Secondary,
         ),
     };
@@ -4913,9 +4572,9 @@ fn approval_actions_with_language(
     {
         let labels = suggestion_labels(language);
         let install_label = if is_plugin_suggestion(&suggestion) {
-            language.text("Install", "설치", "安装", "インストール")
+            language.message(MessageKey::CommandsInstall92cf4534)
         } else {
-            language.text("Open setup", "설정 열기", "打开设置", "セットアップを開く")
+            language.message(MessageKey::CommandsOpenSetup5b5190a9)
         };
         let install = CreateButton::new(format!("codex:approval:{key}:plugin-install"))
             .label(install_label)
@@ -4933,12 +4592,7 @@ fn approval_actions_with_language(
         if !is_plugin_suggestion(&suggestion) && suggestion.install_url.is_some() {
             buttons.push(
                 CreateButton::new(format!("codex:approval:{key}:plugin-check"))
-                    .label(language.text(
-                        "Setup completed / Check access",
-                        "설정 완료 / 접근 확인",
-                        "完成设置 / 检查访问",
-                        "セットアップ完了 / 接続確認",
-                    ))
+                    .label(language.message(MessageKey::CommandsSetupCompletedCheckAccess11750254))
                     .style(ButtonStyle::Primary),
             );
         }
@@ -4960,34 +4614,29 @@ fn approval_actions_with_language(
     {
         let mut buttons = vec![
             CreateButton::new(format!("codex:approval:{key}:mcp-allow"))
-                .label(language.text("Allow once", "이번만 허용", "仅允许一次", "今回のみ許可"))
+                .label(language.message(MessageKey::CommandsAllowOnce3fb701fe))
                 .style(ButtonStyle::Success),
         ];
         if persist_options.contains(&"session") {
             buttons.push(
                 CreateButton::new(format!("codex:approval:{key}:mcp-session"))
-                    .label(language.text(
-                        "Allow for session",
-                        "세션 허용",
-                        "本次会话允许",
-                        "セッション中は許可",
-                    ))
+                    .label(language.message(MessageKey::CommandsAllowForSession5daec59d))
                     .style(ButtonStyle::Primary),
             );
         }
         if persist_options.contains(&"always") {
             buttons.push(
                 CreateButton::new(format!("codex:approval:{key}:mcp-always"))
-                    .label(language.text("Always allow", "항상 허용", "始终允许", "常に許可"))
+                    .label(language.message(MessageKey::CommandsAlwaysAllow73a593b2))
                     .style(ButtonStyle::Primary),
             );
         }
         buttons.extend([
             CreateButton::new(format!("codex:approval:{key}:decline"))
-                .label(language.text("Decline", "거절", "拒绝", "拒否"))
+                .label(language.message(MessageKey::CommandsDecline4a93815a))
                 .style(ButtonStyle::Danger),
             CreateButton::new(format!("codex:approval:{key}:cancel"))
-                .label(language.text("Cancel", "취소", "取消", "キャンセル"))
+                .label(language.message(MessageKey::CommandsCancel4973805f))
                 .style(ButtonStyle::Secondary),
         ]);
         return vec![CreateActionRow::Buttons(buttons)];
@@ -5000,10 +4649,10 @@ fn approval_actions_with_language(
     {
         return vec![CreateActionRow::Buttons(vec![
             CreateButton::new(format!("codex:approval:{key}:decline"))
-                .label(language.text("Decline", "거절", "拒绝", "拒否"))
+                .label(language.message(MessageKey::CommandsDecline4a93815a))
                 .style(ButtonStyle::Danger),
             CreateButton::new(format!("codex:approval:{key}:cancel"))
-                .label(language.text("Cancel", "취소", "取消", "キャンセル"))
+                .label(language.message(MessageKey::CommandsCancel4973805f))
                 .style(ButtonStyle::Secondary),
         ])];
     }
@@ -5026,160 +4675,105 @@ fn approval_actions_with_language(
         "item/fileChange/requestApproval" => &[
             (
                 "accept",
-                language.text("Allow", "허용", "允许", "許可"),
+                language.message(MessageKey::CommandsAllow8557860a),
                 ButtonStyle::Success,
             ),
             (
                 "acceptForSession",
-                language.text(
-                    "Allow for session",
-                    "세션 허용",
-                    "本次会话允许",
-                    "セッション中は許可",
-                ),
+                language.message(MessageKey::CommandsAllowForSession5daec59d),
                 ButtonStyle::Primary,
             ),
             (
                 "decline",
-                language.text("Decline", "거절", "拒绝", "拒否"),
+                language.message(MessageKey::CommandsDecline4a93815a),
                 ButtonStyle::Danger,
             ),
             (
                 "cancel",
-                language.text(
-                    "Decline and stop",
-                    "거절·중단",
-                    "拒绝并停止",
-                    "拒否して中止",
-                ),
+                language.message(MessageKey::CommandsDeclineAndStopFa4203c2),
                 ButtonStyle::Secondary,
             ),
         ],
         "item/permissions/requestApproval" => &[
             (
                 "turn",
-                language.text(
-                    "Allow this response",
-                    "이번 응답 허용",
-                    "允许本次回复",
-                    "今回の応答で許可",
-                ),
+                language.message(MessageKey::CommandsAllowThisResponseBab75358),
                 ButtonStyle::Success,
             ),
             (
                 "session",
-                language.text(
-                    "Allow for session",
-                    "세션 허용",
-                    "本次会话允许",
-                    "セッション中は許可",
-                ),
+                language.message(MessageKey::CommandsAllowForSession5daec59d),
                 ButtonStyle::Primary,
             ),
             (
                 "none",
-                language.text(
-                    "Do not grant more permissions",
-                    "추가 권한 미부여",
-                    "不授予额外权限",
-                    "追加権限を付与しない",
-                ),
+                language.message(MessageKey::CommandsDoNotGrantMorePermissions850c5a39),
                 ButtonStyle::Danger,
             ),
         ],
         "item/tool/requestUserInput" => &[(
             "answer",
-            language.text("Write a response", "응답 작성", "填写回复", "回答を入力"),
+            language.message(MessageKey::CommandsWriteAResponseB91cf891),
             ButtonStyle::Primary,
         )],
         "mcpServer/elicitation/request" => &[
             (
                 "answer",
-                language.text("Write a response", "응답 작성", "填写回复", "回答を入力"),
+                language.message(MessageKey::CommandsWriteAResponseB91cf891),
                 ButtonStyle::Primary,
             ),
             (
                 "decline",
-                language.text("Decline", "거절", "拒绝", "拒否"),
+                language.message(MessageKey::CommandsDecline4a93815a),
                 ButtonStyle::Danger,
             ),
             (
                 "cancel",
-                language.text("Cancel", "취소", "取消", "キャンセル"),
+                language.message(MessageKey::CommandsCancel4973805f),
                 ButtonStyle::Secondary,
             ),
         ],
         "execCommandApproval" => &[
             (
                 "approved",
-                language.text("Allow", "허용", "允许", "許可"),
+                language.message(MessageKey::CommandsAllow8557860a),
                 ButtonStyle::Success,
             ),
             (
                 "approved_for_session",
-                language.text(
-                    "Allow for session",
-                    "세션 허용",
-                    "本次会话允许",
-                    "セッション中は許可",
-                ),
+                language.message(MessageKey::CommandsAllowForSession5daec59d),
                 ButtonStyle::Primary,
             ),
             (
                 "denied",
-                language.text(
-                    "Decline and continue",
-                    "거절 후 계속",
-                    "拒绝并继续",
-                    "拒否して続行",
-                ),
+                language.message(MessageKey::CommandsDeclineAndContinue2f0154e7),
                 ButtonStyle::Danger,
             ),
             (
                 "abort",
-                language.text(
-                    "Cancel response",
-                    "응답 취소",
-                    "取消回复",
-                    "応答をキャンセル",
-                ),
+                language.message(MessageKey::CommandsCancelResponse19bbaa6e),
                 ButtonStyle::Secondary,
             ),
         ],
         "applyPatchApproval" => &[
             (
                 "approved",
-                language.text("Allow", "허용", "允许", "許可"),
+                language.message(MessageKey::CommandsAllow8557860a),
                 ButtonStyle::Success,
             ),
             (
                 "approved_for_session",
-                language.text(
-                    "Allow for session",
-                    "세션 허용",
-                    "本次会话允许",
-                    "セッション中は許可",
-                ),
+                language.message(MessageKey::CommandsAllowForSession5daec59d),
                 ButtonStyle::Primary,
             ),
             (
                 "denied",
-                language.text(
-                    "Decline and continue",
-                    "거절 후 계속",
-                    "拒绝并继续",
-                    "拒否して続行",
-                ),
+                language.message(MessageKey::CommandsDeclineAndContinue2f0154e7),
                 ButtonStyle::Danger,
             ),
             (
                 "abort",
-                language.text(
-                    "Cancel response",
-                    "응답 취소",
-                    "取消回复",
-                    "応答をキャンセル",
-                ),
+                language.message(MessageKey::CommandsCancelResponse19bbaa6e),
                 ButtonStyle::Secondary,
             ),
         ],
@@ -5417,7 +5011,15 @@ fn thread_model_scope(thread: &Value) -> Option<String> {
 }
 
 fn normalized_model_value(catalog: &Value, value: &str) -> Option<String> {
-    let model = selected_model(catalog, &Some(value.to_owned())).ok()?;
+    normalized_model_value_with_language(catalog, value, crate::i18n::Language::English)
+}
+
+fn normalized_model_value_with_language(
+    catalog: &Value,
+    value: &str,
+    language: crate::i18n::Language,
+) -> Option<String> {
+    let model = selected_model_with_language(catalog, &Some(value.to_owned()), language).ok()?;
     crate::model_catalog::selection_value(model)
         .or_else(|| crate::model_catalog::model_id(model))
         .map(str::to_owned)
@@ -5464,15 +5066,74 @@ fn subagent_model_selection(
 fn model_change_requires_resume(
     active_executor: crate::model_catalog::ModelExecutor,
     active_provider: &str,
-    active_model: Option<&str>,
     selection: &crate::model_catalog::ModelSelection,
 ) -> bool {
-    use crate::model_catalog::ModelExecutor;
-    selection.executor != active_executor
-        || match selection.executor {
-            ModelExecutor::Codex => selection.provider != active_provider,
-            ModelExecutor::Antigravity => active_model != Some(selection.model.as_str()),
+    selection.executor != active_executor || selection.provider != active_provider
+}
+
+fn model_selection_for_choice(
+    catalog: &Value,
+    requested: &str,
+    current_thread: &Value,
+    language: crate::i18n::Language,
+) -> anyhow::Result<crate::model_catalog::ModelSelection> {
+    if let Ok(selection) = crate::model_catalog::resolve_selection(catalog, requested) {
+        return Ok(selection);
+    }
+
+    // Stale settings buttons can carry the full provider-qualified selection
+    // created from the earlier catalog. Preserve it and let Native validate it.
+    if let Ok(parts) = serde_json::from_str::<Vec<String>>(requested) {
+        let selection = match parts.as_slice() {
+            [provider, model] if !provider.is_empty() && !model.is_empty() => {
+                Some(crate::model_catalog::ModelSelection {
+                    executor: crate::model_catalog::ModelExecutor::Codex,
+                    provider: provider.clone(),
+                    model: model.clone(),
+                })
+            }
+            [executor, provider, model] if !provider.is_empty() && !model.is_empty() => {
+                let executor = match executor.as_str() {
+                    "codex" => Some(crate::model_catalog::ModelExecutor::Codex),
+                    "antigravity" => Some(crate::model_catalog::ModelExecutor::Antigravity),
+                    _ => None,
+                };
+                executor.map(|executor| crate::model_catalog::ModelSelection {
+                    executor,
+                    provider: provider.clone(),
+                    model: model.clone(),
+                })
+            }
+            _ => None,
+        };
+        if let Some(selection) = selection {
+            return Ok(selection);
         }
+    }
+
+    // Legacy catalog entries can contain only a model ID. Reuse the active
+    // executor/provider for that explicitly selected ID; Native remains the
+    // authority on whether the model can actually be applied.
+    let provider = thread_model_provider(current_thread)
+        .or_else(|| catalog.get("provider").and_then(Value::as_str));
+    let Some(provider) = provider else {
+        bail!(
+            "{}",
+            language.message(MessageKey::CommandsModelProviderUnavailable)
+        );
+    };
+    let executor = current_thread
+        .get("modelExecutor")
+        .cloned()
+        .map(serde_json::from_value::<crate::model_catalog::ModelExecutor>)
+        .transpose()
+        .context("read current model executor")?
+        .unwrap_or_default();
+    Ok(crate::model_catalog::ModelSelection {
+        executor,
+        provider: provider.to_owned(),
+        model: requested.to_owned(),
+    })
 }
 
 fn ensure_provider_switch_idle(
@@ -5481,12 +5142,10 @@ fn ensure_provider_switch_idle(
     language: crate::i18n::Language,
 ) -> anyhow::Result<()> {
     if !voice_idle || turn_active {
-        bail!("{}", language.text(
-            "Wait for the active response or voice call to finish before switching model providers. Your current model is unchanged.",
-            "모델 공급자를 변경하려면 진행 중인 응답이나 음성 통화가 끝난 뒤 다시 선택하세요. 현재 모델은 그대로입니다.",
-            "请等待当前回复或语音通话结束后再切换模型提供方。当前模型未更改。",
-            "実行中の応答や音声通話が終了してからモデルプロバイダーを変更してください。現在のモデルは変更されていません。"
-        ));
+        bail!(
+            "{}",
+            language.message(MessageKey::CommandsWaitForTheActiveResponseOrVoiceCallToFiA5ef13df)
+        );
     }
     Ok(())
 }
@@ -5502,12 +5161,7 @@ fn subagent_model_choices(catalog: &Value, language: crate::i18n::Language) -> V
     let mut choices = vec![SettingsChoice {
         value: "native-default".to_owned(),
         label: language
-            .text(
-                "Native default",
-                "네이티브 기본값",
-                "原生默认值",
-                "ネイティブ既定値",
-            )
+            .message(MessageKey::CommandsNativeDefault308250fc)
             .to_owned(),
     }];
     choices.extend(catalog_model_choices(catalog));
@@ -5713,16 +5367,29 @@ async fn validate_setting_choice(
     catalog: &Value,
     current_model: &Option<String>,
 ) -> anyhow::Result<()> {
+    validate_setting_choice_with_language(
+        sub,
+        requested,
+        catalog,
+        current_model,
+        crate::i18n::Language::English,
+    )
+    .await
+}
+
+async fn validate_setting_choice_with_language(
+    sub: &str,
+    requested: &str,
+    catalog: &Value,
+    current_model: &Option<String>,
+    language: crate::i18n::Language,
+) -> anyhow::Result<()> {
     match sub {
-        "model" => {
-            if !catalog_has_model(catalog, requested) {
-                bail!(
-                    "모델 `{requested}`을(를) 현재 사용할 수 없습니다. `/discodex models`에서 선택 가능한 모델을 확인하세요."
-                );
-            }
-        }
+        // Model choices are presentation data. Native is the authority for
+        // whether an explicitly selected exact ID can be applied.
+        "model" => {}
         "effort" => {
-            let model = selected_model(catalog, current_model)?;
+            let model = selected_model_with_language(catalog, current_model, language)?;
             let valid = model
                 .get("supportedReasoningEfforts")
                 .and_then(Value::as_array)
@@ -5736,7 +5403,10 @@ async fn validate_setting_choice(
                 });
             if !valid {
                 bail!(
-                    "추론 강도 `{requested}`는 현재 모델에서 제공하지 않습니다. `/discodex models`에서 사용할 수 있는 강도를 확인하세요."
+                    "{}",
+                    language
+                        .message(MessageKey::CommandsEffortUnavailableForModel)
+                        .replace("{value}", requested)
                 );
             }
         }
@@ -5744,7 +5414,7 @@ async fn validate_setting_choice(
             if requested.eq_ignore_ascii_case("off") {
                 return Ok(());
             }
-            let model = selected_model(catalog, current_model)?;
+            let model = selected_model_with_language(catalog, current_model, language)?;
             let valid = model
                 .get("serviceTiers")
                 .and_then(Value::as_array)
@@ -5756,7 +5426,10 @@ async fn validate_setting_choice(
                 });
             if !valid {
                 bail!(
-                    "서비스 등급 `{requested}`는 현재 모델에서 제공하지 않습니다. `/discodex models`에서 사용할 수 있는 등급을 확인하세요."
+                    "{}",
+                    language
+                        .message(MessageKey::CommandsTierUnavailableForModel)
+                        .replace("{value}", requested)
                 );
             }
         }
@@ -5765,29 +5438,29 @@ async fn validate_setting_choice(
     Ok(())
 }
 
-fn catalog_has_model(catalog: &Value, requested: &str) -> bool {
-    catalog
-        .get("data")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| crate::model_catalog::model_matches(item, requested))
-        })
-}
-
 fn selected_model<'a>(
     catalog: &'a Value,
     current_model: &Option<String>,
 ) -> anyhow::Result<&'a Value> {
+    selected_model_with_language(catalog, current_model, crate::i18n::Language::English)
+}
+
+fn selected_model_with_language<'a>(
+    catalog: &'a Value,
+    current_model: &Option<String>,
+    language: crate::i18n::Language,
+) -> anyhow::Result<&'a Value> {
     let data = catalog
         .get("data")
         .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("모델 목록을 읽을 수 없습니다"))?;
+        .ok_or_else(|| anyhow!(language.message(MessageKey::CommandsModelListUnreadable)))?;
     let current_model = current_model
         .as_deref()
-        .ok_or_else(|| anyhow!("현재 모델을 확인할 수 없습니다"))?;
-    let selected = crate::model_catalog::resolve_selection(catalog, current_model)?;
+        .ok_or_else(|| anyhow!(language.message(MessageKey::CommandsCurrentModelUnavailable)))?;
+    let selected =
+        crate::model_catalog::resolve_selection(catalog, current_model).map_err(|_| {
+            anyhow!(language.message(MessageKey::CommandsCurrentModelMissingFromCatalog))
+        })?;
     data.iter()
         .find(|model| {
             crate::model_catalog::model_id(model) == Some(selected.model.as_str())
@@ -5797,7 +5470,9 @@ fn selected_model<'a>(
                     .unwrap_or(selected.provider.as_str())
                     == selected.provider
         })
-        .ok_or_else(|| anyhow!("현재 모델을 모델 목록에서 찾을 수 없습니다"))
+        .ok_or_else(|| {
+            anyhow!(language.message(MessageKey::CommandsCurrentModelMissingFromCatalog))
+        })
 }
 
 fn current_turn_settings_result(result: Option<&anyhow::Result<Value>>) -> &'static str {
@@ -5810,14 +5485,289 @@ fn current_turn_settings_result_with_language(
 ) -> &'static str {
     match result {
         Some(Ok(value)) => match value.get("status").and_then(Value::as_str) {
-            Some("applied") => {
-                language.text("Updated settings for later work in the active response. Already-started work is unchanged.", "진행 중인 응답에서 이후 작업이 사용할 설정을 갱신했습니다. 이미 시작된 작업은 바꾸지 않습니다.", "已更新当前回复后续任务使用的设置。已开始的任务不会更改。", "進行中の応答で後続の作業に使う設定を更新しました。すでに始まった作業は変わりません。")
-            }
-            Some("targetUnavailable") => language.text("Could not apply settings to the active response.", "진행 중인 응답에 설정을 적용할 수 없었습니다.", "无法将设置应用于当前回复。", "進行中の応答に設定を適用できませんでした。"),
-            _ => language.text("Could not confirm whether settings were applied to the active response.", "진행 중인 응답의 설정 적용 결과를 확인하지 못했습니다.", "无法确认设置是否已应用于当前回复。", "進行中の応答に設定が適用されたか確認できませんでした。"),
+            Some("applied") => language
+                .message(MessageKey::CommandsUpdatedSettingsForLaterWorkInTheActiveReC44c334f),
+            Some("targetUnavailable") => language
+                .message(MessageKey::CommandsCouldNotApplySettingsToTheActiveResponseCeec6b12),
+            _ => language
+                .message(MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396),
         },
-        Some(Err(_)) => language.text("Could not send the settings update to the active response.", "진행 중인 응답에 설정 변경 요청을 전달하지 못했습니다.", "无法向当前回复发送设置更新。", "進行中の応答に設定変更を送信できませんでした。"),
-        None => language.text("No response is in progress.", "진행 중인 응답이 없습니다.", "当前没有正在进行的回复。", "進行中の応答はありません。"),
+        Some(Err(_)) => {
+            language.message(MessageKey::CommandsCouldNotSendTheSettingsUpdateToTheActiveF50c2a86)
+        }
+        None => language.message(MessageKey::CommandsNoResponseIsInProgress16302856),
+    }
+}
+
+fn current_turn_notice(
+    result: Option<&anyhow::Result<Value>>,
+    language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
+) -> String {
+    let mut notice = current_turn_settings_result_with_language(result, language).to_owned();
+    if let Some(Err(error)) = result {
+        notice.push('\n');
+        notice.push_str(&settings_error_detail(error, language, config));
+    }
+    notice
+}
+
+fn format_pending_settings_update(
+    requested: &str,
+    current_response: &str,
+    language: crate::i18n::Language,
+) -> String {
+    format!(
+        "{}: `{requested}`\n{}\n{}: {current_response}",
+        language.message(MessageKey::CommandsRequestedValue9eb15821),
+        language.message(MessageKey::CommandsSettingsDefaultPending),
+        language.message(MessageKey::CommandsCurrentResponse5c4a065c),
+    )
+}
+
+fn format_confirmed_settings_update(
+    requested: &str,
+    snapshot: &Value,
+    current_response: &str,
+    language: crate::i18n::Language,
+) -> String {
+    format!(
+        "{}: `{requested}`\n{}:\n{}\n{}: {current_response}",
+        language.message(MessageKey::CommandsRequestedValue9eb15821),
+        language.message(MessageKey::CommandsConversationDefaultsAfterUpdate4806be50),
+        format_settings_with_language(&settings_snapshot(snapshot), language),
+        language.message(MessageKey::CommandsCurrentResponse5c4a065c),
+    )
+}
+
+fn spawn_settings_confirmation(
+    ctx: Context,
+    interaction: ComponentInteraction,
+    state: Arc<BridgeState>,
+    pending_menu_id: String,
+    kind: SettingsKind,
+    page: usize,
+    requester_id: u64,
+    generation: u64,
+    thread_id: String,
+    model_catalog: Option<Value>,
+    mut ticket: crate::native::ThreadSettingUpdateTicket,
+    requested: String,
+    model_selection: Option<crate::model_catalog::ModelSelection>,
+    current_response: String,
+    current_applied: bool,
+    interaction_id: u64,
+    panel_was_delivered: bool,
+) {
+    tokio::spawn(async move {
+        let result = ticket.wait().await;
+        let update_confirmed = matches!(
+            &result,
+            Ok(crate::native::ThreadSettingUpdateOutcome::Applied(_))
+        );
+        let is_current = ticket.is_current();
+        if !is_current
+            || state.native.current_generation() != generation
+            || state.native.thread_id() != thread_id
+            || matches!(
+                &result,
+                Ok(crate::native::ThreadSettingUpdateOutcome::Superseded)
+            )
+        {
+            return;
+        }
+
+        let notice = match result {
+            Ok(crate::native::ThreadSettingUpdateOutcome::Applied(snapshot)) => {
+                if let Some(checks) = &state.installation_checks {
+                    checks.settings_confirmed(
+                        interaction_id,
+                        &thread_id,
+                        true,
+                        current_applied,
+                        None,
+                    );
+                }
+                if let Some(selection) = model_selection.as_ref()
+                    && let Err(error) = state.native.save_model_selection(selection)
+                {
+                    let detail =
+                        settings_error_detail(&error, state.config.language, Some(&state.config));
+                    format!(
+                        "{}\n{}",
+                        format!(
+                            "{}\n{}",
+                            state.config.language.message(
+                                MessageKey::CommandsModelDefaultConfirmedButSavedSelectionFailed
+                            ),
+                            format_confirmed_settings_update(
+                                &requested,
+                                &snapshot,
+                                &current_response,
+                                state.config.language,
+                            ),
+                        ),
+                        detail
+                    )
+                } else {
+                    format_confirmed_settings_update(
+                        &requested,
+                        &snapshot,
+                        &current_response,
+                        state.config.language,
+                    )
+                }
+            }
+            Ok(crate::native::ThreadSettingUpdateOutcome::Superseded) => return,
+            Err(error) => {
+                let detail =
+                    settings_error_detail(&error, state.config.language, Some(&state.config));
+                if let Some(checks) = &state.installation_checks {
+                    checks.settings_confirmed(
+                        interaction_id,
+                        &thread_id,
+                        false,
+                        current_applied,
+                        Some(&detail),
+                    );
+                }
+                localized_failure_message(
+                    state.config.language.message(
+                        MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396,
+                    ),
+                    &detail,
+                )
+            }
+        };
+
+        // The native update may already be queued even when the first Discord
+        // panel edit failed. Keep confirmation and persistence independent from
+        // that UI result, but never recreate a panel the user may not have seen.
+        if !panel_was_delivered || !is_current {
+            return;
+        }
+
+        let current = {
+            let menus = state.settings_menus.lock().await;
+            menus.get(&pending_menu_id).is_some_and(|menu| {
+                !menu.claimed
+                    && menu.connection_generation == generation
+                    && menu.thread_id == thread_id
+            })
+        };
+        if !current {
+            return;
+        }
+        let refreshed = match build_settings_menu_with_catalog(
+            &ctx,
+            &state,
+            kind,
+            page,
+            requester_id,
+            generation,
+            model_catalog.as_ref(),
+        )
+        .await
+        {
+            Ok(menu) => menu,
+            Err(error) => {
+                report_settings_confirmation_delivery_failure(
+                    &ctx,
+                    &interaction,
+                    &state,
+                    &error,
+                    update_confirmed,
+                    &notice,
+                )
+                .await;
+                return;
+            }
+        };
+        let still_current = ticket.is_current()
+            && state.native.current_generation() == generation
+            && state.native.thread_id() == thread_id
+            && {
+                let menus = state.settings_menus.lock().await;
+                menus.get(&pending_menu_id).is_some_and(|menu| {
+                    !menu.claimed
+                        && menu.connection_generation == generation
+                        && menu.thread_id == thread_id
+                })
+            };
+        if !still_current {
+            return;
+        }
+        if let Err(error) = update_settings_panel_with_notice(
+            &ctx,
+            &interaction,
+            &state,
+            &pending_menu_id,
+            refreshed,
+            &notice,
+        )
+        .await
+        {
+            report_settings_confirmation_delivery_failure(
+                &ctx,
+                &interaction,
+                &state,
+                &error,
+                update_confirmed,
+                &notice,
+            )
+            .await;
+        }
+    });
+}
+
+async fn report_settings_confirmation_delivery_failure(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    state: &BridgeState,
+    error: &anyhow::Error,
+    update_confirmed: bool,
+    setting_notice: &str,
+) {
+    let language = state.config.language;
+    let detail = settings_error_detail(error, language, Some(&state.config));
+    let prefix = if update_confirmed {
+        language.message(MessageKey::CommandsSettingWasConfirmedButSettingsPanelCouldNotBeUpdated)
+    } else {
+        language.message(MessageKey::CommandsCouldNotConfirmWhetherSettingsWereAppliedAce88396)
+    };
+    let message = localized_failure_message(prefix, &format!("{setting_notice}\n{detail}"));
+    let mut followup_failed = None;
+    for chunk in split_discord_content(&message) {
+        if let Err(delivery_error) = interaction
+            .create_followup(
+                ctx,
+                serenity::builder::CreateInteractionResponseFollowup::new()
+                    .content(chunk)
+                    .ephemeral(true)
+                    .allowed_mentions(no_mentions()),
+            )
+            .await
+        {
+            followup_failed = Some(anyhow::Error::new(delivery_error));
+            break;
+        }
+    }
+    if let Some(delivery_error) = followup_failed {
+        let delivery_detail = settings_error_detail(&delivery_error, language, Some(&state.config));
+        let fallback = localized_failure_message(
+            prefix,
+            &format!(
+                "{setting_notice}\n{detail}\n{}: {delivery_detail}",
+                language.message(MessageKey::CommandsDiscordErrorLabel)
+            ),
+        );
+        crate::discord::report_discord_failure(
+            &ctx.http,
+            &state.config,
+            ChannelId::new(state.config.home_channel_id),
+            &fallback,
+        )
+        .await;
     }
 }
 
@@ -5840,36 +5790,36 @@ fn format_settings_update_result_with_language(
     live_result: Option<&anyhow::Result<Value>>,
     language: crate::i18n::Language,
 ) -> String {
+    format_settings_update_result_with_config(requested, defaults, live_result, language, None)
+}
+
+fn format_settings_update_result_with_config(
+    requested: &str,
+    defaults: Option<&Value>,
+    live_result: Option<&anyhow::Result<Value>>,
+    language: crate::i18n::Language,
+    config: Option<&crate::config::Config>,
+) -> String {
     let defaults = defaults
         .map(|value| format_settings_with_language(&settings_snapshot(value), language))
         .unwrap_or_else(|| {
             language
-                .text(
-                    "Could not read settings.",
-                    "조회하지 못했습니다.",
-                    "无法读取设置。",
-                    "設定を取得できませんでした。",
-                )
+                .message(MessageKey::CommandsCouldNotReadSettings23412011)
                 .to_owned()
         });
-    format!(
+    let mut result = format!(
         "{}: `{requested}`\n{}\n{}:\n{defaults}\n{}: {}",
-        language.text("Requested value", "요청한 값", "请求的值", "要求された値"),
-        language.text(
-            "Sent the conversation-default update request.",
-            "대화 기본값 변경 요청을 전달했습니다.",
-            "已发送对话默认值更新请求。",
-            "会話の既定値の更新を要求しました。"
-        ),
-        language.text(
-            "Conversation defaults after update",
-            "이후 대화 기본값",
-            "更新后的对话默认值",
-            "更新後の会話の既定値"
-        ),
-        language.text("Current response", "현재 응답", "当前回复", "現在の応答"),
+        language.message(MessageKey::CommandsRequestedValue9eb15821),
+        language.message(MessageKey::CommandsSentTheConversationDefaultUpdateRequest7097b23b),
+        language.message(MessageKey::CommandsConversationDefaultsAfterUpdate4806be50),
+        language.message(MessageKey::CommandsCurrentResponse5c4a065c),
         current_turn_settings_result_with_language(live_result, language),
-    )
+    );
+    if let Some(Err(error)) = live_result {
+        result.push('\n');
+        result.push_str(&settings_error_detail(error, language, config));
+    }
+    result
 }
 
 fn format_permission_settings_result(
@@ -5892,42 +5842,17 @@ fn format_permission_settings_result_with_language(
     language: crate::i18n::Language,
 ) -> String {
     let current = if active_turn {
-        language.text(
-            "Permission use in the active response was not confirmed.",
-            "진행 중인 응답의 권한 적용은 확인하지 않았습니다.",
-            "未确认当前回复是否已应用权限。",
-            "進行中の応答への権限適用は確認していません。",
-        )
+        language.message(MessageKey::CommandsPermissionUseInTheActiveResponseWasNotCo485a99f0)
     } else {
-        language.text(
-            "No response is in progress.",
-            "진행 중인 응답이 없습니다.",
-            "当前没有正在进行的回复。",
-            "進行中の応答はありません。",
-        )
+        language.message(MessageKey::CommandsNoResponseIsInProgress16302856)
     };
-    let prefix = language.text(
-        "Set permission profile to",
-        "권한 프로필을",
-        "已将权限配置设为",
-        "権限プロファイルを",
-    );
-    let suffix = language.text(
-        ".",
-        "로 설정하고 이후 대화 기본값을 확인했습니다.",
-        "。",
-        "に設定し、会話の既定値を確認しました。",
-    );
+    let prefix = language.message(MessageKey::CommandsSetPermissionProfileTo1589e2c0);
+    let suffix = language.message(MessageKey::CommandsMessage6c09cf1f);
     format!(
         "{prefix} `{display_name}`{suffix}\n{}:\n{}\n{}: {current}",
-        language.text(
-            "Conversation defaults after update",
-            "이후 대화 기본값",
-            "更新后的对话默认值",
-            "更新後の会話の既定値"
-        ),
+        language.message(MessageKey::CommandsConversationDefaultsAfterUpdate4806be50),
         format_settings_with_language(settings, language),
-        language.text("Current response", "현재 응답", "当前回复", "現在の応答"),
+        language.message(MessageKey::CommandsCurrentResponse5c4a065c),
     )
 }
 
@@ -5972,27 +5897,17 @@ fn permission_profile_display_name_with_language(
         .or_else(|| match profile.get("id").and_then(Value::as_str) {
             Some(":read-only") => Some(
                 language
-                    .text("Read only", "읽기 전용 (Read Only)", "只读", "読み取り専用")
+                    .message(MessageKey::CommandsReadOnlyBcb1d1ea)
                     .to_owned(),
             ),
             Some(":danger-full-access") => Some(
                 language
-                    .text(
-                        "Full access",
-                        "전체 접근 (Full Access)",
-                        "完全访问",
-                        "フルアクセス",
-                    )
+                    .message(MessageKey::CommandsFullAccess6238ce12)
                     .to_owned(),
             ),
             Some(":workspace") => Some(
                 language
-                    .text(
-                        "Workspace",
-                        "작업 공간 (Workspace)",
-                        "工作区",
-                        "ワークスペース",
-                    )
+                    .message(MessageKey::CommandsWorkspace8128b964)
                     .to_owned(),
             ),
             _ => None,
@@ -6000,12 +5915,7 @@ fn permission_profile_display_name_with_language(
         .unwrap_or_else(|| {
             format!(
                 "{} {}",
-                language.text(
-                    "Permission profile",
-                    "권한 프로필",
-                    "权限配置",
-                    "権限プロファイル"
-                ),
+                language.message(MessageKey::CommandsPermissionProfileC7e4bb80),
                 index + 1
             )
         })
@@ -6034,23 +5944,13 @@ fn humanize_permission_profile_name_with_language(
 ) -> String {
     match value {
         ":read-only" => language
-            .text("Read only", "읽기 전용 (Read Only)", "只读", "読み取り専用")
+            .message(MessageKey::CommandsReadOnlyBcb1d1ea)
             .to_owned(),
         ":danger-full-access" => language
-            .text(
-                "Full access",
-                "전체 접근 (Full Access)",
-                "完全访问",
-                "フルアクセス",
-            )
+            .message(MessageKey::CommandsFullAccess6238ce12)
             .to_owned(),
         ":workspace" => language
-            .text(
-                "Workspace",
-                "작업 공간 (Workspace)",
-                "工作区",
-                "ワークスペース",
-            )
+            .message(MessageKey::CommandsWorkspace8128b964)
             .to_owned(),
         _ => value.to_owned(),
     }
@@ -6105,45 +6005,30 @@ fn format_settings(settings: &Value) -> String {
 
 fn format_settings_with_language(settings: &Value, language: crate::i18n::Language) -> String {
     let labels = [
-        ("model", language.text("Model", "모델", "模型", "モデル")),
+        ("model", language.message(MessageKey::CommandsModel704caa01)),
         (
             "effort",
-            language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ"),
+            language.message(MessageKey::CommandsReasoningEffortCeade6e1),
         ),
         (
             "serviceTier",
-            language.text("Service tier", "서비스 등급", "服务等级", "サービスティア"),
+            language.message(MessageKey::CommandsServiceTierB86474e3),
         ),
         (
             "activePermissionProfile",
-            language.text(
-                "Permission profile",
-                "권한 프로필",
-                "权限配置",
-                "権限プロファイル",
-            ),
+            language.message(MessageKey::CommandsPermissionProfileC7e4bb80),
         ),
         (
             "approvalPolicy",
-            language.text("Approval policy", "승인 방식", "审批策略", "承認ポリシー"),
+            language.message(MessageKey::CommandsApprovalPolicyBe6ee113),
         ),
         (
             "sandboxPolicy",
-            language.text(
-                "File access",
-                "파일 접근 범위",
-                "文件访问",
-                "ファイルアクセス",
-            ),
+            language.message(MessageKey::CommandsFileAccess65b1775e),
         ),
         (
             "approvalsReviewer",
-            language.text(
-                "Approval reviewer",
-                "승인 검토",
-                "审批审核者",
-                "承認レビュー担当",
-            ),
+            language.message(MessageKey::CommandsApprovalReviewer1bb5dad9),
         ),
     ];
     labels
@@ -6186,45 +6071,24 @@ fn format_sandbox_policy_with_language(value: &Value, language: crate::i18n::Lan
         .and_then(Value::as_str)
         .or_else(|| value.as_str());
     let access = match kind {
-        Some("readOnly") => language.text("Read only", "읽기 전용", "只读", "読み取り専用"),
-        Some("workspaceWrite") => language.text(
-            "Read and write in the workspace",
-            "작업 공간 안에서 읽기·쓰기",
-            "在工作区内读写",
-            "ワークスペース内で読み書き",
-        ),
-        Some("dangerFullAccess") => language.text(
-            "Unrestricted file access",
-            "제한 없는 파일 접근",
-            "不受限制的文件访问",
-            "制限のないファイルアクセス",
-        ),
-        _ => language.text(
-            "Current native setting",
-            "현재 native 설정",
-            "当前 native 设置",
-            "現在の native 設定",
-        ),
+        Some("readOnly") => language.message(MessageKey::CommandsReadOnlyAabd721a),
+        Some("workspaceWrite") => {
+            language.message(MessageKey::CommandsReadAndWriteInTheWorkspaceCd2cf07f)
+        }
+        Some("dangerFullAccess") => {
+            language.message(MessageKey::CommandsUnrestrictedFileAccess9720c6c4)
+        }
+        _ => language.message(MessageKey::CommandsCurrentNativeSetting32c855ae),
     };
     let mut details = vec![access.to_owned()];
     for (key, label) in [
         (
             "readableRoots",
-            language.text(
-                "Readable locations",
-                "읽기 가능 위치",
-                "可读位置",
-                "読み取り可能な場所",
-            ),
+            language.message(MessageKey::CommandsReadableLocations99fdcca7),
         ),
         (
             "writableRoots",
-            language.text(
-                "Writable locations",
-                "쓰기 가능 위치",
-                "可写位置",
-                "書き込み可能な場所",
-            ),
+            language.message(MessageKey::CommandsWritableLocationsDd96deb1),
         ),
     ] {
         if let Some(roots) = value.get(key).and_then(Value::as_array) {
@@ -6237,16 +6101,11 @@ fn format_sandbox_policy_with_language(value: &Value, language: crate::i18n::Lan
     if let Some(network) = value.get("networkAccess").and_then(Value::as_bool) {
         details.push(format!(
             "{}: {}",
-            language.text(
-                "Network access",
-                "네트워크 접근",
-                "网络访问",
-                "ネットワークアクセス"
-            ),
+            language.message(MessageKey::CommandsNetworkAccessEec1571b),
             if network {
-                language.text("Allowed", "허용", "允许", "許可")
+                language.message(MessageKey::CommandsAllowed0d02047a)
             } else {
-                language.text("Blocked", "차단", "阻止", "ブロック")
+                language.message(MessageKey::CommandsBlocked1b94f0d3)
             }
         ));
     }
@@ -6259,24 +6118,9 @@ fn format_approval_policy(value: &Value) -> String {
 
 fn format_approval_policy_with_language(value: &Value, language: crate::i18n::Language) -> String {
     let label = match value.as_str() {
-        Some("on-request") => Some(language.text(
-            "Ask when needed",
-            "필요할 때 확인",
-            "需要时询问",
-            "必要なときに確認",
-        )),
-        Some("untrusted") => Some(language.text(
-            "Ask unless trusted",
-            "신뢰된 명령 외에는 확인",
-            "非信任命令需审批",
-            "信頼済みコマンド以外は確認",
-        )),
-        Some("never") => Some(language.text(
-            "Never ask",
-            "승인 요청 안 함",
-            "不请求审批",
-            "承認を要求しない",
-        )),
+        Some("on-request") => Some(language.message(MessageKey::CommandsAskWhenNeeded998a5eef)),
+        Some("untrusted") => Some(language.message(MessageKey::CommandsAskUnlessTrustedD339f046)),
+        Some("never") => Some(language.message(MessageKey::CommandsNeverAskE7783a8c)),
         _ => None,
     };
     if let Some(label) = label {
@@ -6284,12 +6128,7 @@ fn format_approval_policy_with_language(value: &Value, language: crate::i18n::La
     } else if value.is_null() || value.as_str() == Some("native snapshot did not report this field")
     {
         language
-            .text(
-                "Not reported by Codex",
-                "Codex에서 보고하지 않음",
-                "Codex 未报告",
-                "Codex から報告なし",
-            )
+            .message(MessageKey::CommandsNotReportedByCodex9ba3ffef)
             .to_owned()
     } else {
         value
@@ -6308,19 +6147,9 @@ fn approval_policy_settings_values(
     let actual = thread.get("approvalPolicy");
     let current = format!(
         "{}: {}\n{}: {}",
-        language.text(
-            "Effective policy",
-            "실효 승인 방식",
-            "当前生效策略",
-            "有効なポリシー"
-        ),
+        language.message(MessageKey::CommandsEffectivePolicyB2e092d3),
         format_approval_policy_with_language(actual.unwrap_or(&Value::Null), language),
-        language.text(
-            "Profile policy",
-            "프로필 승인 방식",
-            "配置策略",
-            "プロファイルポリシー"
-        ),
+        language.message(MessageKey::CommandsProfilePolicyAdaebde1),
         format_approval_policy_with_language(saved, language),
     );
     (
@@ -6358,26 +6187,16 @@ fn format_approvals_reviewer_with_language(
 ) -> String {
     match value.as_str() {
         Some("user") => language
-            .text("User", "사용자", "用户", "ユーザー")
+            .message(MessageKey::CommandsUser8116d237)
             .to_owned(),
         Some("auto_review") => language
-            .text(
-                "Automatic review (auto_review)",
-                "자동 검토 (auto_review)",
-                "自动审查 (auto_review)",
-                "自動レビュー (auto_review)",
-            )
+            .message(MessageKey::CommandsAutomaticReviewAutoReview25c10795)
             .to_owned(),
         _ if value.is_null()
             || value.as_str() == Some("native snapshot did not report this field") =>
         {
             language
-                .text(
-                    "Not reported by Codex",
-                    "Codex에서 보고하지 않음",
-                    "Codex 未报告",
-                    "Codex から報告なし",
-                )
+                .message(MessageKey::CommandsNotReportedByCodex9ba3ffef)
                 .to_owned()
         }
         _ => value
@@ -6401,12 +6220,7 @@ fn format_active_permission_profile_with_language(
     if value.is_null() {
         return Some(
             language
-                .text(
-                    "No profile selected",
-                    "선택된 프로필 없음",
-                    "未选择配置",
-                    "プロファイル未選択",
-                )
+                .message(MessageKey::CommandsNoProfileSelected25f65a7d)
                 .to_owned(),
         );
     }
@@ -6425,48 +6239,28 @@ fn format_active_permission_profile_with_language(
     match id {
         Some(":read-only") => Some(
             language
-                .text("Read only", "읽기 전용 (Read Only)", "只读", "読み取り専用")
+                .message(MessageKey::CommandsReadOnlyBcb1d1ea)
                 .to_owned(),
         ),
         Some(":danger-full-access") => Some(
             language
-                .text(
-                    "Full access",
-                    "전체 접근 (Full Access)",
-                    "完全访问",
-                    "フルアクセス",
-                )
+                .message(MessageKey::CommandsFullAccess6238ce12)
                 .to_owned(),
         ),
         Some(":workspace") => Some(
             language
-                .text(
-                    "Workspace",
-                    "작업 공간 (Workspace)",
-                    "工作区",
-                    "ワークスペース",
-                )
+                .message(MessageKey::CommandsWorkspace8128b964)
                 .to_owned(),
         ),
         Some(_) => Some(
             language
-                .text(
-                    "Current permission profile",
-                    "현재 권한 프로필",
-                    "当前权限配置",
-                    "現在の権限プロファイル",
-                )
+                .message(MessageKey::CommandsCurrentPermissionProfile9e74fa66)
                 .to_owned(),
         ),
         None => Some(
             setting_value_with_language(value, language).unwrap_or_else(|| {
                 language
-                    .text(
-                        "Current permission profile",
-                        "현재 권한 프로필",
-                        "当前权限配置",
-                        "現在の権限プロファイル",
-                    )
+                    .message(MessageKey::CommandsCurrentPermissionProfile9e74fa66)
                     .to_owned()
             }),
         ),
@@ -6479,32 +6273,22 @@ fn setting_value(value: &Value) -> Option<String> {
 
 fn setting_value_with_language(value: &Value, language: crate::i18n::Language) -> Option<String> {
     match value {
-        Value::Null => Some(language.text("Off", "해제", "关闭", "オフ").to_owned()),
+        Value::Null => Some(language.message(MessageKey::CommandsOff9616c89c).to_owned()),
         Value::String(text) if text == "native snapshot did not report this field" => None,
         Value::String(text) => Some(match text.as_str() {
             ":danger-full-access" => language
-                .text(
-                    "Full access",
-                    "전체 접근 (Full Access)",
-                    "完全访问",
-                    "フルアクセス",
-                )
+                .message(MessageKey::CommandsFullAccess6238ce12)
                 .to_owned(),
             ":workspace" => language
-                .text(
-                    "Workspace",
-                    "작업 공간 (Workspace)",
-                    "工作区",
-                    "ワークスペース",
-                )
+                .message(MessageKey::CommandsWorkspace8128b964)
                 .to_owned(),
             _ => text.clone(),
         }),
         Value::Bool(value) => Some(
             if *value {
-                language.text("Enabled", "사용", "已启用", "有効")
+                language.message(MessageKey::CommandsEnabled222f5de9)
             } else {
-                language.text("Disabled", "사용 안 함", "未启用", "無効")
+                language.message(MessageKey::CommandsDisabledA5d631b5)
             }
             .to_owned(),
         ),
@@ -6539,11 +6323,11 @@ fn field_label(value: &str) -> &str {
 
 fn field_label_with_language(value: &str, language: crate::i18n::Language) -> &str {
     match value {
-        "read" => language.text("Read", "읽기", "读取", "読み取り"),
-        "write" => language.text("Write", "쓰기", "写入", "書き込み"),
-        "network" => language.text("Network", "네트워크", "网络", "ネットワーク"),
-        "roots" => language.text("Allowed paths", "허용 경로", "允许的路径", "許可パス"),
-        "mode" | "scope" => language.text("Scope", "범위", "范围", "範囲"),
+        "read" => language.message(MessageKey::CommandsRead0c3244ec),
+        "write" => language.message(MessageKey::CommandsWriteD2cfe0e4),
+        "network" => language.message(MessageKey::CommandsNetwork0e84aac9),
+        "roots" => language.message(MessageKey::CommandsAllowedPaths8c5120c2),
+        "mode" | "scope" => language.message(MessageKey::CommandsScope60298d24),
         _ => value,
     }
 }
@@ -6555,22 +6339,12 @@ fn format_model_catalog(catalog: &Value) -> String {
 fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::Language) -> String {
     let Some(models) = catalog.get("data").and_then(Value::as_array) else {
         return language
-            .text(
-                "Could not read the available models.",
-                "사용 가능한 모델 목록을 읽지 못했습니다.",
-                "无法读取可用模型列表。",
-                "利用可能なモデル一覧を取得できませんでした。",
-            )
+            .message(MessageKey::CommandsCouldNotReadTheAvailableModelsC7cb825b)
             .to_owned();
     };
     if models.is_empty() {
         return language
-            .text(
-                "No models are available.",
-                "사용 가능한 모델이 없습니다.",
-                "没有可用模型。",
-                "利用可能なモデルはありません。",
-            )
+            .message(MessageKey::CommandsNoModelsAreAvailable648adafd)
             .to_owned();
     }
     let entries = models
@@ -6581,12 +6355,7 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
                 .and_then(Value::as_str)
                 .or_else(|| model.get("name").and_then(Value::as_str))
                 .or_else(|| model.get("id").and_then(Value::as_str))
-                .unwrap_or(language.text(
-                    "Unnamed model",
-                    "이름 없는 모델",
-                    "未命名模型",
-                    "名前のないモデル",
-                ));
+                .unwrap_or(language.message(MessageKey::CommandsUnnamedModel906cf8f6));
             let value = crate::model_catalog::model_id(model).unwrap_or(name);
             let mut details = Vec::new();
             if let Some(efforts) = model
@@ -6614,7 +6383,7 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
                 if !values.is_empty() {
                     details.push(format!(
                         "{}: {}",
-                        language.text("Reasoning effort", "추론 강도", "推理强度", "推論の強さ"),
+                        language.message(MessageKey::CommandsReasoningEffortCeade6e1),
                         values.join(", ")
                     ));
                 }
@@ -6632,7 +6401,7 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
                 if !values.is_empty() {
                     details.push(format!(
                         "{}: {}",
-                        language.text("Service tier", "서비스 등급", "服务等级", "サービスティア"),
+                        language.message(MessageKey::CommandsServiceTierB86474e3),
                         values.join(", ")
                     ));
                 }
@@ -6649,12 +6418,7 @@ fn format_model_catalog_with_language(catalog: &Value, language: crate::i18n::La
         .collect::<Vec<_>>();
     format!(
         "{}\n{}",
-        language.text(
-            "Available models and settings",
-            "사용 가능한 모델과 설정 선택지",
-            "可用模型和设置选项",
-            "利用可能なモデルと設定項目"
-        ),
+        language.message(MessageKey::CommandsAvailableModelsAndSettings54e331f3),
         entries.join("\n")
     )
 }
@@ -6669,22 +6433,12 @@ fn format_permission_catalog_with_language(
 ) -> String {
     let Some(profiles) = catalog.get("data").and_then(Value::as_array) else {
         return language
-            .text(
-                "Could not read the available permission profiles.",
-                "사용 가능한 권한 프로필 목록을 읽지 못했습니다.",
-                "无法读取可用权限配置列表。",
-                "利用可能な権限プロファイル一覧を取得できませんでした。",
-            )
+            .message(MessageKey::CommandsCouldNotReadTheAvailablePermissionProfiles0dd5ae6c)
             .to_owned();
     };
     if profiles.is_empty() {
         return language
-            .text(
-                "No permission profiles are available.",
-                "사용 가능한 권한 프로필이 없습니다.",
-                "没有可用权限配置。",
-                "利用可能な権限プロファイルはありません。",
-            )
+            .message(MessageKey::CommandsNoPermissionProfilesAreAvailableAf94b34d)
             .to_owned();
     }
     let entries = profiles
@@ -6694,19 +6448,9 @@ fn format_permission_catalog_with_language(
             let name = permission_profile_display_name_with_language(profile, index, language);
             let allowed = profile.get("allowed").and_then(Value::as_bool);
             let status = match allowed {
-                Some(true) => language.text("Available", "사용 가능", "可用", "利用可能"),
-                Some(false) => language.text(
-                    "Currently unavailable",
-                    "현재 사용할 수 없음",
-                    "当前不可用",
-                    "現在利用できません",
-                ),
-                None => language.text(
-                    "Status not reported",
-                    "상태 미보고",
-                    "未报告状态",
-                    "状態未報告",
-                ),
+                Some(true) => language.message(MessageKey::CommandsAvailable64e2ae33),
+                Some(false) => language.message(MessageKey::CommandsCurrentlyUnavailable6ed28c28),
+                None => language.message(MessageKey::CommandsStatusNotReportedB5c12e4b),
             };
             let description = profile
                 .get("description")
@@ -6718,12 +6462,7 @@ fn format_permission_catalog_with_language(
         .collect::<Vec<_>>();
     format!(
         "{}\n{}",
-        language.text(
-            "Permission profiles (enter the display name to set one)",
-            "권한 프로필 (설정 시 표시 이름을 입력하세요)",
-            "权限配置（设置时请输入显示名称）",
-            "権限プロファイル（設定時は表示名を入力してください）"
-        ),
+        language.message(MessageKey::CommandsPermissionProfilesEnterTheDisplayNameToSe2ca03a87),
         entries.join("\n")
     )
 }
@@ -6789,7 +6528,7 @@ fn server_request_messages_with_source_link_language(
                 if let Some(source_link) = source_link {
                     content.push_str(&format!(
                         "\n\n{}: ",
-                        language.text("Source message", "원본 메시지", "源消息", "元のメッセージ")
+                        language.message(MessageKey::CommandsSourceMessage28a4f745)
                     ));
                     content.push_str(source_link);
                 }
@@ -6820,11 +6559,8 @@ fn describe_server_request_with_language(
             let reason = params
                 .get("reason")
                 .and_then(Value::as_str)
-                .unwrap_or(language.text(
-                    "Codex requested permission to run a terminal command.",
-                    "Codex가 터미널 명령 실행을 요청했습니다.",
-                    "Codex 请求运行终端命令的权限。",
-                    "Codex がターミナルコマンドの実行許可を求めています。",
+                .unwrap_or(language.message(
+                    MessageKey::CommandsCodexRequestedPermissionToRunATerminalCom26660fce,
                 ));
             let location = params
                 .get("cwd")
@@ -6832,12 +6568,7 @@ fn describe_server_request_with_language(
                 .map(|value| {
                     format!(
                         "\n{}: {value}",
-                        language.text(
-                            "Working directory",
-                            "작업 위치",
-                            "工作目录",
-                            "作業ディレクトリ"
-                        )
+                        language.message(MessageKey::CommandsWorkingDirectory1ef220d7)
                     )
                 })
                 .unwrap_or_default();
@@ -6851,23 +6582,13 @@ fn describe_server_request_with_language(
                 .map(|host| {
                     format!(
                         "\n{}: {host}",
-                        language.text(
-                            "Network target",
-                            "네트워크 대상",
-                            "网络目标",
-                            "ネットワーク対象"
-                        )
+                        language.message(MessageKey::CommandsNetworkTarget025d41e4)
                     )
                 })
                 .unwrap_or_default();
             format!(
                 "{reason}{location}{network_scope}\n{}",
-                language.text(
-                    "Choose the permission scope below.",
-                    "아래에서 허용 범위를 선택해 주세요.",
-                    "请在下方选择权限范围。",
-                    "以下から許可する範囲を選択してください。"
-                )
+                language.message(MessageKey::CommandsChooseThePermissionScopeBelowE618ebe0)
             )
         }
         "item/fileChange/requestApproval" | "applyPatchApproval" => {
@@ -6886,27 +6607,17 @@ fn describe_server_request_with_language(
             } else {
                 format!(
                     "\n{}: {}",
-                    language.text("Files", "대상 파일", "文件", "対象ファイル"),
+                    language.message(MessageKey::CommandsFilesB5f72d90),
                     files.join(", ")
                 )
             };
             let reason = params
                 .get("reason")
                 .and_then(Value::as_str)
-                .unwrap_or(language.text(
-                    "Codex requested file changes.",
-                    "Codex가 파일 변경을 요청했습니다.",
-                    "Codex 请求更改文件。",
-                    "Codex がファイル変更を求めています。",
-                ));
+                .unwrap_or(language.message(MessageKey::CommandsCodexRequestedFileChanges2b51e425));
             format!(
                 "{reason}{details}\n{}",
-                language.text(
-                    "Choose the permission scope below.",
-                    "아래에서 허용 범위를 선택해 주세요.",
-                    "请在下方选择权限范围。",
-                    "以下から許可する範囲を選択してください。"
-                )
+                language.message(MessageKey::CommandsChooseThePermissionScopeBelowE618ebe0)
             )
         }
         "item/permissions/requestApproval" => {
@@ -6916,34 +6627,14 @@ fn describe_server_request_with_language(
                 .unwrap_or_default();
             format!(
                 "{}\n{}: {}\n{}",
-                language.text(
-                    "Codex requested additional permissions.",
-                    "Codex가 추가 권한을 요청했습니다.",
-                    "Codex 请求额外权限。",
-                    "Codex が追加権限を求めています。"
-                ),
-                language.text(
-                    "Requested permissions",
-                    "요청한 권한",
-                    "请求的权限",
-                    "要求された権限"
-                ),
+                language.message(MessageKey::CommandsCodexRequestedAdditionalPermissionsAc468166),
+                language.message(MessageKey::CommandsRequestedPermissions82d992f3),
                 if permission.is_empty() {
-                    language.text(
-                        "No details were provided.",
-                        "세부 항목이 제공되지 않았습니다.",
-                        "未提供详细信息。",
-                        "詳細はありません。",
-                    )
+                    language.message(MessageKey::CommandsNoDetailsWereProvidedD84630b6)
                 } else {
                     &permission
                 },
-                language.text(
-                    "Choose the permission scope below.",
-                    "아래에서 허용 범위를 선택해 주세요.",
-                    "请在下方选择权限范围。",
-                    "以下から許可する範囲を選択してください。"
-                )
+                language.message(MessageKey::CommandsChooseThePermissionScopeBelowE618ebe0)
             )
         }
         "item/tool/requestUserInput" => {
@@ -6957,16 +6648,10 @@ fn describe_server_request_with_language(
                 .enumerate()
                 .map(|(index, question)| {
                     let header = question.get("header").and_then(Value::as_str).unwrap_or("");
-                    let prompt =
-                        question
-                            .get("question")
-                            .and_then(Value::as_str)
-                            .unwrap_or(language.text(
-                                "Enter your answer.",
-                                "답변을 입력해 주세요.",
-                                "请输入答案。",
-                                "回答を入力してください。",
-                            ));
+                    let prompt = question
+                        .get("question")
+                        .and_then(Value::as_str)
+                        .unwrap_or(language.message(MessageKey::CommandsEnterYourAnswer694089c6));
                     let options = question
                         .get("options")
                         .and_then(Value::as_array)
@@ -6994,7 +6679,7 @@ fn describe_server_request_with_language(
                     } else {
                         format!(
                             "{title}\n{}: {options}",
-                            language.text("Options", "선택지", "选项", "選択肢")
+                            language.message(MessageKey::CommandsOptionsD0bca22f)
                         )
                     }
                 })
@@ -7002,43 +6687,27 @@ fn describe_server_request_with_language(
                 .join("\n\n");
             format!(
                 "{}\n\n{details}\n\n{}",
-                language.text(
-                    "Codex asked you to answer the following questions.",
-                    "Codex가 다음 질문에 답변을 요청했습니다.",
-                    "Codex 请您回答以下问题。",
-                    "Codex が次の質問への回答を求めています。"
-                ),
-                language.text(
-                    "Press ‘Write a response’ to answer.",
-                    "‘응답 작성’을 눌러 답변해 주세요.",
-                    "点击“填写回复”作答。",
-                    "「回答を入力」を押して回答してください。"
-                )
+                language
+                    .message(MessageKey::CommandsCodexAskedYouToAnswerTheFollowingQuestion03e6cccf),
+                language.message(MessageKey::CommandsPressWriteAResponseToAnswer49aa6928)
             )
         }
         "mcpServer/elicitation/request" => {
             if let Some(suggestion) =
                 plugin_suggestion(&json!({"method": method, "params": params}))
             {
-                let plugin_name = suggestion.tool_name.as_deref().unwrap_or("Codex plugin");
+                let plugin_name = suggestion
+                    .tool_name
+                    .as_deref()
+                    .unwrap_or_else(|| language.message(MessageKey::CommandsPluginFallbackName));
                 return format!(
                     "{}
 {}
 {}",
                     if is_plugin_suggestion(&suggestion) {
-                        language.text(
-                            "Codex suggests installing a plugin.",
-                            "Codex가 플러그인 설치를 제안합니다.",
-                            "Codex 建议安装一个插件。",
-                            "Codex がプラグインのインストールを提案しています。",
-                        )
+                        language.message(MessageKey::CommandsCodexSuggestsInstallingAPluginCb61c9dc)
                     } else {
-                        language.text(
-                            "Codex suggests connecting this app.",
-                            "Codex가 앱 연결을 제안합니다.",
-                            "Codex 建议连接此应用。",
-                            "Codex がアプリの接続を提案しています。",
-                        )
+                        language.message(MessageKey::CommandsCodexSuggestsConnectingThisAppC9f49f9d)
                     },
                     plugin_name,
                     format!(
@@ -7052,24 +6721,15 @@ fn describe_server_request_with_language(
                     ),
                 );
             }
-            let message = params
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or(language.text(
-                    "The MCP tool requested additional information.",
-                    "MCP 도구가 추가 정보를 요청했습니다.",
-                    "MCP 工具请求补充信息。",
-                    "MCP ツールが追加情報を求めています。",
-                ));
+            let message = params.get("message").and_then(Value::as_str).unwrap_or(
+                language
+                    .message(MessageKey::CommandsTheMcpToolRequestedAdditionalInformation7ffe761a),
+            );
             if mcp_tool_approval_persist_options(params).is_some() {
                 format!(
                     "{}\n{message}",
-                    language.text(
-                        "MCP tool execution approval is required.",
-                        "MCP 도구 실행 승인이 필요합니다.",
-                        "需要批准执行 MCP 工具。",
-                        "MCP ツールの実行承認が必要です。"
-                    )
+                    language
+                        .message(MessageKey::CommandsMcpToolExecutionApprovalIsRequired76b9e25c)
                 )
             } else {
                 let schema = describe_schema_with_language(
@@ -7078,28 +6738,15 @@ fn describe_server_request_with_language(
                 );
                 format!(
                     "{}\n{message}\n{}: {schema}",
-                    language.text(
-                        "The MCP tool requested additional information.",
-                        "MCP 도구가 추가 정보를 요청했습니다.",
-                        "MCP 工具请求补充信息。",
-                        "MCP ツールが追加情報を求めています。"
+                    language.message(
+                        MessageKey::CommandsTheMcpToolRequestedAdditionalInformation7ffe761a
                     ),
-                    language.text(
-                        "Requested fields",
-                        "요청한 항목",
-                        "请求的字段",
-                        "要求された項目"
-                    )
+                    language.message(MessageKey::CommandsRequestedFields70ec5151)
                 )
             }
         }
         _ => language
-            .text(
-                "This request has no choices that can be handled in Discord.",
-                "이 요청은 Discord에서 처리할 수 있는 선택 항목을 제공하지 않습니다.",
-                "此请求没有可在 Discord 中处理的选项。",
-                "このリクエストには Discord で処理できる選択肢がありません。",
-            )
+            .message(MessageKey::CommandsThisRequestHasNoChoicesThatCanBeHandled5a27bdcf)
             .to_owned(),
     }
 }
@@ -7116,12 +6763,7 @@ fn describe_schema_with_language(schema: &Value, language: crate::i18n::Language
             .map(|value| schema_type(value, language))
             .unwrap_or(
                 language
-                    .text(
-                        "Requested information",
-                        "요청한 정보",
-                        "所需信息",
-                        "求められた情報",
-                    )
+                    .message(MessageKey::CommandsRequestedInformation5885acc4)
                     .to_owned(),
             );
     };
@@ -7151,7 +6793,7 @@ fn describe_schema_with_language(schema: &Value, language: crate::i18n::Language
             format!(
                 "{title}{}{}{}{}",
                 if required.contains(&name.as_str()) {
-                    language.text(" (required)", " (필수)", "（必填）", "（必須）")
+                    language.message(MessageKey::CommandsRequiredE306ce88)
                 } else {
                     ""
                 },
@@ -7171,7 +6813,7 @@ fn describe_schema_with_language(schema: &Value, language: crate::i18n::Language
                     format!(
                         " · 선택지{}: {choices}",
                         if spec.get("type").and_then(Value::as_str) == Some("array") {
-                            language.text(" (multiple)", " (여러 개)", "（可多选）", "（複数可）")
+                            language.message(MessageKey::CommandsMultipleA0fe33e9)
                         } else {
                             ""
                         }
@@ -7220,7 +6862,7 @@ fn describe_schema_choices_with_language(spec: &Value, language: crate::i18n::La
                         Some(match item.get("title").and_then(Value::as_str) {
                             Some(label) => format!(
                                 "{label} ({}: {value})",
-                                language.text("value", "값", "值", "値")
+                                language.message(MessageKey::CommandsValue76361ed6)
                             ),
                             None => value.to_string(),
                         })
@@ -7238,11 +6880,11 @@ fn schema_type_korean(value: &str) -> String {
 
 fn schema_type(value: &str, language: crate::i18n::Language) -> String {
     match value {
-        "string" => language.text("text", "문자", "文本", "テキスト"),
-        "number" | "integer" => language.text("number", "숫자", "数字", "数値"),
-        "boolean" => language.text("yes/no", "예/아니요", "是/否", "はい/いいえ"),
-        "array" => language.text("list", "목록", "列表", "リスト"),
-        "object" => language.text("multiple fields", "여러 항목", "多个字段", "複数項目"),
+        "string" => language.message(MessageKey::CommandsText8dac6330),
+        "number" | "integer" => language.message(MessageKey::CommandsNumberDe58f6aa),
+        "boolean" => language.message(MessageKey::CommandsYesNo19b2b691),
+        "array" => language.message(MessageKey::CommandsList38b51386),
+        "object" => language.message(MessageKey::CommandsMultipleFields5d939658),
         _ => value,
     }
     .to_owned()
@@ -7358,29 +7000,16 @@ fn input_modal_with_language(
         if questions.len() > 5 {
             let input = serenity::builder::CreateInputText::new(
                 serenity::all::InputTextStyle::Paragraph,
-                language.text(
-                    "Question numbers and answers",
-                    "질문 번호와 답변",
-                    "问题编号和答案",
-                    "質問番号と回答",
-                ),
+                language.message(MessageKey::CommandsQuestionNumbersAndAnswersCf643d88),
                 "answers_text",
             )
-            .placeholder(language.text(
-                "One number:answer per line. Example: 1:answer",
-                "각 줄에 번호:답변. 예: 1:답변 (콜론 뒤 공백도 답변에 포함됨)",
-                "每行填写 编号:答案。例如：1:答案",
-                "各行に番号:回答を入力。例: 1:回答",
-            ))
+            .placeholder(
+                language.message(MessageKey::CommandsOneNumberAnswerPerLineExample1AnswerD4bd5012),
+            )
             .required(true);
             return Ok(CreateModal::new(
                 format!("codex:input:{key}"),
-                language.text(
-                    "Answer requested by Codex",
-                    "Codex가 요청한 답변",
-                    "Codex 请求的回复",
-                    "Codex が求める回答",
-                ),
+                language.message(MessageKey::CommandsAnswerRequestedByCodexFd12fd68),
             )
             .components(vec![CreateActionRow::InputText(input)]));
         }
@@ -7400,7 +7029,9 @@ fn input_modal_with_language(
                 .unwrap_or(prompt);
             let mut label = header.chars().take(45).collect::<String>();
             if label.is_empty() {
-                label = language.text("Answer", "답변", "回答", "回答").to_owned();
+                label = language
+                    .message(MessageKey::CommandsAnswer21d69914)
+                    .to_owned();
             }
             let options = question
                 .get("options")
@@ -7436,12 +7067,7 @@ fn input_modal_with_language(
         }
         return Ok(CreateModal::new(
             format!("codex:input:{key}"),
-            language.text(
-                "Answer requested by Codex",
-                "Codex가 요청한 답변",
-                "Codex 请求的回复",
-                "Codex が求める回答",
-            ),
+            language.message(MessageKey::CommandsAnswerRequestedByCodexFd12fd68),
         )
         .components(components));
     }
@@ -7449,24 +7075,14 @@ fn input_modal_with_language(
     let schema_summary = describe_schema_with_language(schema, language);
     let input = serenity::builder::CreateInputText::new(
         serenity::all::InputTextStyle::Paragraph,
-        language.text(
-            "Requested information",
-            "요청한 정보",
-            "所需信息",
-            "求められた情報",
-        ),
+        language.message(MessageKey::CommandsRequestedInformation5885acc4),
         "elicitation_json",
     )
     .placeholder(schema_summary.chars().take(100).collect::<String>())
     .required(true);
     Ok(CreateModal::new(
         format!("codex:input:{key}"),
-        language.text(
-            "Enter additional information",
-            "추가 정보 입력",
-            "输入其他信息",
-            "追加情報を入力",
-        ),
+        language.message(MessageKey::CommandsEnterAdditionalInformation42ca01e5),
     )
     .components(vec![CreateActionRow::InputText(input)]))
 }
@@ -7778,23 +7394,13 @@ fn authorize(
     if guild_id.map(|id| id.get()) != Some(state.config.guild_id) {
         bail!(
             "{}",
-            language.text(
-                "This command is available only in the configured home server.",
-                "이 명령은 설정된 홈 서버에서만 사용할 수 있습니다",
-                "此命令只能在已配置的主服务器中使用。",
-                "このコマンドは設定済みのホームサーバーでのみ使用できます。"
-            )
+            language.message(MessageKey::CommandsThisCommandIsAvailableOnlyInTheConfiguredBd74104f)
         );
     }
     if !state.config.operator_ids.contains(&user_id.get()) {
         bail!(
             "{}",
-            language.text(
-                "This Discord user is not configured as an operator.",
-                "이 Discord 사용자는 조작자로 설정되어 있지 않습니다",
-                "此 Discord 用户未配置为操作员。",
-                "この Discord ユーザーはオペレーターに設定されていません。"
-            )
+            language.message(MessageKey::CommandsThisDiscordUserIsNotConfiguredAsAnOperat97197eb8)
         );
     }
     Ok(())
@@ -7814,18 +7420,12 @@ fn input_mode_korean(mode: crate::config::InputMode) -> &'static str {
 
 fn input_mode(mode: crate::config::InputMode, language: crate::i18n::Language) -> &'static str {
     match mode {
-        crate::config::InputMode::Steering => language.text(
-            "Send to the active response",
-            "실행 중인 응답에 전달",
-            "发送到当前回复",
-            "進行中の応答に送信",
-        ),
-        crate::config::InputMode::NextTurn => language.text(
-            "Send before the next response",
-            "다음 응답 전에 전달",
-            "在下一条回复前发送",
-            "次の応答の前に送信",
-        ),
+        crate::config::InputMode::Steering => {
+            language.message(MessageKey::CommandsSendToTheActiveResponse32141a0b)
+        }
+        crate::config::InputMode::NextTurn => {
+            language.message(MessageKey::CommandsSendBeforeTheNextResponse9c3b5081)
+        }
     }
 }
 
@@ -8104,12 +7704,7 @@ fn plugin_suggestion_waiting_actions(
     let labels = suggestion_labels(language);
     vec![CreateActionRow::Buttons(vec![
         CreateButton::new(format!("codex:approval:{key}:plugin-check"))
-            .label(language.text(
-                "Finished sign-in / Check again",
-                "로그인 완료 / 다시 확인",
-                "完成登录 / 重新检查",
-                "サインイン完了 / 再確認",
-            ))
+            .label(language.message(MessageKey::CommandsFinishedSignInCheckAgainD61b0267))
             .style(ButtonStyle::Success),
         CreateButton::new(format!("codex:approval:{key}:plugin-decline"))
             .label(labels.decline)
@@ -8160,9 +7755,13 @@ async fn handle_plugin_suggestion_component(
                 let catalog = list_catalog(&state.native, true).await?;
                 let installed = list_installed(&state.native).await?;
                 if !suggested_plugin_is_installed(&installed, &suggestion) {
-                    let target = suggested_plugin_target(&catalog, &suggestion)?;
-                    let _detail = read_plugin(&state.native, &target).await?;
-                    let outcome = install_confirmed(&state.native, &target, true).await?;
+                    let target =
+                        suggested_plugin_target(&catalog, &suggestion, state.config.language)?;
+                    let _detail =
+                        read_plugin(&state.native, &target, state.config.language).await?;
+                    let outcome =
+                        install_confirmed(&state.native, &target, true, state.config.language)
+                            .await?;
                     for app in outcome.apps_needing_auth {
                         if let Some(url) = app.install_url {
                             setup_links.push(format!("{} — <{}>", app.name, url));
@@ -8170,54 +7769,85 @@ async fn handle_plugin_suggestion_component(
                     }
                 }
             } else if let Some(url) = suggestion.install_url.as_deref() {
-                setup_links.push(format!("{} — <{url}>", suggestion.tool_name.as_deref().unwrap_or("App setup")));
+                setup_links.push(format!(
+                    "{} — <{url}>",
+                    suggestion.tool_name.as_deref().unwrap_or_else(|| {
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsPluginFallbackAppSetup)
+                    })
+                ));
             }
             // Preserve the live native request while the user finishes OAuth/app setup.
             let mut card = interaction.message.clone();
             let mut content = card.content.clone();
             if !setup_links.is_empty() {
                 content.push_str("\n\n");
-                content.push_str(&state.config.language.text(
-                    "Codex returned setup links:", "Codex가 설정 링크를 반환했습니다:",
-                    "Codex 返回了设置链接：", "Codex からセットアップリンクが返されました：",
-                ));
+                content.push_str(
+                    &state
+                        .config
+                        .language
+                        .message(MessageKey::CommandsCodexReturnedSetupLinksB3940f5f),
+                );
                 content.push_str("\n");
                 content.push_str(&setup_links.join("\n"));
             }
-            card.edit(ctx, serenity::builder::EditMessage::new()
-                .content(content)
-                .components(plugin_suggestion_waiting_actions(key, state.config.language))
-                .allowed_mentions(no_mentions())).await?;
+            card.edit(
+                ctx,
+                serenity::builder::EditMessage::new()
+                    .content(content)
+                    .components(plugin_suggestion_waiting_actions(
+                        key,
+                        state.config.language,
+                    ))
+                    .allowed_mentions(no_mentions()),
+            )
+            .await?;
         }
 
         let verified = verify_plugin_suggestion_native_state(state, &suggestion).await?;
         if !verified {
-            let text = state.config.language.text(
-                "Codex has not reported the requested plugin/apps ready yet. Finish sign-in, then use “Finished sign-in / Check again”. No acceptance was sent.",
-                "Codex가 요청된 플러그인/앱의 준비를 아직 확인하지 못했습니다. 로그인 후 ‘로그인 완료 / 다시 확인’을 누르세요. 수락 응답은 보내지 않았습니다.",
-                "Codex 尚未确认所请求的插件/应用已就绪。完成登录后点击“完成登录 / 重新检查”。尚未发送接受响应。",
-                "Codex は要求されたプラグインやアプリの準備をまだ確認できていません。サインイン後に「サインイン完了 / 再確認」を押してください。承諾応答はまだ送信していません。",
-            );
-            interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(text)).await?;
+            let text = state
+                .config
+                .language
+                .message(MessageKey::CommandsCodexHasNotReportedTheRequestedPluginAppsEbf234e2);
+            interaction
+                .edit_response(
+                    ctx,
+                    serenity::builder::EditInteractionResponse::new().content(text),
+                )
+                .await?;
             return Ok::<bool, anyhow::Error>(false);
         }
         let result = verified_suggestion_accept(verified)
             .ok_or_else(|| anyhow!("native suggestion is not verified"))?;
-        state.native.respond_for_generation(
-            pending.connection_generation,
-            pending.native_id.clone(),
-            result,
-        ).await?;
-        interaction.edit_response(ctx, serenity::builder::EditInteractionResponse::new().content(
-            state.config.language.text(
-                "Acceptance sent to Codex. Codex will report whether its install verification completed.",
-                "Codex에 수락을 전달했습니다. 설치 검증이 완료되었는지는 Codex가 보고합니다.",
-                "已向 Codex 发送接受响应。Codex 会报告其安装验证是否完成。",
-                "Codex に承諾を送信しました。インストール検証の結果は Codex から報告されます。",
+        state
+            .native
+            .respond_for_generation(
+                pending.connection_generation,
+                pending.native_id.clone(),
+                result,
             )
-        )).await?;
+            .await?;
+        interaction
+            .edit_response(
+                ctx,
+                serenity::builder::EditInteractionResponse::new().content(
+                    state.config.language.message(
+                        MessageKey::CommandsAcceptanceSentToCodexCodexWillReportWhethFdec8fc5,
+                    ),
+                ),
+            )
+            .await?;
         let mut card = interaction.message.clone();
-        if let Err(error) = card.edit(ctx, serenity::builder::EditMessage::new().components(Vec::new())).await {
+        if let Err(error) = card
+            .edit(
+                ctx,
+                serenity::builder::EditMessage::new().components(Vec::new()),
+            )
+            .await
+        {
             tracing::warn!(?error, "failed to close verified plugin suggestion card");
         }
         remove_pending_if_same(state, key, &pending).await;
@@ -8225,7 +7855,8 @@ async fn handle_plugin_suggestion_component(
             checks.request_answered(pending.connection_generation, &pending.native_id);
         }
         Ok::<bool, anyhow::Error>(true)
-    }.await;
+    }
+    .await;
 
     match operation {
         Ok(true) => Ok(()),
@@ -8240,13 +7871,11 @@ async fn handle_plugin_suggestion_component(
                 .edit_response(
                     ctx,
                     serenity::builder::EditInteractionResponse::new().content(format!(
-                        "{}: {error:#}",
-                        state.config.language.text(
-                            "Codex could not complete the plugin setup check",
-                            "Codex가 플러그인 설정 확인을 완료하지 못했습니다",
-                            "Codex 无法完成插件设置检查",
-                            "Codex がプラグイン設定の確認を完了できませんでした",
-                        )
+                        "{}: {}",
+                        state.config.language.message(
+                            MessageKey::CommandsCodexCouldNotCompleteThePluginSetupCheck0cc616ac
+                        ),
+                        settings_error_detail(&error, state.config.language, Some(&state.config)),
                     )),
                 )
                 .await?;
@@ -8384,7 +8013,11 @@ async fn load_plugin_menu_entries(
         for plugin in &marketplace.plugins {
             match mode {
                 PluginMenuMode::Catalog => {
-                    if let Ok(target) = PluginInstallTarget::from_catalog(marketplace, plugin) {
+                    if let Ok(target) = PluginInstallTarget::from_catalog(
+                        marketplace,
+                        plugin,
+                        state.config.language,
+                    ) {
                         entries.push(PluginMenuEntry::Install(target));
                     }
                 }
@@ -8422,35 +8055,25 @@ fn render_plugin_menu(
         let content = match selected {
             PluginMenuEntry::Install(_) => format!(
                 "{}\n{}\n{}",
-                language.text(
-                    "Review this native Codex plugin before installing:",
-                    "설치 전에 네이티브 Codex 플러그인을 확인하세요:",
-                    "安装前请查看此原生 Codex 插件：",
-                    "インストール前にネイティブ Codex プラグインを確認してください："
+                language.message(
+                    MessageKey::CommandsReviewThisNativeCodexPluginBeforeInstallin5706ca16
                 ),
                 title,
                 description
             ),
             PluginMenuEntry::Uninstall { .. } => format!(
                 "{}\n{}",
-                language.text(
-                    "Confirm removal of this installed Codex plugin:",
-                    "설치된 Codex 플러그인을 제거할지 확인하세요:",
-                    "请确认是否移除此 Codex 插件：",
-                    "インストール済み Codex プラグインの削除を確認してください："
-                ),
+                language
+                    .message(MessageKey::CommandsConfirmRemovalOfThisInstalledCodexPluginAe4e33e6),
                 title
             ),
         };
         let confirm = match selected {
-            PluginMenuEntry::Install(_) => language.text(
-                "Confirm install",
-                "설치 확인",
-                "确认安装",
-                "インストールを確認",
-            ),
+            PluginMenuEntry::Install(_) => {
+                language.message(MessageKey::CommandsConfirmInstallAe773718)
+            }
             PluginMenuEntry::Uninstall { .. } => {
-                language.text("Confirm removal", "제거 확인", "确认移除", "削除を確認")
+                language.message(MessageKey::CommandsConfirmRemovalD1a86560)
             }
         };
         return (
@@ -8460,7 +8083,7 @@ fn render_plugin_menu(
                     .label(confirm)
                     .style(ButtonStyle::Danger),
                 CreateButton::new(format!("codex:plugins:{menu_id}:back"))
-                    .label(language.text("Back", "뒤로", "返回", "戻る"))
+                    .label(language.message(MessageKey::CommandsBackFf4b818b))
                     .style(ButtonStyle::Secondary),
             ])],
         );
@@ -8468,44 +8091,14 @@ fn render_plugin_menu(
 
     let (heading, empty, instruction) = match menu.mode {
         PluginMenuMode::Catalog => (
-            language.text(
-                "Native Codex plugin catalog",
-                "네이티브 Codex 플러그인 카탈로그",
-                "原生 Codex 插件目录",
-                "ネイティブ Codex プラグインカタログ",
-            ),
-            language.text(
-                "No installable plugins were returned by Codex.",
-                "Codex가 설치 가능한 플러그인을 반환하지 않았습니다.",
-                "Codex 未返回可安装的插件。",
-                "Codex からインストール可能なプラグインが返されませんでした。",
-            ),
-            language.text(
-                "Choose a plugin to review, then confirm installation.",
-                "검토할 플러그인을 고른 뒤 설치를 확인하세요.",
-                "选择插件查看详情，然后确认安装。",
-                "プラグインを選んで詳細を確認し、インストールを確定してください。",
-            ),
+            language.message(MessageKey::CommandsNativeCodexPluginCatalog247a5e12),
+            language.message(MessageKey::CommandsNoInstallablePluginsWereReturnedByCodex730c5822),
+            language.message(MessageKey::CommandsChooseAPluginToReviewThenConfirmInstallat11ac8020),
         ),
         PluginMenuMode::Installed => (
-            language.text(
-                "Installed Codex plugins",
-                "설치된 Codex 플러그인",
-                "已安装的 Codex 插件",
-                "インストール済み Codex プラグイン",
-            ),
-            language.text(
-                "Codex returned no installed plugins.",
-                "Codex가 설치된 플러그인을 반환하지 않았습니다.",
-                "Codex 未返回已安装的插件。",
-                "Codex からインストール済みプラグインが返されませんでした。",
-            ),
-            language.text(
-                "Choose a plugin to review, then confirm removal.",
-                "검토할 플러그인을 고른 뒤 제거를 확인하세요.",
-                "选择插件查看详情，然后确认移除。",
-                "プラグインを選んで詳細を確認し、削除を確定してください。",
-            ),
+            language.message(MessageKey::CommandsInstalledCodexPluginsDd11cf68),
+            language.message(MessageKey::CommandsCodexReturnedNoInstalledPlugins5efd4691),
+            language.message(MessageKey::CommandsChooseAPluginToReviewThenConfirmRemoval3ad3c64e),
         ),
     };
     let mut content = heading.to_owned();
@@ -8522,12 +8115,9 @@ fn render_plugin_menu(
     }
     if !menu.apps_needing_auth.is_empty() {
         content.push_str("\n\n");
-        content.push_str(language.text(
-            "Codex reports these apps need authentication:",
-            "Codex 결과 다음 앱에 인증이 필요합니다:",
-            "Codex 报告以下应用需要身份验证：",
-            "Codex の結果、次のアプリで認証が必要です：",
-        ));
+        content.push_str(
+            language.message(MessageKey::CommandsCodexReportsTheseAppsNeedAuthenticationEf990cc6),
+        );
         for app in &menu.apps_needing_auth {
             content.push_str(&format!("\n• {}", app.name));
             if let Some(url) = app.install_url.as_deref() {
@@ -8537,12 +8127,9 @@ fn render_plugin_menu(
     }
     if !menu.oauth_servers.is_empty() {
         content.push_str("\n\n");
-        content.push_str(language.text(
-            "Start native OAuth for a plugin MCP server:",
-            "플러그인 MCP 서버의 네이티브 OAuth를 시작하세요:",
-            "为插件 MCP 服务器启动原生 OAuth：",
-            "プラグイン MCP サーバーのネイティブ OAuth を開始できます：",
-        ));
+        content.push_str(
+            language.message(MessageKey::CommandsStartNativeOauthForAPluginMcpServerE072fd5b),
+        );
     }
     if menu.auth_view {
         let mut rows = Vec::new();
@@ -8553,12 +8140,9 @@ fn render_plugin_menu(
         let end = (start + PLUGIN_MENU_PAGE_SIZE).min(menu.oauth_servers.len());
         if menu.oauth_servers.is_empty() {
             content.push_str("\n");
-            content.push_str(language.text(
-                "No plugin MCP servers were returned by Codex.",
-                "Codex가 플러그인 MCP 서버를 반환하지 않았습니다.",
-                "Codex 未返回插件 MCP 服务器。",
-                "Codex からプラグイン MCP サーバーが返されませんでした。",
-            ));
+            content.push_str(
+                language.message(MessageKey::CommandsNoPluginMcpServersWereReturnedByCodex3f464c0e),
+            );
         }
         for (row_index, group) in menu.oauth_servers[start..end].chunks(5).enumerate() {
             let buttons = group
@@ -8585,13 +8169,13 @@ fn render_plugin_menu(
                     "codex:plugins:{menu_id}:p{}",
                     menu.page.saturating_sub(1)
                 ))
-                .label(language.text("Previous", "이전", "上一页", "前へ"))
+                .label(language.message(MessageKey::CommandsPrevious9be71e5f))
                 .disabled(menu.page == 0),
             );
         }
         controls.push(
             CreateButton::new(format!("codex:plugins:{menu_id}:plugins"))
-                .label(language.text("Plugins", "플러그인", "插件", "プラグイン"))
+                .label(language.message(MessageKey::CommandsPluginsB04ed055))
                 .style(ButtonStyle::Primary),
         );
         if pages > 1 {
@@ -8600,13 +8184,13 @@ fn render_plugin_menu(
                     "codex:plugins:{menu_id}:p{}",
                     (menu.page + 1).min(pages - 1)
                 ))
-                .label(language.text("Next", "다음", "下一页", "次へ"))
+                .label(language.message(MessageKey::CommandsNext8a0c8241))
                 .disabled(menu.page + 1 >= pages),
             );
         }
         controls.push(
             CreateButton::new(format!("codex:plugins:{menu_id}:close"))
-                .label(language.text("Close", "닫기", "关闭", "閉じる"))
+                .label(language.message(MessageKey::CommandsCloseE91bd255))
                 .style(ButtonStyle::Secondary),
         );
         rows.push(CreateActionRow::Buttons(controls));
@@ -8647,7 +8231,7 @@ fn render_plugin_menu(
                 "codex:plugins:{menu_id}:p{}",
                 menu.page.saturating_sub(1)
             ))
-            .label(language.text("Previous", "이전", "上一页", "前へ"))
+            .label(language.message(MessageKey::CommandsPrevious9be71e5f))
             .disabled(menu.page == 0),
         );
     }
@@ -8657,9 +8241,9 @@ fn render_plugin_menu(
         "catalog"
     };
     let mode_label = if menu.mode == PluginMenuMode::Catalog {
-        language.text("Installed", "설치됨", "已安装", "インストール済み")
+        language.message(MessageKey::CommandsInstalledA4c359ee)
     } else {
-        language.text("Catalog", "카탈로그", "目录", "カタログ")
+        language.message(MessageKey::CommandsCatalogFe5df316)
     };
     controls.push(
         CreateButton::new(format!("codex:plugins:{menu_id}:{mode_action}"))
@@ -8669,12 +8253,7 @@ fn render_plugin_menu(
     if !menu.oauth_servers.is_empty() {
         controls.push(
             CreateButton::new(format!("codex:plugins:{menu_id}:auth"))
-                .label(language.text(
-                    "Plugin OAuth",
-                    "플러그인 OAuth",
-                    "插件 OAuth",
-                    "プラグイン OAuth",
-                ))
+                .label(language.message(MessageKey::CommandsPluginOauthAf3b23e6))
                 .style(ButtonStyle::Success),
         );
     }
@@ -8684,13 +8263,13 @@ fn render_plugin_menu(
                 "codex:plugins:{menu_id}:p{}",
                 (menu.page + 1).min(pages - 1)
             ))
-            .label(language.text("Next", "다음", "下一页", "次へ"))
+            .label(language.message(MessageKey::CommandsNext8a0c8241))
             .disabled(menu.page + 1 >= pages),
         );
     }
     controls.push(
         CreateButton::new(format!("codex:plugins:{menu_id}:close"))
-            .label(language.text("Close", "닫기", "关闭", "閉じる"))
+            .label(language.message(MessageKey::CommandsCloseE91bd255))
             .style(ButtonStyle::Secondary),
     );
     rows.push(CreateActionRow::Buttons(controls));
@@ -8724,10 +8303,16 @@ async fn handle_plugin_component(
         Err(reason) => {
             let language = state.config.language;
             let text = match reason {
-                PluginMenuClaimError::Missing => language.text("This plugin panel expired. Run `/discodex plugins` again.", "플러그인 화면이 만료되었습니다. `/discodex plugins`를 다시 실행하세요.", "此插件面板已过期。请重新运行 `/discodex plugins`。", "このプラグインパネルは期限切れです。`/discodex plugins` をもう一度実行してください。"),
-                PluginMenuClaimError::OtherUser => language.text("Only the person who opened this panel can use it.", "이 화면을 연 사용자만 사용할 수 있습니다.", "只有打开此面板的用户可以操作。", "このパネルを開いたユーザーだけが操作できます。"),
-                PluginMenuClaimError::Busy => language.text("This plugin action is still processing.", "플러그인 작업을 처리 중입니다.", "正在处理此插件操作。", "このプラグイン操作を処理中です。"),
-                PluginMenuClaimError::Stale => language.text("The Codex connection changed. Run `/discodex plugins` again.", "Codex 연결이 변경되었습니다. `/discodex plugins`를 다시 실행하세요.", "Codex 连接已更改。请重新运行 `/discodex plugins`。", "Codex 接続が変わりました。`/discodex plugins` をもう一度実行してください。"),
+                PluginMenuClaimError::Missing => language
+                    .message(MessageKey::CommandsThisPluginPanelExpiredRunDiscodexPluginsA3a629725),
+                PluginMenuClaimError::OtherUser => language
+                    .message(MessageKey::CommandsOnlyThePersonWhoOpenedThisPanelCanUseItA550ca64),
+                PluginMenuClaimError::Busy => {
+                    language.message(MessageKey::CommandsThisPluginActionIsStillProcessingE3038c8d)
+                }
+                PluginMenuClaimError::Stale => language.message(
+                    MessageKey::CommandsTheCodexConnectionChangedRunDiscodexPluginB4158b22,
+                ),
             };
             interaction
                 .create_response(
@@ -8756,11 +8341,8 @@ async fn handle_plugin_component(
                     ctx,
                     CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
-                            .content(state.config.language.text(
-                                "That OAuth server is no longer listed.",
-                                "해당 OAuth 서버는 더 이상 목록에 없습니다.",
-                                "此 OAuth 服务器已不在列表中。",
-                                "その OAuth サーバーは一覧にありません。",
+                            .content(state.config.language.message(
+                                MessageKey::CommandsThatOauthServerIsNoLongerListed924f32d6,
                             ))
                             .ephemeral(true),
                     ),
@@ -8779,28 +8361,31 @@ async fn handle_plugin_component(
         let login_result = begin_oauth_login(&state.native, &server, Some(&menu.thread_id)).await;
         let response = match login_result {
             Ok(login) => {
-                let mut content = format!("{}\n<{}>", state.config.language.text("Native OAuth sign-in started. Open the authorization link and complete sign-in.", "네이티브 OAuth 로그인을 시작했습니다. 인증 링크를 열고 로그인을 완료하세요.", "已启动原生 OAuth 登录。请打开授权链接并完成登录。", "ネイティブ OAuth ログインを開始しました。認証リンクを開いてログインを完了してください。"), login.authorization_url);
+                let mut content = format!(
+                    "{}\n<{}>",
+                    state.config.language.message(
+                        MessageKey::CommandsNativeOauthSignInStartedOpenTheAuthorizat2e3156cb
+                    ),
+                    login.authorization_url
+                );
                 if let Some(id) = login.login_id {
                     content.push_str(&format!(
                         "\n{}: `{id}`",
-                        state.config.language.text(
-                            "Login ID",
-                            "로그인 ID",
-                            "登录 ID",
-                            "ログイン ID"
-                        )
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsLoginIdEae80152)
                     ));
                 }
                 content
             }
             Err(error) => format!(
-                "{}: {error:#}",
-                state.config.language.text(
-                    "Codex could not start OAuth sign-in",
-                    "Codex가 OAuth 로그인을 시작하지 못했습니다",
-                    "Codex 无法启动 OAuth 登录",
-                    "Codex が OAuth ログインを開始できませんでした"
-                )
+                "{}: {}",
+                state
+                    .config
+                    .language
+                    .message(MessageKey::CommandsCodexCouldNotStartOauthSignIn908daee8),
+                settings_error_detail(&error, state.config.language, Some(&state.config)),
             ),
         };
         interaction
@@ -8868,7 +8453,9 @@ async fn handle_plugin_component(
                 .ok_or_else(|| anyhow!("plugin confirmation has no selection"))?;
             match entry {
                 PluginMenuEntry::Install(target) => {
-                    let outcome = install_confirmed(&state.native, &target, true).await?;
+                    let outcome =
+                        install_confirmed(&state.native, &target, true, state.config.language)
+                            .await?;
                     menu.apps_needing_auth = outcome.apps_needing_auth.clone();
                     menu.oauth_servers = menu
                         .selected_detail
@@ -8889,22 +8476,17 @@ async fn handle_plugin_component(
                     let auth_policy = outcome.auth_policy;
                     menu.install_notice = Some(format!(
                         "{} {} ({}){}",
-                        state.config.language.text(
-                            "Codex confirmed installation of",
-                            "Codex가 설치를 확인했습니다:",
-                            "Codex 已确认安装：",
-                            "Codex がインストールを確認しました："
-                        ),
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsCodexConfirmedInstallationOf9ae67a2a),
                         target.display_name,
                         auth_policy,
                         refresh_error
                             .map(|error| format!(
                                 "\n{}: {error}",
-                                state.config.language.text(
-                                    "Could not refresh the installed list",
-                                    "설치 목록을 새로고침하지 못했습니다",
-                                    "无法刷新已安装列表",
-                                    "インストール済み一覧を更新できませんでした"
+                                state.config.language.message(
+                                    MessageKey::CommandsCouldNotRefreshTheInstalledList05716ecd
                                 )
                             ))
                             .unwrap_or_default()
@@ -8914,7 +8496,8 @@ async fn handle_plugin_component(
                     plugin_id,
                     display_name,
                 } => {
-                    uninstall_confirmed(&state.native, &plugin_id, true).await?;
+                    uninstall_confirmed(&state.native, &plugin_id, true, state.config.language)
+                        .await?;
                     menu.selected = None;
                     menu.selected_detail = None;
                     menu.apps_needing_auth.clear();
@@ -8925,12 +8508,10 @@ async fn handle_plugin_component(
                     menu.page = 0;
                     menu.install_notice = Some(format!(
                         "{} {display_name}.",
-                        state.config.language.text(
-                            "Codex confirmed removal of",
-                            "Codex가 제거를 확인했습니다:",
-                            "Codex 已确认移除：",
-                            "Codex が削除を確認しました："
-                        )
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsCodexConfirmedRemovalOf6da0bc0c)
                     ));
                 }
             }
@@ -8941,7 +8522,8 @@ async fn handle_plugin_component(
             let Some(PluginMenuEntry::Install(target)) = menu.entries.get(index).cloned() else {
                 bail!("plugin selection is unavailable")
             };
-            menu.selected_detail = Some(read_plugin(&state.native, &target).await?);
+            menu.selected_detail =
+                Some(read_plugin(&state.native, &target, state.config.language).await?);
             menu.selected = Some(PluginMenuEntry::Install(target));
         } else if let Some(index) = action
             .strip_prefix('u')
@@ -8989,13 +8571,11 @@ async fn handle_plugin_component(
                 ctx,
                 serenity::builder::CreateInteractionResponseFollowup::new()
                     .content(format!(
-                        "{}: {error:#}",
-                        state.config.language.text(
-                            "Codex could not complete this plugin action",
-                            "Codex가 플러그인 작업을 완료하지 못했습니다",
-                            "Codex 无法完成此插件操作",
-                            "Codex がプラグイン操作を完了できませんでした"
-                        )
+                        "{}: {}",
+                        state.config.language.message(
+                            MessageKey::CommandsCodexCouldNotCompleteThisPluginAction0111fad8
+                        ),
+                        settings_error_detail(&error, state.config.language, Some(&state.config)),
                     ))
                     .ephemeral(true)
                     .allowed_mentions(no_mentions()),
@@ -9048,23 +8628,13 @@ pub(crate) fn oauth_completion_text(
     if completion.success {
         format!(
             "{} {}.",
-            language.text(
-                "OAuth sign-in completed for",
-                "OAuth 로그인이 완료되었습니다:",
-                "OAuth 登录已完成：",
-                "OAuth ログインが完了しました："
-            ),
+            language.message(MessageKey::CommandsOauthSignInCompletedFor149c7a44),
             completion.name
         )
     } else {
         format!(
             "{} {}{}",
-            language.text(
-                "OAuth sign-in did not complete for",
-                "OAuth 로그인이 완료되지 않았습니다:",
-                "OAuth 登录未完成：",
-                "OAuth ログインが未完了です："
-            ),
+            language.message(MessageKey::CommandsOauthSignInDidNotCompleteFor4d954f84),
             completion.name,
             completion
                 .error
@@ -9498,7 +9068,7 @@ mod display_tests {
                     "承認応答の送信を確認できませんでした。",
                 ),
             ] {
-                let message = approval_delivery_failure_message(&error, language);
+                let message = approval_delivery_failure_message(&error, language, None);
                 assert!(message.starts_with(prefix));
                 assert!(
                     message.ends_with(
@@ -9604,9 +9174,10 @@ mod display_tests {
                     "承認応答の送信を確認できませんでした。このエラーだけではコマンドが実行されたかは判断できません。",
                 ),
             ] {
-                let response =
-                    serde_json::to_value(approval_delivery_failure_response(&error, language))
-                        .unwrap();
+                let response = serde_json::to_value(approval_delivery_failure_response(
+                    &error, language, None,
+                ))
+                .unwrap();
                 assert_eq!(
                     response["content"],
                     format!("{notice}\nnative response transport: pipe closed after write")
@@ -10970,6 +10541,27 @@ mod display_tests {
     }
 
     #[test]
+    fn queued_default_change_is_reported_as_pending_separately_from_current_turn() {
+        let pending = format_pending_settings_update(
+            "requested-model",
+            "The active response was updated.",
+            crate::i18n::Language::English,
+        );
+        assert!(pending.contains("The conversation-default update was queued"));
+        assert!(pending.contains("Current response: The active response was updated."));
+        assert!(!pending.contains("Conversation defaults after update:"));
+
+        let confirmed = format_confirmed_settings_update(
+            "requested-model",
+            &json!({"model":"requested-model"}),
+            "The active response was updated.",
+            crate::i18n::Language::English,
+        );
+        assert!(confirmed.contains("Conversation defaults after update:\nModel: requested-model"));
+        assert!(confirmed.contains("Current response: The active response was updated."));
+    }
+
+    #[test]
     fn settings_rpc_failure_idle_and_default_readback_failure_remain_distinct() {
         let defaults = json!({"model":"actual-default"});
         let failure: anyhow::Result<Value> = Err(anyhow!("native RPC failed"));
@@ -11146,10 +10738,50 @@ mod display_tests {
         let notice = settings_apply_notice(
             Err(anyhow!("could not persist selected model")),
             crate::i18n::Language::Korean,
+            None,
         );
         assert!(notice.starts_with("설정을 적용하지 못했습니다."));
         assert!(notice.contains("could not persist selected model"));
         assert!(!notice.contains("설정을 적용했습니다"));
+    }
+
+    #[test]
+    fn failed_model_resume_notice_includes_native_error_cause() {
+        let native_error = crate::native::NativeRequestError::from_response(
+            "thread/resume".to_owned(),
+            &json!({"code":-32000,"message":"selected model is unavailable"}),
+        );
+        let error = Err(anyhow::Error::new(native_error)
+            .context("could not switch model/provider; restored the previous conversation"));
+        let notice = settings_apply_notice(error, crate::i18n::Language::Korean, None);
+
+        assert!(
+            notice.contains("could not switch model/provider; restored the previous conversation")
+        );
+        assert!(notice.contains(
+            "Native request failed (thread/resume; code -32000): selected model is unavailable"
+        ));
+        assert!(!notice.contains("설정을 적용했습니다"));
+    }
+
+    #[test]
+    fn top_level_command_failure_keeps_native_code_and_message() {
+        let error = anyhow::Error::new(crate::native::NativeRequestError::from_response(
+            "thread/resume".to_owned(),
+            &json!({"code":-32000,"message":"selected model is unavailable"}),
+        ));
+        let language = crate::i18n::Language::Korean;
+        let notice = localized_failure_message(
+            language.message(MessageKey::CommandsTheDiscodexRequestFailedCheckTheInputAnd71994868),
+            &settings_error_detail(&error, language, None),
+        );
+
+        assert!(notice.starts_with(
+            language.message(MessageKey::CommandsTheDiscodexRequestFailedCheckTheInputAnd71994868)
+        ));
+        assert!(notice.contains("code -32000"));
+        assert!(notice.contains("selected model is unavailable"));
+        assert!(!notice.contains("요청을 성공적으로 처리했습니다"));
     }
 
     #[tokio::test]
@@ -11170,10 +10802,12 @@ mod display_tests {
         validate_setting_choice("fast", "priority", &catalog, &current)
             .await
             .unwrap();
+        // The catalog supplies menu choices, but a stale exact model choice
+        // is passed to Native for authoritative validation during apply.
         assert!(
             validate_setting_choice("model", "gpt-removed", &catalog, &current)
                 .await
-                .is_err()
+                .is_ok()
         );
         assert!(
             validate_setting_choice("effort", "high", &catalog, &current)
@@ -11185,6 +10819,49 @@ mod display_tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[test]
+    fn stale_provider_qualified_model_choice_preserves_its_explicit_provider() {
+        use crate::model_catalog::{ModelExecutor, ModelSelection};
+
+        let stale_choice = serde_json::to_string(&[
+            "antigravity",
+            "antigravity",
+            "exact-model-no-longer-in-catalog",
+        ])
+        .unwrap();
+        let current_thread = json!({
+            "model": "current-model",
+            "modelExecutor": "codex",
+            "modelProvider": "different-provider"
+        });
+        let selection = model_selection_for_choice(
+            &json!({"data": []}),
+            &stale_choice,
+            &current_thread,
+            crate::i18n::Language::English,
+        )
+        .unwrap();
+
+        assert_eq!(
+            selection,
+            ModelSelection {
+                executor: ModelExecutor::Antigravity,
+                provider: "antigravity".to_owned(),
+                model: "exact-model-no-longer-in-catalog".to_owned(),
+            }
+        );
+
+        let plain_selection = model_selection_for_choice(
+            &json!({"provider":"catalog-provider","data": []}),
+            "exact-model-id",
+            &json!({"model":"current-model","modelExecutor":"codex","modelProvider":"active-provider"}),
+            crate::i18n::Language::English,
+        )
+        .unwrap();
+        assert_eq!(plain_selection.provider, "active-provider");
+        assert_eq!(plain_selection.model, "exact-model-id");
     }
 
     #[test]
@@ -12186,7 +11863,7 @@ mod native_feature_settings_tests {
     }
 
     #[test]
-    fn main_model_changes_resume_for_executor_provider_and_agy_model_changes() {
+    fn main_model_changes_resume_only_when_executor_or_provider_changes() {
         use crate::model_catalog::{ModelExecutor, ModelSelection};
         let codex = ModelSelection {
             executor: ModelExecutor::Codex,
@@ -12201,38 +11878,69 @@ mod native_feature_settings_tests {
         assert!(!model_change_requires_resume(
             ModelExecutor::Codex,
             "provider-a",
-            Some("old-model"),
             &codex
         ));
         assert!(model_change_requires_resume(
             ModelExecutor::Codex,
             "provider-b",
-            Some("next-model"),
             &codex
         ));
         assert!(model_change_requires_resume(
             ModelExecutor::Antigravity,
             "provider-a",
-            Some("next-model"),
             &codex
         ));
         assert!(model_change_requires_resume(
             ModelExecutor::Codex,
             "provider-a",
-            Some("agy-model"),
-            &agy
-        ));
-        assert!(model_change_requires_resume(
-            ModelExecutor::Antigravity,
-            "provider-a",
-            Some("previous-agy-model"),
             &agy
         ));
         assert!(!model_change_requires_resume(
             ModelExecutor::Antigravity,
-            "provider-a",
-            Some("agy-model"),
+            "antigravity",
             &agy
+        ));
+        assert!(model_change_requires_resume(
+            ModelExecutor::Antigravity,
+            "other-provider",
+            &agy
+        ));
+    }
+
+    #[test]
+    fn legacy_antigravity_variant_resolves_to_family_without_resume_guard() {
+        use crate::model_catalog::{ModelExecutor, resolve_selection};
+
+        let catalog = json!({
+            "data": [{
+                "id": "family-model",
+                "model": "family-model",
+                "executor": "antigravity",
+                "provider": "antigravity",
+                "selectionValue": "[\"antigravity\",\"antigravity\",\"family-model\"]",
+                "agyVariants": [
+                    {"id": "family-model-low", "label": "Family Model Low", "effort": "low"},
+                    {"id": "family-model-high", "label": "Family Model High", "effort": "high"}
+                ]
+            }]
+        });
+        let selection = resolve_selection(&catalog, "family-model").unwrap();
+        let legacy_thread = json!({
+            "model": "family-model-low",
+            "modelExecutor": "antigravity",
+            "modelProvider": "host-native-provider"
+        });
+        let legacy_scope = thread_model_scope(&legacy_thread);
+        let legacy_provider = thread_model_provider(&legacy_thread);
+
+        assert_eq!(selection.model, "family-model");
+        assert_eq!(selection.executor, ModelExecutor::Antigravity);
+        assert_ne!(legacy_scope, Some(selection.value()));
+        assert_eq!(legacy_provider, Some("antigravity"));
+        assert!(!model_change_requires_resume(
+            ModelExecutor::Antigravity,
+            legacy_provider.unwrap(),
+            &selection,
         ));
     }
 

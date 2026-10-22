@@ -18,7 +18,7 @@ use serenity::{
     http::Http,
 };
 
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 
 const QUESTION_TOOL_NAME: &str = "request_user_input_async";
 const REPLY_OPEN: &str = "<send_user_message_question_reply>";
@@ -207,7 +207,10 @@ impl AsyncQuestionStore {
     ) -> Result<bool> {
         let call_id = call_id.into();
         if call_id.is_empty() {
-            bail!("async question call id must not be empty");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsCallIdRequired)
+            );
         }
         if self
             .requests
@@ -217,12 +220,18 @@ impl AsyncQuestionStore {
             return Ok(false);
         }
         if questions.is_empty() {
-            bail!("async question request must contain at least one question");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsQuestionRequired)
+            );
         }
         let mut saved = Vec::with_capacity(questions.len());
         for question in questions {
             if question.title.trim().is_empty() {
-                bail!("async question title must not be empty");
+                bail!(
+                    "{}",
+                    Language::English.message(MessageKey::AsyncQuestionsTitleRequired)
+                );
             }
             saved.push(AsyncQuestion {
                 title: question.title,
@@ -318,7 +327,7 @@ impl AsyncQuestionStore {
             .options
             .as_ref()
             .and_then(|options| options.get(option_index))
-            .context("async question option is stale or out of range")?
+            .context(Language::English.message(MessageKey::AsyncQuestionsOptionStale))?
             .clone();
         Self::set_answer(question, option.clone())?;
         Ok(option)
@@ -422,9 +431,12 @@ impl AsyncQuestionStore {
     pub fn record_reply_target(&mut self, item_id: &str, target: StoredReplyTarget) -> Result<()> {
         let question = self
             .find_item_mut(item_id)
-            .context("async question not found")?;
+            .context(Language::English.message(MessageKey::AsyncQuestionsNotFound))?;
         if question.delivery != QuestionDelivery::Ready {
-            bail!("async question is not ready for submission");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsNotReady)
+            );
         }
         question.reply_target = Some(target);
         Ok(())
@@ -561,13 +573,16 @@ impl AsyncQuestionStore {
     ) -> Result<()> {
         let question = self
             .find_item_mut(item_id)
-            .context("async question not found")?;
+            .context(Language::English.message(MessageKey::AsyncQuestionsNotFound))?;
         // Retain surplus IDs until their Discord pages have actually been removed.
         question
             .presentation_message_ids
             .resize(total.max(question.presentation_message_ids.len()), None);
         if page >= total {
-            bail!("presentation page index out of range");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsPageOutOfRange)
+            );
         }
         question.presentation_message_ids[page] = Some(message_id);
         question.presentation_sent = question.presentation_message_ids.len() == total
@@ -581,7 +596,7 @@ impl AsyncQuestionStore {
     fn finish_presentation(&mut self, item_id: &str, total: usize) -> Result<()> {
         let question = self
             .find_item_mut(item_id)
-            .context("async question not found")?;
+            .context(Language::English.message(MessageKey::AsyncQuestionsNotFound))?;
         question.presentation_message_ids.truncate(total);
         question.presentation_sent = question
             .presentation_message_ids
@@ -670,9 +685,12 @@ impl AsyncQuestionStore {
             .iter_mut()
             .flat_map(|request| &mut request.questions)
             .find(|question| question.interaction_id == interaction_id)
-            .context("async question interaction is stale")?;
+            .context(Language::English.message(MessageKey::AsyncQuestionsInteractionStale))?;
         if question.delivery != QuestionDelivery::Pending {
-            bail!("async question has already been answered or submitted");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsAlreadyAnswered)
+            );
         }
         Ok(question)
     }
@@ -691,7 +709,10 @@ impl AsyncQuestionStore {
 
     fn set_answer(question: &mut AsyncQuestion, answer: String) -> Result<()> {
         if answer.trim().is_empty() {
-            bail!("async question answer must not be empty");
+            bail!(
+                "{}",
+                Language::English.message(MessageKey::AsyncQuestionsAnswerRequired)
+            );
         }
         question.answer = Some(answer);
         question.delivery = QuestionDelivery::Ready;
@@ -768,29 +789,17 @@ pub fn option_pages(question: &PendingQuestion) -> Vec<Vec<(usize, String)>> {
 
 fn failed_answer_status(failed: &FailedAnswer, language: Language) -> String {
     let status = match failed.outcome {
-        FailedAnswerOutcome::Rejected => language.text(
-            "The previous answer was not accepted by the current turn. It is saved below; choose an answer to retry.",
-            "현재 턴에서 이전 답변을 접수하지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
-            "当前轮次未接受上一个答案。答案已保存在下方；请选择答案重试。",
-            "現在のターンでは前回の回答を受け付けませんでした。下に保存されています。選択肢を選んで再試行してください。",
-        ),
-        FailedAnswerOutcome::Missing => language.text(
-            "The previous answer was not confirmed because no matching native queue record was found. It is saved below; choose an answer to retry.",
-            "일치하는 Codex 대기열 기록이 없어 이전 답변을 확인하지 못했습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
-            "未找到匹配的 Codex 队列记录，因此无法确认上一个答案。答案已保存在下方；请选择答案重试。",
-            "対応する Codex キュー記録が見つからず、前回の回答を確認できませんでした。下に保存されています。選択肢を選んで再試行してください。",
-        ),
-        FailedAnswerOutcome::Unconfirmed => language.text(
-            "The previous answer was not confirmed. It is saved below; choose an answer to retry.",
-            "이전 답변이 확인되지 않았습니다. 아래에 저장되어 있습니다. 답변을 선택해 다시 시도하세요.",
-            "上一个答案未获确认。答案已保存在下方；请选择答案重试。",
-            "前回の回答は確認されませんでした。下に保存されています。選択肢を選んで再試行してください。",
-        ),
+        FailedAnswerOutcome::Rejected => language.message(MessageKey::AsyncQuestionsStatusRejected),
+        FailedAnswerOutcome::Missing => language.message(MessageKey::AsyncQuestionsStatusMissing),
+        FailedAnswerOutcome::Unconfirmed => {
+            language.message(MessageKey::AsyncQuestionsStatusUnconfirmed)
+        }
     };
     match &failed.detail {
         Some(detail) if !detail.trim().is_empty() => format!(
-            "{status}\n\n{}: {detail}",
-            language.text("Details", "상세 정보", "详情", "詳細")
+            "{status}\n\n{}: {}",
+            language.message(MessageKey::AsyncQuestionsDetails),
+            crate::discord::sanitize_discord_diagnostic(detail)
         ),
         _ => status.to_owned(),
     }
@@ -815,7 +824,7 @@ pub fn render_pages(
     }
     body.push_str(&format!(
         "{}\n{}",
-        language.text("Question", "질문", "问题", "質問"),
+        language.message(MessageKey::AsyncQuestionsQuestion),
         question.title
     ));
     if let Some(options) = question
@@ -828,22 +837,12 @@ pub fn render_pages(
         }
         body.push_str(&format!(
             "\n{}",
-            language.text(
-                "Choose an option or submit a free-text answer.",
-                "선택지를 고르거나 직접 답변을 입력하세요.",
-                "请选择一个选项或输入自由文本答案。",
-                "選択肢を選ぶか、自由入力で回答してください。"
-            )
+            language.message(MessageKey::AsyncQuestionsChooseOption)
         ));
     } else {
         body.push_str(&format!(
             "\n{}",
-            language.text(
-                "Submit a free-text answer.",
-                "직접 답변을 입력하세요.",
-                "请输入自由文本答案。",
-                "自由入力で回答してください。"
-            )
+            language.message(MessageKey::AsyncQuestionsFreeText)
         ));
     }
     split_content(&body, max_chars.max(1))
@@ -887,24 +886,11 @@ fn presentation_messages(
     if question.delivery != QuestionDelivery::Pending {
         if let Some(answer) = &question.answer {
             let status = match question.delivery {
-                QuestionDelivery::Ready => language.text(
-                    "Submitting answer…",
-                    "답변을 제출하고 있습니다…",
-                    "正在提交答案…",
-                    "回答を送信しています…",
-                ),
-                QuestionDelivery::Queued => language.text(
-                    "Answer queued for Codex.",
-                    "Codex로 전달할 답변이 대기 중입니다.",
-                    "答案正在等待发送给 Codex。",
-                    "Codex への回答送信を待っています。",
-                ),
-                QuestionDelivery::AwaitingConfirmation => language.text(
-                    "Answer awaiting Codex confirmation.",
-                    "답변의 Codex 접수 확인을 기다리고 있습니다.",
-                    "答案正在等待 Codex 确认接收。",
-                    "Codex による回答の受信確認を待っています。",
-                ),
+                QuestionDelivery::Ready => language.message(MessageKey::AsyncQuestionsSubmitting),
+                QuestionDelivery::Queued => language.message(MessageKey::AsyncQuestionsQueued),
+                QuestionDelivery::AwaitingConfirmation => {
+                    language.message(MessageKey::AsyncQuestionsAwaitingConfirmation)
+                }
                 QuestionDelivery::Pending | QuestionDelivery::Sent => "",
             };
             let body = if status.is_empty() {
@@ -934,12 +920,7 @@ fn presentation_messages(
     for (page_index, options) in pages.iter().enumerate() {
         let mut body = format!(
             "{} {}/{}",
-            language.text(
-                "Choose an answer",
-                "답변을 선택하세요",
-                "请选择答案",
-                "回答を選んでください"
-            ),
+            language.message(MessageKey::AsyncQuestionsChooseAnswer),
             page_index + 1,
             pages.len()
         );
@@ -963,12 +944,7 @@ fn presentation_messages(
     }
     messages.push(PresentationMessage {
         content: language
-            .text(
-                "You can also answer in your own words.",
-                "원하는 표현으로 직접 답할 수도 있습니다.",
-                "你也可以用自己的话回答。",
-                "自由な文章で回答することもできます。",
-            )
+            .message(MessageKey::AsyncQuestionsAnswerInOwnWords)
             .to_owned(),
         options: Vec::new(),
         freeform: true,
@@ -1058,12 +1034,7 @@ fn presentation_components(
     if part.freeform {
         vec![CreateActionRow::Buttons(vec![
             CreateButton::new(freeform_component_id(interaction_id))
-                .label(language.text(
-                    "Write a different answer",
-                    "다른 답변 직접 입력",
-                    "输入其他答案",
-                    "別の回答を入力",
-                ))
+                .label(language.message(MessageKey::AsyncQuestionsWriteDifferentAnswer))
                 .style(ButtonStyle::Secondary),
         ])]
     } else {
@@ -1125,7 +1096,12 @@ async fn sync_question_presentation(
                                 ),
                             )
                             .await
-                            .context("replace missing async question page")?;
+                            .context(
+                                state
+                                    .config
+                                    .language
+                                    .message(MessageKey::AsyncQuestionsReplacePageFailed),
+                            )?;
                         store.record_presentation_message(
                             &question.item_id,
                             page,
@@ -1134,7 +1110,14 @@ async fn sync_question_presentation(
                         )?;
                         store.save(&state_path)?;
                     }
-                    Err(error) => return Err(error).context("update async question page"),
+                    Err(error) => {
+                        return Err(error).context(
+                            state
+                                .config
+                                .language
+                                .message(MessageKey::AsyncQuestionsUpdatePageFailed),
+                        );
+                    }
                 }
             }
             PresentationUpdate::Send { page } => {
@@ -1147,7 +1130,12 @@ async fn sync_question_presentation(
                         ),
                     )
                     .await
-                    .context("publish async question page")?;
+                    .context(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::AsyncQuestionsPublishPageFailed),
+                    )?;
                 store.record_presentation_message(
                     &question.item_id,
                     page,
@@ -1160,11 +1148,23 @@ async fn sync_question_presentation(
                 match channel.delete_message(http, message_id).await {
                     Ok(()) => {}
                     Err(error) if is_missing_message(&error) => {}
-                    Err(error) => return Err(error).context("remove async question choice page"),
+                    Err(error) => {
+                        return Err(error).context(
+                            state
+                                .config
+                                .language
+                                .message(MessageKey::AsyncQuestionsRemoveChoicePageFailed),
+                        );
+                    }
                 }
                 store
                     .find_item_mut(&question.item_id)
-                    .context("async question not found")?
+                    .context(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::AsyncQuestionsNotFound),
+                    )?
                     .presentation_message_ids[page] = None;
                 store.save(&state_path)?;
             }
@@ -1219,11 +1219,23 @@ pub(crate) async fn recover(http: &Http, state: &crate::discord::BridgeState) ->
         drop(store);
         if notice {
             if let Some(target) = target {
-                ChannelId::new(target.channel_id).send_message(http, CreateMessage::new().content(state.config.language.text(
-                    "Your answer is awaiting native confirmation. It has not been sent again.",
-                    "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
-                    "你的答案正在等待 Codex 确认，没有重复提交。",
-                    "回答は Codex の確認待ちです。再送信していません。"))).await.context("send async answer status")?;
+                ChannelId::new(target.channel_id)
+                    .send_message(
+                        http,
+                        CreateMessage::new().content(
+                            state
+                                .config
+                                .language
+                                .message(MessageKey::AsyncQuestionsAwaitingNotice),
+                        ),
+                    )
+                    .await
+                    .context(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::AsyncQuestionsSendStatusFailed),
+                    )?;
                 let mut store = state.async_questions.lock().await;
                 store.mark_awaiting_notice_sent(&q.item_id);
                 store.save(&path)?;
@@ -1262,10 +1274,22 @@ fn question_is_current(
     question: &PendingQuestion,
 ) -> Result<()> {
     if question.delivery != QuestionDelivery::Pending {
-        bail!("this async question has already been answered or submitted");
+        bail!(
+            "{}",
+            state
+                .config
+                .language
+                .message(MessageKey::AsyncQuestionsAlreadyAnswered)
+        );
     }
     if question.thread_id != state.native.thread_id() {
-        bail!("this async question belongs to a different Codex conversation");
+        bail!(
+            "{}",
+            state
+                .config
+                .language
+                .message(MessageKey::AsyncQuestionsDifferentConversation)
+        );
     }
     Ok(())
 }
@@ -1303,9 +1327,12 @@ async fn stage_answer(
     let path = state.config.state_dir.join("async-questions.json");
     let mut store = state.async_questions.lock().await;
     let mut staged = store.clone();
-    let question = staged
-        .question_for_interaction(interaction_id)
-        .context("this async question is no longer available")?;
+    let question = staged.question_for_interaction(interaction_id).context(
+        state
+            .config
+            .language
+            .message(MessageKey::AsyncQuestionsStale),
+    )?;
     question_is_current(state, &question)?;
     let item_id = question.item_id.clone();
     let target = answer_target(&question, target);
@@ -1318,9 +1345,12 @@ async fn stage_answer(
             source_guild: target.source_guild,
         },
     )?;
-    let envelope = staged
-        .reply_envelope(&item_id)?
-        .context("async question answer was already submitted")?;
+    let envelope = staged.reply_envelope(&item_id)?.context(
+        state
+            .config
+            .language
+            .message(MessageKey::AsyncQuestionsAlreadySubmitted),
+    )?;
     staged.active_submissions.insert(item_id);
     staged.save(&path)?;
     *store = staged;
@@ -1336,9 +1366,12 @@ async fn stage_option_answer(
     let path = state.config.state_dir.join("async-questions.json");
     let mut store = state.async_questions.lock().await;
     let mut staged = store.clone();
-    let question = staged
-        .question_for_interaction(interaction_id)
-        .context("this async question is no longer available")?;
+    let question = staged.question_for_interaction(interaction_id).context(
+        state
+            .config
+            .language
+            .message(MessageKey::AsyncQuestionsStale),
+    )?;
     question_is_current(state, &question)?;
     let item_id = question.item_id.clone();
     let target = answer_target(&question, target);
@@ -1351,9 +1384,12 @@ async fn stage_option_answer(
             source_guild: target.source_guild,
         },
     )?;
-    let envelope = staged
-        .reply_envelope(&item_id)?
-        .context("async question answer was already submitted")?;
+    let envelope = staged.reply_envelope(&item_id)?.context(
+        state
+            .config
+            .language
+            .message(MessageKey::AsyncQuestionsAlreadySubmitted),
+    )?;
     staged.active_submissions.insert(item_id);
     staged.save(&path)?;
     *store = staged;
@@ -1388,20 +1424,34 @@ async fn submit_staged_answer(
         .unwrap_or(QueueObservation::Missing);
     let mut store = state.async_questions.lock().await;
     store.active_submissions.remove(&question.item_id);
-    let failure_detail = attempt.as_ref().err().map(|error| format!("{error:#}"));
-    store.reconcile_delivery_with_detail(&question.item_id, observation, failure_detail);
+    let failure_detail = attempt
+        .as_ref()
+        .err()
+        .map(|error| crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}")));
+    store.reconcile_delivery_with_detail(&question.item_id, observation, failure_detail.clone());
     store.save(state.config.state_dir.join("async-questions.json"))?;
     if matches!(
         observation,
         QueueObservation::Accepted | QueueObservation::Queued
     ) {
         // A late RPC/journal error cannot undo confirmed admission or justify a resend.
-        if let Err(error) = attempt {
-            tracing::warn!(?error, "async answer recorded despite submission error");
+        if attempt.is_err() {
+            tracing::warn!(
+                error = %failure_detail.as_deref().unwrap_or("native submission failed without details"),
+                "async answer recorded despite submission error"
+            );
         }
         Ok(())
     } else {
-        attempt.and_then(|()| bail!("async question answer has no confirmed admission"))
+        attempt.and_then(|()| {
+            bail!(
+                "{}",
+                state
+                    .config
+                    .language
+                    .message(MessageKey::AsyncQuestionsNoAdmission)
+            )
+        })
     }
 }
 
@@ -1423,38 +1473,18 @@ fn submission_feedback(question: Option<&PendingQuestion>, language: Language) -
             match &question.failed_attempt {
                 Some(failed) => failed_answer_status(failed, language),
                 None => language
-                    .text(
-                        "The answer was not confirmed. The question remains available for retry.",
-                        "답변이 확인되지 않았습니다. 질문에서 다시 시도할 수 있습니다.",
-                        "答案未获确认。你可以在问题卡片上重试。",
-                        "回答は確認されませんでした。質問カードから再試行できます。",
-                    )
+                    .message(MessageKey::AsyncQuestionsFeedbackNotConfirmed)
                     .to_owned(),
             }
         }
         Some(question) if question.delivery == QuestionDelivery::Sent => language
-            .text(
-                "Answer submitted.",
-                "답변을 제출했습니다.",
-                "答案已提交。",
-                "回答を送信しました。",
-            )
+            .message(MessageKey::AsyncQuestionsFeedbackSubmitted)
             .to_owned(),
         Some(question) if question.delivery == QuestionDelivery::Queued => language
-            .text(
-                "Answer queued for Codex.",
-                "Codex로 전달할 답변이 대기 중입니다.",
-                "答案正在等待发送给 Codex。",
-                "Codex への回答送信を待っています。",
-            )
+            .message(MessageKey::AsyncQuestionsQueued)
             .to_owned(),
         _ => language
-            .text(
-                "Your answer is awaiting native confirmation. It has not been sent again.",
-                "답변이 Codex 확인을 기다리고 있습니다. 중복 제출하지 않았습니다.",
-                "你的答案正在等待 Codex 确认，没有重复提交。",
-                "回答は Codex の確認待ちです。再送信していません。",
-            )
+            .message(MessageKey::AsyncQuestionsAwaitingNotice)
             .to_owned(),
     }
 }
@@ -1470,12 +1500,12 @@ async fn respond_stale_component(
             ctx,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(state.config.language.text(
-                        "This question is no longer available. Please use its latest Discord card.",
-                        "이 질문은 더 이상 사용할 수 없습니다. 최신 Discord 질문 카드에서 답해주세요.",
-                        "此问题已不可用。请使用最新的 Discord 问题卡片。",
-                        "この質問は利用できません。最新の Discord 質問カードから回答してください。",
-                    ))
+                    .content(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::AsyncQuestionsStale),
+                    )
                     .ephemeral(true),
             ),
         )
@@ -1493,12 +1523,12 @@ async fn respond_stale_modal(
             ctx,
             CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(state.config.language.text(
-                        "This question is no longer available. Please use its latest Discord card.",
-                        "이 질문은 더 이상 사용할 수 없습니다. 최신 Discord 질문 카드에서 답해주세요.",
-                        "此问题已不可用。请使用最新的 Discord 问题卡片。",
-                        "この質問は利用できません。最新の Discord 質問カードから回答してください。",
-                    ))
+                    .content(
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::AsyncQuestionsStale),
+                    )
                     .ephemeral(true),
             ),
         )
@@ -1512,7 +1542,10 @@ pub(crate) async fn handle_component(
     state: &std::sync::Arc<crate::discord::BridgeState>,
 ) -> Result<()> {
     let Some(action) = parse_component_id(&interaction.data.custom_id) else {
-        bail!("invalid async question component id");
+        bail!(
+            "{}",
+            Language::English.message(MessageKey::AsyncQuestionsInvalidComponent)
+        );
     };
     match action {
         QuestionComponentAction::Freeform { interaction_id } => {
@@ -1531,17 +1564,12 @@ pub(crate) async fn handle_component(
             let modal_id = freeform_modal_id(&interaction_id);
             let modal = CreateModal::new(
                 modal_id,
-                language.text(
-                    "Answer the question",
-                    "질문에 답하기",
-                    "回答问题",
-                    "質問に回答",
-                ),
+                language.message(MessageKey::AsyncQuestionsAnswerQuestion),
             )
             .components(vec![CreateActionRow::InputText(
                 CreateInputText::new(
                     InputTextStyle::Paragraph,
-                    language.text("Your answer", "답변", "你的答案", "回答"),
+                    language.message(MessageKey::AsyncQuestionsYourAnswer),
                     "answer",
                 )
                 .required(true)
@@ -1585,7 +1613,10 @@ pub(crate) async fn handle_component(
             let result = submit_staged_answer(state, &question, &envelope, target).await;
             refresh_answer_card(&ctx.http, state, &question).await;
             if let Err(error) = result {
-                tracing::warn!(?error, "failed to submit async question answer");
+                tracing::warn!(
+                    error = %crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}")),
+                    "failed to submit async question answer"
+                );
                 let delivery = state
                     .async_questions
                     .lock()
@@ -1612,7 +1643,10 @@ pub(crate) async fn handle_modal(
     state: &std::sync::Arc<crate::discord::BridgeState>,
 ) -> Result<()> {
     let Some(interaction_id) = parse_modal_id(&interaction.data.custom_id) else {
-        bail!("invalid async question modal id");
+        bail!(
+            "{}",
+            Language::English.message(MessageKey::AsyncQuestionsInvalidModal)
+        );
     };
     let answer = interaction
         .data
@@ -1669,7 +1703,10 @@ pub(crate) async fn handle_modal(
         )
         .await?;
     if let Err(error) = result {
-        tracing::warn!(?error, "failed to submit async question modal answer");
+        tracing::warn!(
+            error = %crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}")),
+            "failed to submit async question modal answer"
+        );
     }
     Ok(())
 }
@@ -1684,6 +1721,23 @@ mod tests {
             title: "Which environment?".into(),
             options: Some(vec!["Staging".into(), "Production".into()]),
         }
+    }
+
+    #[test]
+    fn failed_answer_feedback_keeps_error_details_and_redacts_secret_values() {
+        let failed = FailedAnswer {
+            answer: "A saved answer".to_owned(),
+            reply_target: None,
+            outcome: FailedAnswerOutcome::Rejected,
+            detail: Some(
+                "code E-42; message upstream unavailable; password=synthetic-secret".to_owned(),
+            ),
+        };
+        let feedback = failed_answer_status(&failed, Language::English);
+        assert!(feedback.contains("E-42"));
+        assert!(feedback.contains("upstream unavailable"));
+        assert!(feedback.contains("[secret redacted]"));
+        assert!(!feedback.contains("synthetic-secret"));
     }
 
     #[test]

@@ -180,14 +180,14 @@ async fn command(
 /// login flow. Network, server and other failures retain their actual meaning.
 fn requires_authentication(output: &CommandOutput) -> bool {
     output.code != 0
-        && output.combined().contains(
-            "Please sign in to view available models. Launch the CLI without arguments to sign in.",
-        )
+        && output
+            .combined()
+            .contains(crate::agy::protocol::LOGIN_REQUIRED_DIAGNOSTIC)
 }
 
 fn catalog(models: &CommandOutput, help: &CommandOutput) -> Result<crate::agy::Catalog> {
-    models.require_success("agy models")?;
-    help.require_success("agy --help")?;
+    models.require_success(&format!("agy {}", crate::agy::protocol::MODELS_COMMAND))?;
+    help.require_success(&format!("agy {}", crate::agy::protocol::HELP_ARG))?;
     let mut parsed_models = crate::agy::parse_models(&models.stdout);
     if parsed_models.is_empty() {
         parsed_models = crate::agy::parse_models(&models.stderr);
@@ -268,8 +268,8 @@ fn terminal_screen_text(screen: &vt100::Screen) -> String {
 
 fn authentication_url(output: &str) -> Option<String> {
     let start = [
-        "Open the URL below in your browser:",
-        "Your browser should open automatically. If not:",
+        crate::agy::protocol::AUTH_BROWSER_URL_PROMPT,
+        crate::agy::protocol::AUTH_BROWSER_URL_PROMPT_FALLBACK,
     ]
     .iter()
     .filter_map(|marker| output.rfind(marker))
@@ -488,21 +488,19 @@ pub async fn account_catalog(
     config: &SetupConfig,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<Option<crate::agy::Catalog>> {
-    let models = command(config, &["models"], cancel).await?;
+    let models = command(config, &[crate::agy::protocol::MODELS_COMMAND], cancel).await?;
     if requires_authentication(&models) {
         return Ok(None);
     }
-    models.require_success("agy models")?;
-    let help = command(config, &["--help"], cancel).await?;
+    models.require_success(&format!("agy {}", crate::agy::protocol::MODELS_COMMAND))?;
+    let help = command(config, &[crate::agy::protocol::HELP_ARG], cancel).await?;
     Ok(Some(catalog(&models, &help)?))
 }
 
 fn code_prompt(output: &str) -> bool {
     let output = output.split_whitespace().collect::<Vec<_>>().join(" ");
-    output.contains(
-        "After authenticating, copy the code displayed in the browser and paste it below:",
-    ) || output
-        .contains("If you aren't automatically redirected, paste the authorization code below:")
+    output.contains(crate::agy::protocol::AUTH_CODE_PROMPT)
+        || output.contains(crate::agy::protocol::AUTH_CODE_PROMPT_FALLBACK)
 }
 
 fn navigation_input(input: &str) -> bool {
@@ -644,7 +642,9 @@ fn publish_auth_output(
     if *awaiting_verification {
         // An unsuccessful code returns to the native error screen. Waiting
         // through ordinary redraws prevents a duplicate submission entering chat.
-        if screen.contains("Got an error:") && screen.contains("Press any key to go back.") {
+        if screen.contains(crate::agy::protocol::AUTH_ERROR_PREFIX)
+            && screen.contains(crate::agy::protocol::AUTH_RETURN_PROMPT)
+        {
             *awaiting_verification = false;
         } else {
             return Ok(());

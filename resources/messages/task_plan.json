@@ -1,0 +1,50 @@
+{
+  "task_plan.title": {
+    "en": "Task plan",
+    "ko": "작업 계획",
+    "zh": "任务计划",
+    "ja": "作業計画"
+  },
+  "task_plan.completed": {
+    "en": "completed",
+    "ko": "완료",
+    "zh": "已完成",
+    "ja": "完了"
+  },
+  "task_plan.pending": {
+    "en": "Pending",
+    "ko": "대기",
+    "zh": "待处理",
+    "ja": "未着手"
+  },
+  "task_plan.in_progress": {
+    "en": "In progress",
+    "ko": "진행 중",
+    "zh": "进行中",
+    "ja": "進行中"
+  },
+  "task_plan.done": {
+    "en": "Completed",
+    "ko": "완료",
+    "zh": "已完成",
+    "ja": "完了"
+  },
+  "task_plan.explanation_type": {
+    "en": "plan explanation must be a string or null",
+    "ko": "계획 설명은 문자열 또는 null이어야 합니다",
+    "zh": "计划说明必须是字符串或 null",
+    "ja": "計画の説明は文字列または null である必要があります"
+  },
+  "task_plan.array_required": {
+    "en": "plan must be an array",
+    "ko": "계획은 배열이어야 합니다",
+    "zh": "计划必须是数组",
+    "ja": "計画は配列である必要があります"
+  },
+  "task_plan.unknown_status": {
+    "en": "unknown task plan status at step {step}",
+    "ko": "{step}단계의 작업 계획 상태를 알 수 없습니다",
+    "zh": "第 {step} 步的任务计划状态未知",
+    "ja": "ステップ {step} のタスク計画ステータスが不明です"
+  }
+}

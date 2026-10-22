@@ -21,6 +21,24 @@ const TOOLS: [&str; 9] = [
     "set_thread_archived",
 ];
 
+fn tool_language() -> crate::i18n::Language {
+    std::env::var("DISCODEX_LANGUAGE")
+        .ok()
+        .and_then(|value| value.parse::<crate::i18n::Language>().ok())
+        .unwrap_or_default()
+}
+
+fn localized_status_error(detail: &str) -> String {
+    localized_status_error_with_language(detail, tool_language())
+}
+
+fn localized_status_error_with_language(detail: &str, language: crate::i18n::Language) -> String {
+    let detail = crate::discord::sanitize_discord_diagnostic(detail);
+    language
+        .message(crate::i18n::MessageKey::TaskToolsStatusReadFailed)
+        .replace("{detail}", &detail)
+}
+
 pub(crate) fn handles(name: &str) -> bool {
     TOOLS.contains(&name)
 }
@@ -675,8 +693,8 @@ async fn wait(c: &ToolContext, a: Value) -> Result<Value> {
                 + snapshot_deadline.saturating_duration_since(now) / (x.targets.len() - i) as u32;
             match tokio::time::timeout_at(target_deadline,poll_target(c,target)).await {
                 Ok(Ok((poll,target_wake)))=>{polls.push(poll);if wake.is_none(){wake=target_wake;}},
-                Ok(Err(e))=>errors.push(json!({"threadId":target.thread_id,"message":e.to_string()})),
-                Err(_)=>errors.push(json!({"threadId":target.thread_id,"message":"Timed out while reading task status"})),
+                Ok(Err(e))=>errors.push(json!({"threadId":target.thread_id,"message":localized_status_error(&format!("{e:#}"))})),
+                Err(_)=>errors.push(json!({"threadId":target.thread_id,"message":tool_language().message(crate::i18n::MessageKey::TaskToolsStatusReadTimeout)})),
             }
         }
         if wake.is_some() || polls.is_empty() || Instant::now() >= deadline {
@@ -810,6 +828,17 @@ mod tests {
     use super::*;
     use futures_util::FutureExt;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn status_failure_localizes_and_redacts_credentials() {
+        assert_eq!(
+            localized_status_error_with_language(
+                "native read failed with token=fixture-secret",
+                crate::i18n::Language::Japanese,
+            ),
+            "タスクの状態を読み取れませんでした: native read failed with token=[secret redacted]"
+        );
+    }
 
     fn context(
         script: Vec<(&'static str, Value)>,

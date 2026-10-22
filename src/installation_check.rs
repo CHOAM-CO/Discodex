@@ -1,6 +1,6 @@
 //! Observations for the installation screen. No caller uses these to allow work.
 use crate::config::Config;
-use crate::i18n::Language;
+use crate::i18n::{Language, MessageKey};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -59,42 +59,29 @@ impl Report {
     }
     pub fn features(&self, language: Language) -> [(&'static str, &Observation); 7] {
         [
+            (language.message(MessageKey::InstallText), &self.text),
             (
-                language.text("Text", "텍스트", "文本", "テキスト"),
-                &self.text,
-            ),
-            (
-                language.text("Settings", "설정", "设置", "設定"),
+                language.message(MessageKey::InstallSettings),
                 &self.settings,
             ),
             (
-                language.text("Questions", "질문 폼", "问题", "質問"),
+                language.message(MessageKey::InstallQuestions),
                 &self.question,
             ),
             (
-                language.text("Approvals", "승인", "审批", "承認"),
+                language.message(MessageKey::InstallApprovals),
                 &self.approval,
             ),
             (
-                language.text("Two-way voice", "양방향 음성", "双向语音", "双方向音声"),
+                language.message(MessageKey::InstallTwoWayVoice),
                 &self.voice,
             ),
             (
-                language.text(
-                    "Same-thread handoff",
-                    "같은 대화 업무 연결",
-                    "同一对话任务衔接",
-                    "同じ会話での作業引き継ぎ",
-                ),
+                language.message(MessageKey::InstallSameThreadHandoff),
                 &self.handoff,
             ),
             (
-                language.text(
-                    "Final transcript",
-                    "확정 전사",
-                    "最终转录",
-                    "確定済み文字起こし",
-                ),
+                language.message(MessageKey::InstallFinalTranscript),
                 &self.transcript,
             ),
         ]
@@ -104,30 +91,15 @@ impl Report {
             .iter()
             .map(|(name, observation)| {
                 let detail = match observation {
-                    Observation::Unobserved => language.text(
-                        "Not run or not observed",
-                        "미실행 또는 미관측",
-                        "未运行或未观察",
-                        "未実行または未確認",
-                    ),
-                    Observation::Passed => language.text(
-                        "Behavior confirmed",
-                        "실제 동작 확인",
-                        "行为已确认",
-                        "動作を確認済み",
-                    ),
-                    Observation::Incomplete { .. } => language.text(
-                        "Some results are not yet confirmed",
-                        "일부 적용 결과가 아직 미확인",
-                        "部分结果尚未确认",
-                        "一部の結果は未確認です",
-                    ),
-                    Observation::Failed { .. } => language.text(
-                        "Failed; see the installation screen and private logs",
-                        "실패 (설치 화면과 비공개 로그에서 원인 확인)",
-                        "失败；请查看安装界面和私密日志",
-                        "失敗（インストール画面と非公開ログを確認してください）",
-                    ),
+                    Observation::Unobserved => {
+                        language.message(MessageKey::InstallNotRunOrNotObserved)
+                    }
+                    Observation::Passed => language.message(MessageKey::InstallBehaviorConfirmed),
+                    Observation::Incomplete { .. } => {
+                        language.message(MessageKey::InstallSomeResultsAreNotYetConfirmed)
+                    }
+                    Observation::Failed { .. } => language
+                        .message(MessageKey::InstallFailedSeeTheInstallationScreenAndPrivateL),
                 };
                 format!("{name}: {detail}")
             })
@@ -137,8 +109,18 @@ impl Report {
 }
 
 pub fn binding(config: &Config, worker: &Path) -> Result<String> {
-    let core = Sha256::digest(fs::read(&config.codex_path).context("read selected core identity")?);
-    let worker = Sha256::digest(fs::read(worker).context("read installed worker identity")?);
+    let core = Sha256::digest(
+        fs::read(&config.codex_path).context(
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnosticF4e7f5931179),
+        )?,
+    );
+    let worker = Sha256::digest(
+        fs::read(worker).context(
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic95ac1727669c),
+        )?,
+    );
     // No token or credential contents. These selected values identify this setup.
     let selected = json!({"profile":config.profile,"guild":config.guild_id,
         "home":config.home_channel_id,"transcript":config.transcript_channel_id,
@@ -158,14 +140,21 @@ pub fn read(config: &Config) -> Result<Option<Report>> {
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).context("read installation observations"),
+        Err(error) => {
+            return Err(error).context(
+                crate::i18n::Language::default()
+                    .message(crate::i18n::MessageKey::InstallDiagnostic3f9f034478d3),
+            );
+        }
     };
-    let report: Report =
-        serde_json::from_slice(&bytes).context("parse installation observations")?;
-    let worker = config
-        .worker_path
-        .as_deref()
-        .context("installed worker path missing")?;
+    let report: Report = serde_json::from_slice(&bytes).context(
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticAb449b135292),
+    )?;
+    let worker = config.worker_path.as_deref().context(
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticDe9c3b822f06),
+    )?;
     Ok((report.binding == binding(config, worker)?).then_some(report))
 }
 
@@ -251,7 +240,13 @@ impl Checks {
                 &checks
                     .inner
                     .lock()
-                    .map_err(|_| anyhow::anyhow!("installation observation lock poisoned"))?
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "{}",
+                            crate::i18n::Language::default()
+                                .message(crate::i18n::MessageKey::InstallDiagnostic68513f2fa54e)
+                        )
+                    })?
                     .report,
             )?;
             let weak = Arc::downgrade(&checks);
@@ -284,10 +279,10 @@ impl Checks {
         }
     }
     fn save(&self, report: &Report) -> Result<()> {
-        let parent = self
-            .path
-            .parent()
-            .context("installation observation path has no parent")?;
+        let parent = self.path.parent().context(
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnosticEf044f93e4ee),
+        )?;
         let mut temp = tempfile::NamedTempFile::new_in(parent)?;
         temp.write_all(&serde_json::to_vec_pretty(report)?)?;
         temp.persist(&self.path).map_err(|error| error.error)?;

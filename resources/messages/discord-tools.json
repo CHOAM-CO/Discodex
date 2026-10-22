@@ -1,0 +1,620 @@
+{
+  "discord.tools.attachment_filename_shown_discord_get_messages": {
+    "en": "Attachment filename shown by discord_get_messages/search; optional when attachment_choice is provided",
+    "ko": "discord_get_messages/search 결과에 표시된 첨부 파일 이름; attachment_choice가 있으면 생략 가능",
+    "zh": "discord_get_messages/search 显示的附件文件名；提供 attachment_choice 时可省略",
+    "ja": "discord_get_messages/search に表示された添付ファイル名。attachment_choice を指定する場合は省略可"
+  },
+  "discord.tools.channel_name_omit_when_selecting_channel": {
+    "en": "Channel name; omit when selecting channel_choice, thread_id, or dm_id",
+    "ko": "채널 이름; channel_choice, thread_id 또는 dm_id를 지정하면 생략하세요",
+    "zh": "频道名称；指定 channel_choice、thread_id 或 dm_id 时省略",
+    "ja": "チャンネル名。channel_choice、thread_id、dm_id のいずれかを指定する場合は省略します"
+  },
+  "discord.tools.direct_message_conversation_id_incoming_dm": {
+    "en": "Direct-message conversation ID from incoming dm_id metadata; use it instead of channel/channel_choice/thread_id",
+    "ko": "수신 메타데이터 dm_id의 DM 대화 ID입니다. channel/channel_choice/thread_id 대신 지정하세요",
+    "zh": "来自收到消息 dm_id 元数据的私信会话 ID；用它替代 channel/channel_choice/thread_id",
+    "ja": "受信メタデータ dm_id のDM会話ID。channel/channel_choice/thread_id の代わりに指定します"
+  },
+  "discord.tools.discord_message_link_return_messages_after": {
+    "en": "Discord message link; return messages after this message",
+    "ko": "Discord 메시지 링크; 이 메시지보다 이후 메시지를 반환합니다",
+    "zh": "Discord 消息链接；返回此消息之后的消息",
+    "ja": "Discordメッセージリンク。このメッセージより後を返します"
+  },
+  "discord.tools.discord_message_link_return_messages_around": {
+    "en": "Discord message link; return messages around this message",
+    "ko": "Discord 메시지 링크; 이 메시지 주변의 메시지를 반환합니다",
+    "zh": "Discord 消息链接；返回此消息附近的消息",
+    "ja": "Discordメッセージリンク。このメッセージの前後を返します"
+  },
+  "discord.tools.discord_message_link_return_messages_before": {
+    "en": "Discord message link; return messages before this message",
+    "ko": "Discord 메시지 링크; 이 메시지보다 이전 메시지를 반환합니다",
+    "zh": "Discord 消息链接；返回此消息之前的消息",
+    "ja": "Discordメッセージリンク。このメッセージより前を返します"
+  },
+  "discord.tools.discord_message_link_returned_history_search": {
+    "en": "Discord message link returned by history or search",
+    "ko": "메시지 기록 또는 검색에서 반환된 Discord 메시지 링크",
+    "zh": "消息历史或搜索结果返回的 Discord 消息链接",
+    "ja": "履歴または検索結果で返されたDiscordメッセージリンク"
+  },
+  "discord.tools.download_attachment_shown_discord_get_messages": {
+    "en": "Download an attachment shown in discord_get_messages or discord_search_messages using its message link and filename. Select its channel by name/channel_choice or use thread_id for an active or archived thread. If a message has duplicate filenames, use a returned attachment_choice. The result includes the local saved path; use it in discord_send_message files to forward the file. The current message and attachment are revalidated; arbitrary URLs are not accepted. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
+    "ko": "discord_get_messages 또는 discord_search_messages 결과에 표시된 첨부 파일을 메시지 링크와 파일 이름으로 다운로드합니다. 채널 이름/channel_choice 또는 활성·보관 스레드의 thread_id를 지정하세요. 파일 이름이 중복되면 반환된 attachment_choice를 사용하세요. 결과에는 저장된 로컬 경로가 포함되며 discord_send_message의 files에 지정해 전달할 수 있습니다. 메시지와 첨부 파일은 다시 확인하며 임의 URL은 허용하지 않습니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
+    "zh": "使用消息链接和文件名下载 discord_get_messages 或 discord_search_messages 结果中显示的附件。频道可按名称或 channel_choice 选择，也可使用活动或已归档线程的 thread_id。如果消息中存在同名文件，请使用返回的 attachment_choice。结果包含本地保存路径，可将其用于 discord_send_message 的 files 转发文件。会重新验证当前消息和附件；不接受任意 URL。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
+    "ja": "discord_get_messages または discord_search_messages の結果に表示された添付を、メッセージリンクとファイル名でダウンロードします。チャンネル名/channel_choice、またはアクティブ/アーカイブ済みスレッドの thread_id を指定します。同名ファイルがある場合は返された attachment_choice を使ってください。結果には保存先のローカルパスが含まれ、discord_send_message の files に指定して転送できます。現在のメッセージと添付を再検証し、任意のURLは受け付けません。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
+  },
+  "discord.tools.exact_current_server_member_dm_recipient": {
+    "en": "Exact current server-member or DM-recipient names to mention explicitly",
+    "ko": "명시적으로 멘션할 현재 서버 구성원 또는 DM 상대의 정확한 이름",
+    "zh": "要明确提及的当前服务器成员或私信收件人的准确姓名",
+    "ja": "明示的にメンションする現在のサーバーメンバーまたはDM相手の正確な名前"
+  },
+  "discord.tools.list_configured_guild_users_opaque_paging": {
+    "en": "List configured-guild users with opaque paging. Needs the application's privileged GUILD_MEMBERS intent.",
+    "ko": "설정된 서버의 사용자를 불투명 페이지 토큰으로 나열합니다. 애플리케이션에 privileged GUILD_MEMBERS intent가 필요합니다.",
+    "zh": "使用不透明分页令牌列出已配置服务器中的用户。需要应用启用特权 GUILD_MEMBERS intent。",
+    "ja": "不透明なページトークンを使って設定済みサーバーのユーザーを一覧表示します。アプリケーションに特権 GUILD_MEMBERS intent が必要です。"
+  },
+  "discord.tools.list_visible_channels_active_threads_human": {
+    "en": "List visible channels and active threads by human-readable name. Active threads include a thread_id for lookup; archived threads can also be queried by an ID obtained from message metadata.",
+    "ko": "현재 볼 수 있는 채널과 활성 스레드를 이름으로 나열합니다. 활성 스레드에는 조회용 thread_id가 포함됩니다. 메시지 정보에서 얻은 ID로 보관된 스레드도 조회할 수 있습니다.",
+    "zh": "按可读名称列出当前可见的频道和活跃线程。活跃线程提供用于查询的 thread_id；也可使用消息元数据中的 ID 查询已归档线程。",
+    "ja": "現在表示できるチャンネルとアクティブなスレッドを名前で一覧表示します。アクティブスレッドには検索用 thread_id を含めます。メッセージ情報から得たIDでアーカイブ済みスレッドも検索できます。"
+  },
+  "discord.tools.literal_substring_search": {
+    "en": "Literal substring to search for",
+    "ko": "문자 그대로 검색할 부분 문자열",
+    "zh": "要搜索的字面子串",
+    "ja": "そのまま検索する部分文字列"
+  },
+  "discord.tools.maximum_number_matches_return": {
+    "en": "Maximum number of matches to return",
+    "ko": "반환할 최대 일치 수",
+    "zh": "最多返回的匹配数",
+    "ja": "返す一致件数の最大数"
+  },
+  "discord.tools.maximum_number_messages_return_larger_requests": {
+    "en": "Maximum number of messages to return; larger requests are paged automatically",
+    "ko": "반환할 최대 메시지 수",
+    "zh": "最多返回的消息数",
+    "ja": "返すメッセージの最大数"
+  },
+  "discord.tools.maximum_number_recent_messages_inspect_requests": {
+    "en": "Maximum number of recent messages to inspect; requests are paged automatically",
+    "ko": "확인할 최근 메시지의 최대 수",
+    "zh": "最多检查的近期消息数",
+    "ja": "確認する直近メッセージの最大数"
+  },
+  "discord.tools.message_body_long_content_sent_multiple": {
+    "en": "Message body; long content is sent as multiple Discord-sized messages",
+    "ko": "메시지 내용; 긴 내용은 Discord 메시지 크기에 맞춰 여러 개로 나눠 보냅니다",
+    "zh": "消息正文；较长内容会拆分为多条符合 Discord 限制的消息",
+    "ja": "メッセージ本文。長文はDiscordの上限に合わせて複数のメッセージに分けて送ります"
+  },
+  "discord.tools.opaque_channel_choice_returned_discord_list": {
+    "en": "Opaque channel choice returned by discord_list_channels",
+    "ko": "discord_list_channels가 반환한 불투명 채널 선택 토큰",
+    "zh": "discord_list_channels 返回的不透明频道选择值",
+    "ja": "discord_list_channels が返した不透明なチャンネル選択値"
+  },
+  "discord.tools.opaque_choice_returned_when_attachment_filenames": {
+    "en": "Opaque choice returned when attachment filenames collide",
+    "ko": "첨부 파일 이름이 중복될 때 반환되는 불투명 선택 토큰",
+    "zh": "附件文件名重复时返回的不透明选择值",
+    "ja": "添付ファイル名が重複した場合に返される不透明な選択値"
+  },
+  "discord.tools.opaque_next_page_token_returned_previous": {
+    "en": "Opaque next-page token returned by the previous result",
+    "ko": "이전 결과가 반환한 불투명 다음 페이지 토큰",
+    "zh": "上次结果返回的不透明下一页令牌",
+    "ja": "前の結果で返された不透明な次ページトークン"
+  },
+  "discord.tools.optional_local_file_paths_attach_files": {
+    "en": "Optional local file paths to attach; files are checked and split into Discord-sized message batches",
+    "ko": "선택 사항: 첨부할 로컬 파일 경로입니다. 파일을 검사하고 Discord 메시지 크기에 맞춰 나눠 보냅니다",
+    "zh": "可选：要附加的本地文件路径；会检查文件并按 Discord 消息限制分批发送",
+    "ja": "任意：添付するローカルファイルのパスです。ファイルを確認し、Discordメッセージ上限に合わせて分割送信します"
+  },
+  "discord.tools.optional_number_recent_messages_skip": {
+    "en": "Optional number of recent messages to skip",
+    "ko": "선택 사항: 최근 메시지 중 건너뛸 수",
+    "zh": "可选：跳过最近的消息数",
+    "ja": "任意指定：直近のメッセージからスキップする件数"
+  },
+  "discord.tools.read_messages_channel_name_channel_choice": {
+    "en": "Read messages from a channel name, channel_choice, or thread_id returned in channel/message metadata; archived threads are supported by ID. Use Discord message links for before, after, or around cursors. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
+    "ko": "채널 이름, channel_choice 또는 채널/메시지 정보가 반환한 thread_id에서 메시지를 읽습니다. ID로 보관된 스레드도 조회할 수 있습니다. before, after, around 커서에는 Discord 메시지 링크를 사용하세요. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
+    "zh": "从频道名称、channel_choice 或频道/消息元数据返回的 thread_id 读取消息；也支持通过 ID 查询已归档线程。before、after 或 around 游标使用 Discord 消息链接。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
+    "ja": "チャンネル名、channel_choice、またはチャンネル/メッセージ情報で返された thread_id から読み込みます。ID指定でアーカイブ済みスレッドも読めます。before、after、around にはDiscordメッセージリンクを使います。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
+  },
+  "discord.tools.search_recent_history_channel_name_channel": {
+    "en": "Search recent history in a channel name, channel_choice, or thread_id using literal substring matching. Requested ranges are paged through Discord history. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
+    "ko": "채널 이름, channel_choice 또는 thread_id의 제한된 최근 기록에서 문자 그대로의 부분 문자열을 검색합니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
+    "zh": "在频道名称、channel_choice 或 thread_id 的有限近期历史记录中进行字面子串搜索。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
+    "ja": "チャンネル名、channel_choice、または thread_id の範囲を限定した最近の履歴から、文字どおりの部分文字列を検索します。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
+  },
+  "discord.tools.thread_id_returned_discord_list_channels": {
+    "en": "Thread ID returned by discord_list_channels or a message's thread metadata; archived threads are also supported",
+    "ko": "discord_list_channels 또는 메시지의 thread 정보가 반환한 스레드 ID입니다. 보관된 스레드도 지원합니다",
+    "zh": "discord_list_channels 或消息 thread 信息返回的线程 ID；也支持已归档线程",
+    "ja": "discord_list_channels またはメッセージの thread 情報が返したスレッドID。アーカイブ済みスレッドも指定できます"
+  },
+  "discord.tools.use_tool_reply_live_message_received": {
+    "en": "Use this tool to reply to a live message received from another channel or thread in that same source channel or thread, or to send a separate message requested by the user. Ordinary replies are posted automatically in the worker's home channel, so they do not reach the other channel. The live source message establishes where to reply; no separate send request is needed. Provide a channel name or channel_choice from discord_list_channels, or a thread_id from its result or message thread metadata. Long content is split into Discord-sized messages. Optional exact user names for explicit mentions. Optional files is an array of local file paths to attach; files are checked before sending. To target a direct-message conversation, provide dm_id from its incoming message metadata instead of a channel or thread selector.",
+    "ko": "다른 채널이나 스레드에서 직접 받은 메시지에는 이 도구로 그 메시지의 채널이나 스레드에 답장하세요. 사용자가 요청한 별도 메시지를 보낼 때도 사용합니다. 일반 답변은 홈 채널에 자동 게시되므로 다른 채널에 전달되지 않습니다. 직접 수신한 메시지의 출처로 답장 위치가 정해지며 별도의 발송 요청은 필요하지 않습니다. discord_list_channels의 채널 이름·channel_choice 또는 결과나 메시지 thread 정보의 thread_id를 지정하세요. 명시적 멘션은 정확한 사용자 이름을 지정할 수 있습니다. 선택적 files 배열에는 첨부할 로컬 경로를 지정하며, 전송 전에 크기 제한과 경로를 검사합니다. DM을 대상으로 할 때는 채널·스레드 선택자 대신 수신 메시지 메타데이터의 dm_id를 지정하세요.",
+    "zh": "使用此工具在原频道或线程回复从其他频道或线程直接收到的消息，也可发送用户另外要求的消息。普通回复会自动发到主频道，不会到达其他频道。直接收到的消息来源已确定回复位置，无需单独提出发送请求。提供 discord_list_channels 的频道名称、channel_choice，或其结果/消息 thread 信息中的 thread_id。可提供要明确提及的准确成员姓名。较长内容会拆分成多条 Discord 消息；files 数组中的本地路径会经过检查，附件按 Discord 消息限制分批发送。 操作私信会话时，请指定收到消息元数据中的 dm_id，替代频道或线程选择参数。",
+    "ja": "別チャンネルやスレッドから直接受信したメッセージには、このツールで元のチャンネルやスレッドへ返答してください。ユーザーが別途依頼したメッセージの送信にも使います。通常の返答はホームチャンネルに投稿され、他チャンネルには届きません。直接受信したメッセージの送信元が返信先となるため、別途送信を依頼される必要はありません。discord_list_channels のチャンネル名・channel_choice、または一覧やメッセージ thread 情報の thread_id を指定します。明示的なメンションには正確なユーザー名を指定できます。長文は複数のDiscordメッセージに分けます。files 配列のローカルパスを確認し、添付をDiscordメッセージ上限に合わせて分割送信します。 DMを対象にする場合は、チャンネルやスレッドの指定の代わりに受信メタデータの dm_id を指定してください。"
+  },
+  "discord.tools.users_per_page": {
+    "en": "Users per page",
+    "ko": "페이지당 사용자 수",
+    "zh": "每页用户数",
+    "ja": "ページあたりのユーザー数"
+  },
+  "discord.tools.unknown_tool": {
+    "en": "Unknown Discord tool: {tool}",
+    "ko": "알 수 없는 Discord 도구입니다: {tool}",
+    "zh": "未知的 Discord 工具：{tool}",
+    "ja": "不明な Discord ツールです: {tool}"
+  },
+  "discord.tools.selection_state_unavailable": {
+    "en": "The selection state is unavailable.",
+    "ko": "선택 상태를 사용할 수 없습니다.",
+    "zh": "选择状态不可用。",
+    "ja": "選択状態を利用できません。"
+  },
+  "discord.tools.unknown_selection": {
+    "en": "Unknown selection. List current channels or users again.",
+    "ko": "선택 항목을 찾을 수 없습니다. 현재 채널이나 사용자를 다시 나열하세요.",
+    "zh": "找不到该选择。请重新列出当前频道或用户。",
+    "ja": "選択項目が見つかりません。現在のチャンネルまたはユーザーを再表示してください。"
+  },
+  "discord.tools.channel_outside_guild": {
+    "en": "The channel is outside the configured server.",
+    "ko": "채널이 설정된 서버에 속하지 않습니다.",
+    "zh": "该频道不属于已配置的服务器。",
+    "ja": "チャンネルが設定済みサーバーにありません。"
+  },
+  "discord.tools.thread_id_positive": {
+    "en": "thread_id must be a positive Discord channel ID string.",
+    "ko": "thread_id는 양수인 Discord 채널 ID 문자열이어야 합니다.",
+    "zh": "thread_id 必须是正数形式的 Discord 频道 ID 字符串。",
+    "ja": "thread_id は正の Discord チャンネル ID 文字列である必要があります。"
+  },
+  "discord.tools.thread_id_not_guild_thread": {
+    "en": "thread_id does not identify a server thread.",
+    "ko": "thread_id가 서버 스레드를 가리키지 않습니다.",
+    "zh": "thread_id 未指向服务器线程。",
+    "ja": "thread_id がサーバースレッドを示していません。"
+  },
+  "discord.tools.thread_outside_guild": {
+    "en": "The thread is outside the configured server.",
+    "ko": "스레드가 설정된 서버에 속하지 않습니다.",
+    "zh": "该线程不属于已配置的服务器。",
+    "ja": "スレッドが設定済みサーバーにありません。"
+  },
+  "discord.tools.thread_not_thread": {
+    "en": "thread_id does not identify a thread.",
+    "ko": "thread_id가 스레드를 가리키지 않습니다.",
+    "zh": "thread_id 未指向线程。",
+    "ja": "thread_id がスレッドを示していません。"
+  },
+  "discord.tools.thread_not_viewable": {
+    "en": "The bot cannot view the selected thread.",
+    "ko": "봇이 선택한 스레드를 볼 수 없습니다.",
+    "zh": "机器人无法查看所选线程。",
+    "ja": "ボットは選択されたスレッドを表示できません。"
+  },
+  "discord.tools.choice_not_channel": {
+    "en": "The choice is not a channel.",
+    "ko": "선택 항목이 채널이 아닙니다.",
+    "zh": "该选项不是频道。",
+    "ja": "選択項目はチャンネルではありません。"
+  },
+  "discord.tools.channel_choice_stale": {
+    "en": "The channel choice is stale. List channels again.",
+    "ko": "채널 선택 항목이 오래되었습니다. 채널을 다시 나열하세요.",
+    "zh": "频道选择已过期。请重新列出频道。",
+    "ja": "チャンネル選択が古くなっています。チャンネルを再表示してください。"
+  },
+  "discord.tools.channel_renamed_or_moved": {
+    "en": "The channel was renamed or moved. List channels again.",
+    "ko": "채널 이름이나 위치가 바뀌었습니다. 채널을 다시 나열하세요.",
+    "zh": "频道名称或位置已更改。请重新列出频道。",
+    "ja": "チャンネル名または場所が変更されました。チャンネルを再表示してください。"
+  },
+  "discord.tools.channel_not_viewable": {
+    "en": "The bot cannot view the selected channel.",
+    "ko": "봇이 선택한 채널을 볼 수 없습니다.",
+    "zh": "机器人无法查看所选频道。",
+    "ja": "ボットは選択されたチャンネルを表示できません。"
+  },
+  "discord.tools.channel_name_required": {
+    "en": "The channel name must not be empty.",
+    "ko": "채널 이름은 비워 둘 수 없습니다.",
+    "zh": "频道名称不能为空。",
+    "ja": "チャンネル名を空にすることはできません。"
+  },
+  "discord.tools.no_channel_matches": {
+    "en": "No visible current channel matches: {query}",
+    "ko": "현재 표시되는 채널 중 일치하는 항목이 없습니다: {query}",
+    "zh": "当前可见频道中没有匹配项：{query}",
+    "ja": "現在表示できるチャンネルに一致するものがありません: {query}"
+  },
+  "discord.tools.dm_id_not_dm": {
+    "en": "dm_id does not identify a direct-message conversation.",
+    "ko": "dm_id가 DM 대화를 가리키지 않습니다.",
+    "zh": "dm_id 未指向私信会话。",
+    "ja": "dm_id がダイレクトメッセージの会話を示していません。"
+  },
+  "discord.tools.user_names_must_be_strings": {
+    "en": "User names must be strings.",
+    "ko": "사용자 이름은 문자열이어야 합니다.",
+    "zh": "用户名必须是字符串。",
+    "ja": "ユーザー名は文字列である必要があります。"
+  },
+  "discord.tools.no_dm_recipient_match": {
+    "en": "No recipient in this direct message matches: {query}",
+    "ko": "이 DM에서 일치하는 수신자를 찾을 수 없습니다: {query}",
+    "zh": "此私信中没有匹配的收件人：{query}",
+    "ja": "このダイレクトメッセージに一致する宛先がありません: {query}"
+  },
+  "discord.tools.channel_choice_not_voice": {
+    "en": "The choice is not a voice channel.",
+    "ko": "선택 항목이 음성 채널이 아닙니다.",
+    "zh": "该选项不是语音频道。",
+    "ja": "選択項目はボイスチャンネルではありません。"
+  },
+  "discord.tools.voice_channel_not_viewable": {
+    "en": "The bot cannot view the selected voice channel.",
+    "ko": "봇이 선택한 음성 채널을 볼 수 없습니다.",
+    "zh": "机器人无法查看所选语音频道。",
+    "ja": "ボットは選択されたボイスチャンネルを表示できません。"
+  },
+  "discord.tools.no_voice_channel_matches": {
+    "en": "No visible current voice channel matches: {query}",
+    "ko": "현재 표시되는 음성 채널 중 일치하는 항목이 없습니다: {query}",
+    "zh": "当前可见语音频道中没有匹配项：{query}",
+    "ja": "現在表示できるボイスチャンネルに一致するものがありません: {query}"
+  },
+  "discord.tools.page_token_required": {
+    "en": "page must be an opaque next-page string.",
+    "ko": "page는 불투명한 다음 페이지 문자열이어야 합니다.",
+    "zh": "page 必须是不可读的下一页令牌字符串。",
+    "ja": "page は不透明な次ページ文字列である必要があります。"
+  },
+  "discord.tools.member_page_invalid": {
+    "en": "The member page token is invalid.",
+    "ko": "멤버 페이지 토큰이 올바르지 않습니다.",
+    "zh": "成员分页令牌无效。",
+    "ja": "メンバーページトークンが無効です。"
+  },
+  "discord.tools.member_list_intent": {
+    "en": "Discord could not list server members. The application's privileged GUILD_MEMBERS intent may need enabling or approval in the Developer Portal. No intent or permission was changed.",
+    "ko": "Discord에서 서버 멤버를 나열하지 못했습니다. Developer Portal에서 앱의 권한이 높은 GUILD_MEMBERS 인텐트를 활성화하거나 승인받아야 할 수 있습니다. 인텐트나 권한은 변경하지 않았습니다.",
+    "zh": "Discord 无法列出服务器成员。可能需要在 Developer Portal 中启用或申请应用的特权 GUILD_MEMBERS intent。未更改任何 intent 或权限。",
+    "ja": "Discord はサーバーメンバーを一覧表示できませんでした。Developer Portal でアプリの特権 GUILD_MEMBERS intent を有効化または承認する必要がある場合があります。intent や権限は変更していません。"
+  },
+  "discord.tools.member_resolve_intent": {
+    "en": "Discord could not resolve current server members. The privileged GUILD_MEMBERS intent may need enabling or approval in the Developer Portal. No intent or permission was changed.",
+    "ko": "Discord에서 현재 서버 멤버를 확인하지 못했습니다. Developer Portal에서 권한이 높은 GUILD_MEMBERS 인텐트를 활성화하거나 승인받아야 할 수 있습니다. 인텐트나 권한은 변경하지 않았습니다.",
+    "zh": "Discord 无法解析当前服务器成员。可能需要在 Developer Portal 中启用或申请特权 GUILD_MEMBERS intent。未更改任何 intent 或权限。",
+    "ja": "Discord は現在のサーバーメンバーを解決できませんでした。Developer Portal で特権 GUILD_MEMBERS intent を有効化または承認する必要がある場合があります。intent や権限は変更していません。"
+  },
+  "discord.tools.user_left_guild": {
+    "en": "The selected user left the configured server.",
+    "ko": "선택한 사용자가 설정된 서버에서 나갔습니다.",
+    "zh": "所选用户已离开已配置的服务器。",
+    "ja": "選択されたユーザーは設定済みサーバーから退出しました。"
+  },
+  "discord.tools.user_name_changed": {
+    "en": "The user name changed. List users again.",
+    "ko": "사용자 이름이 바뀌었습니다. 사용자를 다시 나열하세요.",
+    "zh": "用户名已更改。请重新列出用户。",
+    "ja": "ユーザー名が変更されました。ユーザーを再表示してください。"
+  },
+  "discord.tools.choice_not_user": {
+    "en": "The choice token is not a user selection.",
+    "ko": "선택 토큰이 사용자 선택 항목이 아닙니다.",
+    "zh": "该选择令牌不是用户选择项。",
+    "ja": "選択トークンはユーザー選択ではありません。"
+  },
+  "discord.tools.no_member_matches": {
+    "en": "No current server member matches: {query}. List users for current names.",
+    "ko": "현재 서버 멤버 중 일치하는 항목이 없습니다: {query}. 현재 이름을 보려면 사용자를 나열하세요.",
+    "zh": "当前服务器成员中没有匹配项：{query}。请列出用户以查看当前名称。",
+    "ja": "現在のサーバーメンバーに一致するユーザーがいません: {query}。現在の名前を確認するにはユーザーを一覧表示してください。"
+  },
+  "discord.tools.arguments_object_required": {
+    "en": "Arguments must be a JSON object.",
+    "ko": "인수는 JSON 객체여야 합니다.",
+    "zh": "参数必须是 JSON 对象。",
+    "ja": "引数は JSON オブジェクトである必要があります。"
+  },
+  "discord.tools.unknown_argument": {
+    "en": "Unknown argument: {argument}",
+    "ko": "알 수 없는 인수입니다: {argument}",
+    "zh": "未知参数：{argument}",
+    "ja": "不明な引数です: {argument}"
+  },
+  "discord.tools.exactly_one_channel_selector": {
+    "en": "Provide exactly one of channel, channel_choice, thread_id, or dm_id.",
+    "ko": "channel, channel_choice, thread_id, dm_id 중 하나만 지정하세요.",
+    "zh": "请仅提供 channel、channel_choice、thread_id 或 dm_id 中的一个。",
+    "ja": "channel、channel_choice、thread_id、dm_id のいずれか1つだけを指定してください。"
+  },
+  "discord.tools.channel_name_string_required": {
+    "en": "channel must be a non-empty name string.",
+    "ko": "channel은 비어 있지 않은 이름 문자열이어야 합니다.",
+    "zh": "channel 必须是非空名称字符串。",
+    "ja": "channel は空でない名前文字列である必要があります。"
+  },
+  "discord.tools.channel_choice_string_required": {
+    "en": "channel_choice must be an opaque choice string.",
+    "ko": "channel_choice는 불투명한 선택 문자열이어야 합니다.",
+    "zh": "channel_choice 必须是不透明的选择字符串。",
+    "ja": "channel_choice は不透明な選択文字列である必要があります。"
+  },
+  "discord.tools.channel_id_positive": {
+    "en": "{field} must be a positive Discord channel ID string.",
+    "ko": "{field}는 양수인 Discord 채널 ID 문자열이어야 합니다。",
+    "zh": "{field} 必须是正数形式的 Discord 频道 ID 字符串。",
+    "ja": "{field} は正の Discord チャンネル ID 文字列である必要があります。"
+  },
+  "discord.tools.field_nonempty": {
+    "en": "{field} must be a non-empty string.",
+    "ko": "{field}는 비어 있지 않은 문자열이어야 합니다.",
+    "zh": "{field} 必须是非空字符串。",
+    "ja": "{field} は空でない文字列である必要があります。"
+  },
+  "discord.tools.field_nonnegative_integer": {
+    "en": "{field} must be a non-negative integer.",
+    "ko": "{field}는 음수가 아닌 정수여야 합니다.",
+    "zh": "{field} 必须是非负整数。",
+    "ja": "{field} は0以上の整数である必要があります。"
+  },
+  "discord.tools.field_range": {
+    "en": "{field} must be between {min} and {max}.",
+    "ko": "{field}는 {min}에서 {max} 사이여야 합니다.",
+    "zh": "{field} 必须介于 {min} 和 {max} 之间。",
+    "ja": "{field} は {min} から {max} の範囲である必要があります。"
+  },
+  "discord.tools.field_too_large": {
+    "en": "{field} is too large for this platform.",
+    "ko": "{field}가 이 플랫폼에서 처리하기에 너무 큽니다.",
+    "zh": "{field} 对此平台而言过大。",
+    "ja": "{field} はこのプラットフォームで扱うには大きすぎます。"
+  },
+  "discord.tools.discord_message_link_required": {
+    "en": "{field} must be a Discord message link.",
+    "ko": "{field}는 Discord 메시지 링크여야 합니다.",
+    "zh": "{field} 必须是 Discord 消息链接。",
+    "ja": "{field} は Discord メッセージリンクである必要があります。"
+  },
+  "discord.tools.message_reference_link_required": {
+    "en": "The message reference must be a Discord message link.",
+    "ko": "메시지 참조는 Discord 메시지 링크여야 합니다.",
+    "zh": "消息引用必须是 Discord 消息链接。",
+    "ja": "メッセージ参照は Discord メッセージリンクである必要があります。"
+  },
+  "discord.tools.message_link_identity": {
+    "en": "The message link must identify one server, channel, and message.",
+    "ko": "메시지 링크에는 서버, 채널, 메시지가 각각 하나씩 지정되어야 합니다.",
+    "zh": "消息链接必须唯一标识一个服务器、频道和消息。",
+    "ja": "メッセージリンクはサーバー、チャンネル、メッセージをそれぞれ1つ特定する必要があります。"
+  },
+  "discord.tools.message_link_invalid_message": {
+    "en": "The message link does not contain a valid message.",
+    "ko": "메시지 링크에 유효한 메시지가 없습니다.",
+    "zh": "消息链接中没有有效消息。",
+    "ja": "メッセージリンクに有効なメッセージが含まれていません。"
+  },
+  "discord.tools.message_link_wrong_scope": {
+    "en": "The message link belongs to a different server or channel.",
+    "ko": "메시지 링크가 다른 서버나 채널에 속합니다.",
+    "zh": "消息链接属于其他服务器或频道。",
+    "ja": "メッセージリンクが別のサーバーまたはチャンネルに属しています。"
+  },
+  "discord.tools.exactly_one_voice_selector": {
+    "en": "Provide exactly one of channel or channel_choice.",
+    "ko": "channel 또는 channel_choice 중 하나만 지정하세요.",
+    "zh": "请仅提供 channel 或 channel_choice 中的一个。",
+    "ja": "channel または channel_choice のいずれか1つだけを指定してください。"
+  },
+  "discord.tools.voice_selector_required": {
+    "en": "Provide a channel or channel_choice.",
+    "ko": "channel 또는 channel_choice를 지정하세요.",
+    "zh": "请提供 channel 或 channel_choice。",
+    "ja": "channel または channel_choice を指定してください。"
+  },
+  "discord.tools.not_voice_channel": {
+    "en": "The selected channel is not a voice channel.",
+    "ko": "선택한 채널은 음성 채널이 아닙니다.",
+    "zh": "所选频道不是语音频道。",
+    "ja": "選択されたチャンネルはボイスチャンネルではありません。"
+  },
+  "discord.tools.thread_parent_unavailable": {
+    "en": "The thread parent is unavailable, so its permissions cannot be checked.",
+    "ko": "스레드 상위 채널을 사용할 수 없어 권한을 확인할 수 없습니다.",
+    "zh": "线程父频道不可用，无法检查其权限。",
+    "ja": "スレッドの親チャンネルを利用できないため、権限を確認できません。"
+  },
+  "discord.tools.channel_voice_selector_exactly_one": {
+    "en": "Provide exactly one of channel or channel_choice.",
+    "ko": "channel 또는 channel_choice 중 하나만 지정하세요.",
+    "zh": "请仅提供 channel 或 channel_choice 中的一个。",
+    "ja": "channel または channel_choice のいずれか1つだけを指定してください。"
+  },
+  "discord.tools.content_must_be_string": {
+    "en": "Message content must be a string.",
+    "ko": "메시지 내용은 문자열이어야 합니다.",
+    "zh": "消息内容必须是字符串。",
+    "ja": "メッセージ内容は文字列である必要があります。"
+  },
+  "discord.tools.mentions_must_be_array": {
+    "en": "Mentions must be an array.",
+    "ko": "멘션은 배열이어야 합니다.",
+    "zh": "提及项必须是数组。",
+    "ja": "メンションは配列である必要があります。"
+  },
+  "discord.tools.mention_item_nonempty": {
+    "en": "Each mention must be a non-empty recipient/member name or choice.",
+    "ko": "각 멘션은 비어 있지 않은 DM 상대/서버 구성원 이름 또는 선택 항목이어야 합니다.",
+    "zh": "每个提及项都必须是非空的私信收件人/服务器成员名称或选择项。",
+    "ja": "各メンションは空でないDM相手/サーバーメンバー名または選択肢である必要があります。"
+  },
+  "discord.tools.bot_lacks_view_channel": {
+    "en": "The bot cannot view the selected channel.",
+    "ko": "봇이 선택한 채널을 볼 수 없습니다.",
+    "zh": "机器人无法查看所选频道。",
+    "ja": "ボットは選択したチャンネルを表示できません。"
+  },
+  "discord.tools.bot_lacks_send_permission": {
+    "en": "The bot cannot send messages in the selected channel.",
+    "ko": "봇이 선택한 채널에 메시지를 보낼 수 없습니다.",
+    "zh": "机器人无法在所选频道中发送消息。",
+    "ja": "ボットは選択したチャンネルにメッセージを送信できません。"
+  },
+  "discord.tools.bot_lacks_attach_permission": {
+    "en": "The bot cannot attach files in the selected channel.",
+    "ko": "봇이 선택한 채널에 파일을 첨부할 수 없습니다.",
+    "zh": "机器人无法在所选频道中附加文件。",
+    "ja": "ボットは選択したチャンネルにファイルを添付できません。"
+  },
+  "discord.tools.ambiguous_channel_name": {
+    "en": "The channel name matches more than one channel.",
+    "ko": "채널 이름과 일치하는 채널이 여러 개입니다.",
+    "zh": "频道名称匹配多个频道。",
+    "ja": "チャンネル名に一致するチャンネルが複数あります。"
+  },
+  "discord.tools.ambiguous_voice_channel_name": {
+    "en": "The voice channel name matches more than one channel.",
+    "ko": "음성 채널 이름과 일치하는 채널이 여러 개입니다.",
+    "zh": "语音频道名称匹配多个频道。",
+    "ja": "ボイスチャンネル名に一致するチャンネルが複数あります。"
+  },
+  "discord.tools.ambiguous_user_name": {
+    "en": "The user name matches more than one member.",
+    "ko": "사용자 이름과 일치하는 구성원이 여러 명입니다.",
+    "zh": "用户名匹配多个成员。",
+    "ja": "ユーザー名に一致するメンバーが複数います。"
+  },
+  "discord.tools.ambiguous_attachment_filename": {
+    "en": "The attachment filename matches more than one attachment.",
+    "ko": "첨부 파일 이름과 일치하는 첨부 파일이 여러 개입니다.",
+    "zh": "附件文件名匹配多个附件。",
+    "ja": "添付ファイル名に一致する添付ファイルが複数あります。"
+  },
+  "discord.tools.limit_at_least_one": {
+    "en": "limit must be at least one.",
+    "ko": "limit은 1 이상이어야 합니다.",
+    "zh": "limit 必须至少为 1。",
+    "ja": "limit は 1 以上である必要があります。"
+  },
+  "discord.tools.one_history_cursor": {
+    "en": "Choose at most one history cursor: before, after, or around.",
+    "ko": "기록 커서는 before, after, around 중 하나만 선택하세요.",
+    "zh": "历史游标最多只能选择一个：before、after 或 around。",
+    "ja": "履歴カーソルは before、after、around のいずれか1つだけ指定してください。"
+  },
+  "discord.tools.offset_cursor_conflict": {
+    "en": "offset cannot be combined with after or around.",
+    "ko": "offset은 after 또는 around와 함께 사용할 수 없습니다.",
+    "zh": "offset 不能与 after 或 around 同时使用。",
+    "ja": "offset は after または around と併用できません。"
+  },
+  "discord.tools.max_scan_at_least_one": {
+    "en": "max_scan must be at least one.",
+    "ko": "max_scan은 1 이상이어야 합니다.",
+    "zh": "max_scan 必须至少为 1。",
+    "ja": "max_scan は 1 以上である必要があります。"
+  },
+  "discord.tools.query_required": {
+    "en": "query must not be empty.",
+    "ko": "query는 비워 둘 수 없습니다.",
+    "zh": "query 不能为空。",
+    "ja": "query は空にできません。"
+  },
+  "discord.tools.filename_nonempty": {
+    "en": "filename must be a non-empty string.",
+    "ko": "filename은 비어 있지 않은 문자열이어야 합니다.",
+    "zh": "filename 必须是非空字符串。",
+    "ja": "filename は空でない文字列にしてください。"
+  },
+  "discord.tools.attachment_choice_invalid": {
+    "en": "attachment_choice must be a returned opaque choice.",
+    "ko": "attachment_choice에는 반환된 불투명 선택값을 입력해야 합니다.",
+    "zh": "attachment_choice 必须是返回的不透明选项值。",
+    "ja": "attachment_choice には返された不透明な選択値を指定してください。"
+  },
+  "discord.tools.filename_or_choice_exclusive": {
+    "en": "Provide a filename or attachment_choice, not both.",
+    "ko": "filename 또는 attachment_choice 중 하나만 입력하세요.",
+    "zh": "请提供 filename 或 attachment_choice，不能同时提供。",
+    "ja": "filename と attachment_choice のどちらか一方を指定してください。"
+  },
+  "discord.tools.filename_or_choice_required": {
+    "en": "A filename or attachment_choice is required.",
+    "ko": "filename 또는 attachment_choice가 필요합니다.",
+    "zh": "必须提供 filename 或 attachment_choice。",
+    "ja": "filename または attachment_choice が必要です。"
+  },
+  "discord.tools.choice_not_attachment": {
+    "en": "The selected choice is not an attachment.",
+    "ko": "선택한 항목은 첨부 파일이 아닙니다.",
+    "zh": "所选项目不是附件。",
+    "ja": "選択した項目は添付ファイルではありません。"
+  },
+  "discord.tools.attachment_choice_other_message": {
+    "en": "The attachment choice belongs to a different message.",
+    "ko": "첨부 파일 선택값은 다른 메시지에 속합니다.",
+    "zh": "该附件选项属于另一条消息。",
+    "ja": "その添付ファイルの選択値は別のメッセージに属しています。"
+  },
+  "discord.tools.attachment_changed": {
+    "en": "The attachment changed or is no longer available.",
+    "ko": "첨부 파일이 변경되었거나 더 이상 사용할 수 없습니다.",
+    "zh": "附件已更改或不再可用。",
+    "ja": "添付ファイルが変更されたか、利用できなくなりました。"
+  },
+  "discord.tools.no_attachment_named": {
+    "en": "No attachment named {filename} was found.",
+    "ko": "이름이 {filename}인 첨부 파일을 찾지 못했습니다.",
+    "zh": "未找到名为 {filename} 的附件。",
+    "ja": "{filename} という名前の添付ファイルが見つかりません。"
+  },
+  "discord.tools.need_message_read_permissions": {
+    "en": "The bot needs view-channel and read-message-history permissions.",
+    "ko": "봇에 채널 보기 및 메시지 기록 읽기 권한이 필요합니다.",
+    "zh": "机器人需要查看频道和读取消息历史记录的权限。",
+    "ja": "ボットにはチャンネルの表示とメッセージ履歴の閲覧権限が必要です。"
+  },
+  "discord.tools.need_voice_connect": {
+    "en": "The bot needs permission to connect to the selected voice channel.",
+    "ko": "봇에 선택한 음성 채널에 연결할 권한이 필요합니다.",
+    "zh": "机器人需要连接到所选语音频道的权限。",
+    "ja": "ボットには選択したボイスチャンネルへの接続権限が必要です。"
+  },
+  "discord.tools.message_content_or_file_required": {
+    "en": "Provide message content or at least one file.",
+    "ko": "메시지 내용 또는 파일을 하나 이상 입력하세요.",
+    "zh": "请提供消息内容或至少一个文件。",
+    "ja": "メッセージ内容または1つ以上のファイルを指定してください。"
+  },
+  "discord.tools.files_array_of_paths_required": {
+    "en": "files must be an array of file paths.",
+    "ko": "files는 파일 경로 배열이어야 합니다.",
+    "zh": "files 必须是文件路径数组。",
+    "ja": "files はファイルパスの配列である必要があります。"
+  },
+  "discord.tools.file_path_nonempty": {
+    "en": "files[{index}] must be a non-empty path.",
+    "ko": "files[{index}]은 비어 있지 않은 경로여야 합니다.",
+    "zh": "files[{index}] 必须是非空路径。",
+    "ja": "files[{index}] は空でないパスにしてください。"
+  }
+}

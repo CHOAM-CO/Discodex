@@ -1,0 +1,218 @@
+{
+  "discord.agy_setup.another_operator_setting_up_antigravity": {
+    "en": "Another operator is setting up Antigravity.",
+    "ko": "다른 관리자가 Antigravity를 설정 중입니다.",
+    "zh": "另一位管理员正在设置 Antigravity。",
+    "ja": "別の管理者が Antigravity を設定中です。"
+  },
+  "discord.agy_setup.antigravity_already_signed_no_code_needed": {
+    "en": "Antigravity is already signed in; no code was needed.",
+    "ko": "Antigravity가 이미 로그인되어 있어 코드를 입력하지 않았습니다.",
+    "zh": "Antigravity 已登录，无需输入代码。",
+    "ja": "Antigravity はログイン済みのため、コードは不要でした。"
+  },
+  "discord.agy_setup.antigravity_ready_available_models": {
+    "en": "Antigravity is ready. Available models",
+    "ko": "Antigravity를 사용할 수 있어요. 사용 가능한 모델",
+    "zh": "Antigravity 已就绪。可用模型",
+    "ja": "Antigravity の準備ができました。利用可能なモデル"
+  },
+  "discord.agy_setup.antigravity_sign": {
+    "en": "Antigravity sign-in",
+    "ko": "Antigravity 로그인",
+    "zh": "Antigravity 登录",
+    "ja": "Antigravity ログイン"
+  },
+  "discord.agy_setup.back": {
+    "en": "Back",
+    "ko": "뒤로가기",
+    "zh": "返回",
+    "ja": "戻る"
+  },
+  "discord.agy_setup.cancel": {
+    "en": "Cancel",
+    "ko": "취소",
+    "zh": "取消",
+    "ja": "キャンセル"
+  },
+  "discord.agy_setup.cancelling_setup": {
+    "en": "Cancelling setup…",
+    "ko": "설치를 취소하고 있어요…",
+    "zh": "正在取消设置…",
+    "ja": "セットアップをキャンセル中…"
+  },
+  "discord.agy_setup.checking_managed_cli": {
+    "en": "Checking the managed CLI…",
+    "ko": "전용 CLI를 확인하고 있어요…",
+    "zh": "正在检查托管 CLI…",
+    "ja": "管理対象 CLI を確認中…"
+  },
+  "discord.agy_setup.checking_sign": {
+    "en": "Checking sign-in…",
+    "ko": "로그인 상태를 확인하고 있어요…",
+    "zh": "正在检查登录状态…",
+    "ja": "ログイン状態を確認中…"
+  },
+  "discord.agy_setup.code_sign_page": {
+    "en": "Code from the sign-in page",
+    "ko": "로그인 페이지의 코드",
+    "zh": "登录页面中的代码",
+    "ja": "ログインページのコード"
+  },
+  "discord.agy_setup.continue": {
+    "en": "Continue",
+    "ko": "계속",
+    "zh": "继续",
+    "ja": "続ける"
+  },
+  "discord.agy_setup.could_not_finish_antigravity_setup": {
+    "en": "Could not finish Antigravity setup.",
+    "ko": "Antigravity 설정을 완료하지 못했습니다.",
+    "zh": "无法完成 Antigravity 设置。",
+    "ja": "Antigravity のセットアップを完了できませんでした。"
+  },
+  "discord.agy_setup.enter_sign_code": {
+    "en": "Enter sign-in code",
+    "ko": "로그인 코드 입력",
+    "zh": "输入登录代码",
+    "ja": "ログインコードを入力"
+  },
+  "discord.agy_setup.exit": {
+    "en": "Exit",
+    "ko": "나가기",
+    "zh": "退出",
+    "ja": "終了"
+  },
+  "discord.agy_setup.follow_antigravity_sign_prompt_below": {
+    "en": "Follow the Antigravity sign-in prompt below.",
+    "ko": "아래 Antigravity 로그인 안내에 따라 진행하세요.",
+    "zh": "请按照下方 Antigravity 登录提示操作。",
+    "ja": "以下の Antigravity のログイン案内に従ってください。"
+  },
+  "discord.agy_setup.install_discodex_managed_antigravity_cli_choose": {
+    "en": "Install a Discodex-managed Antigravity CLI. Choose separate settings or share your existing AGY settings. AGY's OS credential store is used in either case. Browser sign-in may require your confirmation.",
+    "ko": "Discodex 전용 Antigravity CLI를 설치합니다. 별도 설정 또는 기존 AGY 설정 공유를 선택하세요. 로그인은 두 경우 모두 AGY의 OS 자격증명 저장소를 사용합니다. 브라우저 로그인 시 직접 확인이 필요할 수 있습니다.",
+    "zh": "安装由 Discodex 管理的 Antigravity CLI。请选择独立设置或共享现有 AGY 设置。两种方式均使用 AGY 的操作系统凭据存储。浏览器登录可能需要您确认。",
+    "ja": "Discodex 管理の Antigravity CLI をインストールします。個別の設定か既存の AGY 設定の共有を選んでください。どちらも AGY の OS 資格情報ストアを使います。ブラウザーでのログインには確認が必要な場合があります。"
+  },
+  "discord.agy_setup.installing_official_prebuilt_cli": {
+    "en": "Installing the official prebuilt CLI…",
+    "ko": "공식 빌드된 CLI를 설치하고 있어요…",
+    "zh": "正在安装官方预编译 CLI…",
+    "ja": "公式ビルド済み CLI をインストール中…"
+  },
+  "discord.agy_setup.next": {
+    "en": "Next",
+    "ko": "다음",
+    "zh": "下一页",
+    "ja": "次へ"
+  },
+  "discord.agy_setup.previous": {
+    "en": "Previous",
+    "ko": "이전",
+    "zh": "上一页",
+    "ja": "前へ"
+  },
+  "discord.agy_setup.separate_settings": {
+    "en": "Separate settings",
+    "ko": "별도 설정",
+    "zh": "独立设置",
+    "ja": "個別の設定"
+  },
+  "discord.agy_setup.set_up_again": {
+    "en": "Set up again",
+    "ko": "설정 다시 진행",
+    "zh": "重新设置",
+    "ja": "再設定"
+  },
+  "discord.agy_setup.setup_cancelled_antigravity_not_enabled_attempt": {
+    "en": "Setup cancelled. Antigravity was not enabled by this attempt.",
+    "ko": "설정을 취소했습니다. 이번 시도로 Antigravity를 활성화하지 않았습니다.",
+    "zh": "设置已取消。本次操作未启用 Antigravity。",
+    "ja": "セットアップをキャンセルしました。今回の操作では Antigravity を有効にしていません。"
+  },
+  "discord.agy_setup.setup_panel_no_longer_active_open": {
+    "en": "This setup panel is no longer active. Open settings again.",
+    "ko": "설정 화면이 만료되었습니다. 설정을 다시 여세요.",
+    "zh": "此设置面板已失效，请重新打开设置。",
+    "ja": "この設定画面は無効です。設定を開き直してください。"
+  },
+  "discord.agy_setup.setup_stopping_open_settings_again_when": {
+    "en": "Setup is stopping. Open settings again when it has stopped.",
+    "ko": "설정을 종료하고 있습니다. 종료 후 설정을 다시 여세요.",
+    "zh": "正在停止设置，请停止后重新打开。",
+    "ja": "セットアップを終了中です。終了後に設定を開き直してください。"
+  },
+  "discord.agy_setup.share_existing_settings": {
+    "en": "Share existing settings",
+    "ko": "기존 설정 공유",
+    "zh": "共享现有设置",
+    "ja": "既存の設定を共有"
+  },
+  "discord.agy_setup.sign_attempt_ended_use_current_setup": {
+    "en": "This sign-in attempt has ended. Use the current setup panel.",
+    "ko": "로그인 시도가 종료되었습니다. 현재 설정 화면을 사용하세요.",
+    "zh": "此登录尝试已结束，请使用当前设置面板。",
+    "ja": "このログイン試行は終了しました。現在の設定画面を使ってください。"
+  },
+  "discord.agy_setup.sign_code_submitted": {
+    "en": "Sign-in code submitted.",
+    "ko": "로그인 코드를 전달했습니다.",
+    "zh": "已提交登录代码。",
+    "ja": "ログインコードを送信しました。"
+  },
+  "discord.agy_setup.sign_prompt_changed_use_current_panel": {
+    "en": "The sign-in prompt has changed. Use the current panel.",
+    "ko": "로그인 단계가 변경되었습니다. 현재 화면을 사용하세요.",
+    "zh": "登录提示已更改，请使用当前面板。",
+    "ja": "ログイン手順が変わりました。現在の画面を使ってください。"
+  },
+  "discord.agy_setup.sign_prompt_changed_use_current_setup": {
+    "en": "This sign-in prompt has changed. Use the current setup panel.",
+    "ko": "로그인 단계가 변경되었습니다. 현재 설정 화면을 사용하세요.",
+    "zh": "登录提示已更改，请使用当前设置面板。",
+    "ja": "ログイン手順が変わりました。現在の設定画面を使ってください。"
+  },
+  "discord.agy_setup.use_latest_setup_panel": {
+    "en": "Use the latest setup panel.",
+    "ko": "최신 설정 화면을 사용하세요.",
+    "zh": "请使用最新设置面板。",
+    "ja": "最新の設定画面を使ってください。"
+  },
+  "discord.agy_setup.verifying_available_models": {
+    "en": "Verifying available models…",
+    "ko": "사용 가능한 모델을 확인하고 있어요…",
+    "zh": "正在验证可用模型…",
+    "ja": "利用可能なモデルを確認中…"
+  },
+  "discord.agy_setup.invalid_action": {
+    "en": "Invalid AGY setup action.",
+    "ko": "AGY 설정 작업이 올바르지 않습니다.",
+    "zh": "AGY 设置操作无效。",
+    "ja": "AGY設定操作が無効です。"
+  },
+  "discord.agy_setup.mode_already_selected": {
+    "en": "The settings mode has already been selected.",
+    "ko": "설정 모드를 이미 선택했습니다.",
+    "zh": "已选择设置模式。",
+    "ja": "設定モードはすでに選択されています。"
+  },
+  "discord.agy_setup.signin_ended": {
+    "en": "Antigravity sign-in has ended.",
+    "ko": "Antigravity 로그인이 종료되었습니다.",
+    "zh": "Antigravity 登录已结束。",
+    "ja": "Antigravity のサインインは終了しました。"
+  },
+  "discord.agy_setup.invalid_modal": {
+    "en": "Invalid AGY setup modal.",
+    "ko": "AGY 설정 모달이 올바르지 않습니다.",
+    "zh": "AGY 设置表单无效。",
+    "ja": "AGY設定モーダルが無効です。"
+  },
+  "discord.agy_setup.invalid_attempt": {
+    "en": "Invalid AGY setup attempt.",
+    "ko": "AGY 설정 시도가 올바르지 않습니다.",
+    "zh": "AGY 设置尝试无效。",
+    "ja": "AGY設定の試行が無効です。"
+  }
+}

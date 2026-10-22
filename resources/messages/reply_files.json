@@ -1,0 +1,32 @@
+{
+  "reply_files.invalid_path": {
+    "en": "not a local file path",
+    "ko": "로컬 파일 경로가 아닙니다",
+    "zh": "不是本地文件路径",
+    "ja": "ローカルファイルのパスではありません"
+  },
+  "reply_files.not_regular": {
+    "en": "not a regular file",
+    "ko": "일반 파일이 아닙니다",
+    "zh": "不是普通文件",
+    "ja": "通常ファイルではありません"
+  },
+  "reply_files.too_large": {
+    "en": "the file alone exceeds Discord's 25 MiB request limit",
+    "ko": "파일 하나만으로 Discord의 25 MiB 요청 제한을 초과합니다",
+    "zh": "单个文件就超过了 Discord 25 MiB 的请求上限",
+    "ja": "ファイル単体でDiscordの25 MiBリクエスト上限を超えています"
+  },
+  "reply_files.io_failure": {
+    "en": "file operation failed: {detail}",
+    "ko": "파일 작업 실패: {detail}",
+    "zh": "文件操作失败：{detail}",
+    "ja": "ファイル操作に失敗しました: {detail}"
+  },
+  "reply_files.attach_failed": {
+    "en": "Could not attach {name}: {reason}.",
+    "ko": "{name}을(를) 첨부할 수 없습니다: {reason}.",
+    "zh": "无法附加 {name}：{reason}。",
+    "ja": "{name}を添付できません: {reason}。"
+  }
+}

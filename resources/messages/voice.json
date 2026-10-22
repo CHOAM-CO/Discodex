@@ -1,0 +1,182 @@
+{
+  "voice.already_connected_elsewhere": {
+    "en": "A voice call is already connected in another channel. End it before joining a different channel.",
+    "ko": "다른 채널의 음성 통화에 이미 연결되어 있습니다. 다른 채널에 들어가려면 먼저 현재 통화를 종료하세요.",
+    "zh": "已连接另一个频道的语音通话。请先结束当前通话，再加入其他频道。",
+    "ja": "別のチャンネルで音声通話に接続中です。別のチャンネルに入る前に現在の通話を終了してください。"
+  },
+  "voice.previous_call_not_ended": {
+    "en": "The previous voice connection has not been confirmed as ended. Retry with `/discodex voice-leave`.",
+    "ko": "이전 음성 연결의 종료가 확인되지 않았습니다. `/discodex voice-leave`로 종료를 다시 요청하세요.",
+    "zh": "尚未确认上一次语音连接已结束。请使用 `/discodex voice-leave` 重试。",
+    "ja": "前回の音声接続が終了したことを確認できていません。`/discodex voice-leave` でもう一度終了してください。"
+  },
+  "voice.join_failed": {
+    "en": "Could not join the Discord voice channel",
+    "ko": "Discord 음성 채널 입장 실패",
+    "zh": "无法加入 Discord 语音频道",
+    "ja": "Discordの音声チャンネルに参加できませんでした"
+  },
+  "voice.cleanup_incomplete": {
+    "en": "Some voice call cleanup steps failed: {error}",
+    "ko": "음성 통화 종료 처리 중 일부 작업이 실패했습니다: {error}",
+    "zh": "部分语音通话清理步骤失败：{error}",
+    "ja": "音声通話の終了処理の一部に失敗しました: {error}"
+  },
+  "voice.call_ended_footer": {
+    "en": "Voice call ended · voice channel",
+    "ko": "음성 통화 종료 · 음성 채널",
+    "zh": "语音通话已结束 · 语音频道",
+    "ja": "音声通話終了 · 音声チャンネル"
+  },
+  "voice.operator_required": {
+    "en": "Only a configured operator can start a voice call.",
+    "ko": "설정된 조작자만 음성 통화를 시작할 수 있습니다.",
+    "zh": "只有已配置的操作员可以开始语音通话。",
+    "ja": "設定済みの操作者のみ音声通話を開始できます。"
+  },
+  "voice.server_restricted": {
+    "en": "Voice calls are allowed only in the configured Discord server.",
+    "ko": "음성 입장은 설정된 Discord 서버에서만 가능합니다.",
+    "zh": "只能在已配置的 Discord 服务器中进行语音通话。",
+    "ja": "設定済みの Discord サーバーでのみ音声通話を開始できます。"
+  },
+  "voice.channel_restricted": {
+    "en": "The requested voice channel is not in the allowlist.",
+    "ko": "요청한 음성 채널은 allowlist에 없습니다.",
+    "zh": "请求的语音频道不在允许列表中。",
+    "ja": "指定された音声チャンネルは許可リストにありません。"
+  },
+  "voice.codex_setup_failed": {
+    "en": "Codex voice connection setup failed.",
+    "ko": "Codex 음성 연결 준비에 실패했습니다.",
+    "zh": "Codex 语音连接准备失败。",
+    "ja": "Codex 音声接続の準備に失敗しました。"
+  },
+  "voice.codex_setup_timeout": {
+    "en": "Timed out while preparing the Codex voice connection.",
+    "ko": "Codex 음성 연결 준비 시간이 초과됐습니다.",
+    "zh": "准备 Codex 语音连接时超时。",
+    "ja": "Codex 音声接続の準備中にタイムアウトしました。"
+  },
+  "voice.closed": {
+    "en": "closed",
+    "ko": "닫힘",
+    "zh": "已关闭",
+    "ja": "終了"
+  },
+  "voice.close_failed": {
+    "en": "close failed",
+    "ko": "닫기 실패",
+    "zh": "关闭失败",
+    "ja": "終了に失敗"
+  },
+  "voice.left": {
+    "en": "left",
+    "ko": "퇴장함",
+    "zh": "已离开",
+    "ja": "退出済み"
+  },
+  "voice.realtime_error": {
+    "en": "Realtime voice connection failed: {error}",
+    "ko": "실시간 음성 연결 실패: {error}",
+    "zh": "实时语音连接失败：{error}",
+    "ja": "リアルタイム音声接続に失敗しました: {error}"
+  },
+  "voice.realtime_error_unknown": {
+    "en": "Realtime voice connection failed; the native service did not provide an error message or code.",
+    "ko": "실시간 음성 연결에 실패했지만 네이티브 서비스가 오류 메시지나 코드를 제공하지 않았습니다.",
+    "zh": "实时语音连接失败；原生服务未提供错误消息或代码。",
+    "ja": "リアルタイム音声接続に失敗しました。ネイティブサービスからエラーメッセージやコードが返されませんでした。"
+  },
+  "voice.incomplete_transcript": {
+    "en": "An unfinished transcript remained when the call ended, so it was not posted.",
+    "ko": "음성 종료 전에 끝나지 않은 전사가 있어 게시하지 않았습니다.",
+    "zh": "通话结束时仍有未完成的转录，因此未予发布。",
+    "ja": "通話終了時に未完了の文字起こしが残っていたため、投稿しませんでした。"
+  },
+  "voice.attachments_continued": {
+    "en": "Attachments continued",
+    "ko": "첨부 파일 계속",
+    "zh": "附件续页",
+    "ja": "添付ファイルの続き"
+  },
+  "voice.transcript_previous_segment": {
+    "en": "Transcript · previous segment",
+    "ko": "전사 · 이전 부분",
+    "zh": "转录 · 先前片段",
+    "ja": "文字起こし · 前の部分"
+  },
+  "voice.transcript_merged": {
+    "en": "(This page was merged into the confirmed transcript.)",
+    "ko": "(이 페이지는 확정 전사로 통합되었습니다.)",
+    "zh": "（此页内容已合并到已确认的转录中。）",
+    "ja": "（このページは確定済みの文字起こしに統合されました。）"
+  },
+  "voice.transcript_unconfirmed": {
+    "en": " · unconfirmed at call end",
+    "ko": " · 종료 시 미확정",
+    "zh": " · 通话结束时未确认",
+    "ja": " · 通話終了時に未確定"
+  },
+  "voice.transcript_partial": {
+    "en": " · partial transcript",
+    "ko": " · 부분 전사",
+    "zh": " · 部分转录",
+    "ja": " · 部分文字起こし"
+  },
+  "voice.transcript_title": {
+    "en": "Voice call transcript",
+    "ko": "음성 통화 기록",
+    "zh": "语音通话转录",
+    "ja": "音声通話の文字起こし"
+  },
+  "voice.call_started": {
+    "en": "Voice call started",
+    "ko": "음성 통화 시작",
+    "zh": "语音通话已开始",
+    "ja": "音声通話開始"
+  },
+  "voice.call_thread_title": {
+    "en": "voice call",
+    "ko": "음성 통화",
+    "zh": "语音通话",
+    "ja": "音声通話"
+  },
+  "voice.start_call_context": {
+    "en": "This is a new Discord voice call. callInstanceId={call_id}. The call is starting and has not ended.",
+    "ko": "새 Discord 음성 통화입니다. callInstanceId={call_id}. 현재 상태는 연결 시작 중이며 종료되지 않았습니다.",
+    "zh": "这是一次新的 Discord 语音通话。callInstanceId={call_id}。当前正在连接，通话尚未结束。",
+    "ja": "これは新しい Discord 音声通話です。callInstanceId={call_id}。接続を開始したところで、通話はまだ終了していません。"
+  },
+  "voice.call_continuity_context": {
+    "en": "A successful voice_leave from an earlier call is historical. Keep the existing native Codex conversation thread {native_thread_id}; do not create a new conversation thread.",
+    "ko": "이전 voice_leave 성공은 이전 통화의 과거 기록입니다. Codex의 기존 native 대화 thread {native_thread_id}를 유지하고 새 대화 thread를 만들지 마세요.",
+    "zh": "之前通话中成功的 voice_leave 仅属于历史记录。请保留现有的 native Codex 对话线程 {native_thread_id}，不要创建新对话线程。",
+    "ja": "以前の通話で成功した voice_leave は過去の記録です。既存の native Codex 会話スレッド {native_thread_id} を維持し、新しい会話スレッドを作成しないでください。"
+  },
+  "voice.realtime_closed_report": {
+    "en": "The realtime voice connection closed ({reason}).\nPeer connection: {peer_summary}\nDiscord voice: {discord_summary}",
+    "ko": "실시간 음성 연결이 종료되었습니다 ({reason}).\nPeer 연결: {peer_summary}\nDiscord 음성: {discord_summary}",
+    "zh": "实时语音连接已关闭（{reason}）。\nPeer 连接：{peer_summary}\nDiscord 语音：{discord_summary}",
+    "ja": "リアルタイム音声接続が終了しました（{reason}）。\nPeer 接続: {peer_summary}\nDiscord 音声: {discord_summary}"
+  },
+  "voice.leave_failed": {
+    "en": "leave failed",
+    "ko": "퇴장 실패",
+    "zh": "退出失败",
+    "ja": "退出に失敗"
+  },
+  "voice.discord_speaker": {
+    "en": "Discord speaker",
+    "ko": "Discord 사용자",
+    "zh": "Discord 发言者",
+    "ja": "Discordの話者"
+  },
+  "voice.transcript_role": {
+    "en": "Transcript",
+    "ko": "전사",
+    "zh": "转录",
+    "ja": "文字起こし"
+  }
+}

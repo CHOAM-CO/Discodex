@@ -6,25 +6,29 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path $PSScriptRoot 'product.generated.ps1')
+$language = if ([string]::IsNullOrWhiteSpace($env:DISCODEX_LANGUAGE)) { 'en' } else { $env:DISCODEX_LANGUAGE.Trim().ToLowerInvariant() }
+if ($language -notin $script:DiscodexProduct.SupportedLanguages) { throw (Get-DiscodexMessage 'install.language_environment_error' 'en') }
 
-if ([string]::IsNullOrWhiteSpace($Config)) { throw 'An existing profile config is required with -Config.' }
+if ([string]::IsNullOrWhiteSpace($Config)) { throw (Get-DiscodexMessage 'update.missing_config' $language) }
 if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
-    throw "Config file not found: $Config"
+    throw ((Get-DiscodexMessage 'update.config_not_found' $language) -f $Config)
 }
 $configPath = (Resolve-Path -LiteralPath $Config).Path
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or -not [Environment]::Is64BitOperatingSystem) {
-    throw 'No prebuilt Discodex release is available for this operating system or architecture.'
+    throw ((Get-DiscodexMessage 'update.unsupported_platform' $language) -f [Environment]::OSVersion.Platform, [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)
 }
 
-$target = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
-    'X64' { 'x86_64-pc-windows-msvc' }
-    'Arm64' { 'aarch64-pc-windows-msvc' }
-    default { throw 'No prebuilt Discodex release is available for this architecture.' }
-}
-$asset = "discodex-$target.exe"
-$baseUrl = 'https://github.com/CHOAM-CO/Discodex/releases/latest/download'
-$tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('discodex-update-' + [Guid]::NewGuid().ToString('N'))
+$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$targetInfo = $script:DiscodexProduct.Platforms[$architecture]
+if ($null -eq $targetInfo) { throw ((Get-DiscodexMessage 'update.unsupported_platform' $language) -f 'Windows', $architecture) }
+$asset = $targetInfo.Asset
+$baseUrl = $script:DiscodexProduct.ReleaseDownloadRoot + '/latest/download'
+$updateId = [Guid]::NewGuid().ToString('N')
+$tempDirectory = Join-Path ([IO.Path]::GetTempPath()) $script:DiscodexProduct.UpdateTempTemplate.Replace('{id}', $updateId)
 New-Item -ItemType Directory -Path $tempDirectory | Out-Null
+$operationFailure = $null
+$cliFailure = $null
 try {
     $binaryPath = Join-Path $tempDirectory $asset
     $checksumPath = Join-Path $tempDirectory ($asset + '.sha256')
@@ -33,18 +37,49 @@ try {
 
     $checksumText = [IO.File]::ReadAllText($checksumPath).Trim()
     $expected = ($checksumText -split '\s+')[0]
-    if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw 'The release checksum file is invalid.' }
+    if ($expected -notmatch '^[0-9a-fA-F]{64}$') { throw (Get-DiscodexMessage 'install.invalid_checksum' $language) }
     $actual = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash
     if (-not [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'The downloaded release binary failed SHA256 verification.'
+        throw (Get-DiscodexMessage 'install.checksum_mismatch' $language)
     }
 
     # The new worker stages its matching prebuilt runtime before stopping services.
     # Profile settings, CODEX_HOME, and session data remain in their existing locations.
     $updateArguments = @('update', '--source', $binaryPath, '--config', $configPath)
     if ($MigrateAdhoc) { $updateArguments += '--migrate-adhoc' }
-    & $binaryPath @updateArguments
-    if ($LASTEXITCODE -ne 0) { throw "Discodex update returned exit code $LASTEXITCODE." }
-} finally {
-    Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    $stderrPath = Join-Path $tempDirectory 'updater.stderr'
+    & $binaryPath @updateArguments 2> $stderrPath
+    $exitCode = $LASTEXITCODE
+    $cliStderr = [IO.File]::ReadAllText($stderrPath)
+    if ($exitCode -ne 0) {
+        $cliFailure = [pscustomobject]@{ ExitCode = $exitCode; Stderr = $cliStderr }
+    }
+} catch {
+    $operationFailure = $_
+}
+
+$cleanupFailures = @()
+if (Test-Path -LiteralPath $tempDirectory) {
+    try {
+        Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction Stop
+    } catch {
+        $cleanupFailures += $_.Exception.Message
+    }
+}
+if ($cliFailure -and $cleanupFailures.Count -gt 0) {
+    $message = (Get-DiscodexMessage 'update.discodex_failed' $language) -f $cliFailure.ExitCode
+    [Console]::Error.WriteLine("{0} stderr: {1} Cleanup failed: {2}" -f $message, $cliFailure.Stderr, ($cleanupFailures -join '; '))
+    exit $cliFailure.ExitCode
+}
+if ($cliFailure) {
+    $message = (Get-DiscodexMessage 'update.discodex_failed' $language) -f $cliFailure.ExitCode
+    [Console]::Error.WriteLine("{0} stderr: {1}" -f $message, $cliFailure.Stderr)
+    exit $cliFailure.ExitCode
+}
+if ($operationFailure -and $cleanupFailures.Count -gt 0) {
+    throw ("{0} Cleanup failed: {1}" -f $operationFailure.Exception.Message, ($cleanupFailures -join '; '))
+}
+if ($operationFailure) { throw $operationFailure }
+if ($cleanupFailures.Count -gt 0) {
+    throw ("Update cleanup failed: {0}" -f ($cleanupFailures -join '; '))
 }

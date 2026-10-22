@@ -2,8 +2,9 @@
 set -eu
 
 repository=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-data_root=${XDG_DATA_HOME:-"${HOME:?HOME is not set}/.local/share"}/discodex
-installed="$data_root/bin/discodex"
+. "$repository/scripts/product.generated.sh"
+data_root=${XDG_DATA_HOME:-"${HOME:?HOME is not set}/.local/share"}/$DISCODEX_DATA_DIRECTORY
+installed="$data_root/$DISCODEX_BINARY_DIRECTORY/$DISCODEX_PRODUCT_NAME"
 if [ -x "$installed" ]; then
     exec "$installed" uninstall "$@"
 fi

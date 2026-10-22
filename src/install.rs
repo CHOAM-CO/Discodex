@@ -25,8 +25,13 @@ use crate::i18n::Language;
 use crate::message_access::{MessageAccess, MessagePolicy};
 use crate::native_features::{NativeFeaturePreferences, NativeFeatureStore};
 
+mod product;
 mod runtime;
 pub mod updates;
+
+fn binary_directory_name() -> &'static str {
+    &product::resources().product.binary_directory
+}
 
 const APP_NAME: &str = "discodex";
 const SERVICE_NAME: &str = "discodex";

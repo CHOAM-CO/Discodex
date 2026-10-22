@@ -53,6 +53,9 @@ uuid = { version = "1", features = ["v4"] }
 rtc = "=0.20.5"
 webrtc = "=0.20.5"
 
+[build-dependencies]
+serde_json = "1"
+
 [dev-dependencies]
 wiremock = "0.6"
 

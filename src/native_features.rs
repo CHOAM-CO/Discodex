@@ -6,6 +6,24 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+const CONFIG_SUBAGENT_MODEL: &str = "agents.default_subagent_model";
+const CONFIG_SUBAGENT_EXECUTOR: &str = "agents.default_subagent_executor";
+const CONFIG_SUBAGENT_PROVIDER: &str = "agents.default_subagent_model_provider";
+const CONFIG_FEATURE_CODE_MODE: &str = "features.code_mode.enabled";
+const CONFIG_FEATURE_CODE_MODE_HOST: &str = "features.code_mode_host.enabled";
+const CONFIG_FEATURE_MULTI_AGENT_V2: &str = "features.multi_agent_v2.enabled";
+const CONFIG_FEATURE_WAIT_AGENT: &str = "features.multi_agent_v2.wait_agent_enabled";
+const CONFIG_FEATURE_ASYNC_NOTIFICATIONS: &str = "features.send_message_to_user_async";
+const CONFIG_FEATURE_REQUEST_USER_INPUT: &str = "tools.experimental_request_user_input.enabled";
+const CONFIG_FEATURE_REQUEST_USER_INPUT_DEFAULT_MODE: &str =
+    "features.default_mode_request_user_input";
+const CONFIG_FEATURE_CLOCK: &str = "features.current_time_reminder.enabled";
+const CONFIG_FEATURE_TOKEN_BUDGET: &str = "features.token_budget.enabled";
+const CONFIG_FEATURE_HISTORY_NOTES: &str = "features.token_budget.use_history_notes_extension";
+const CONFIG_FEATURE_TOOL_NAMESPACE: &str = "features.multi_agent_v2.tool_namespace";
+const CONFIG_INCLUDE_LAYERS: &str = "includeLayers";
+const CONFIG_CURRENT_WORKING_DIRECTORY: &str = "cwd";
+
 fn enabled_by_default() -> Option<bool> {
     Some(true)
 }
@@ -90,47 +108,37 @@ impl Default for NativeFeaturePreferences {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeFeatureDescriptor {
     pub key: &'static str,
-    pub label: &'static str,
     pub restart_required: bool,
 }
 
 impl NativeFeaturePreferences {
     pub fn settings(&self) -> Vec<(NativeFeatureDescriptor, Option<Value>)> {
         vec![
+            (descriptor("codeMode"), self.code_mode.map(Value::Bool)),
             (
-                descriptor("codeMode", "Code Mode"),
-                self.code_mode.map(Value::Bool),
-            ),
-            (
-                descriptor("codeModeHost", "Code Mode host"),
+                descriptor("codeModeHost"),
                 self.code_mode_host.map(Value::Bool),
             ),
             (
-                descriptor("multiAgentV2", "Multi-agent v2"),
+                descriptor("multiAgentV2"),
                 self.multi_agent_v2.map(Value::Bool),
             ),
+            (descriptor("waitAgent"), self.wait_agent.map(Value::Bool)),
             (
-                descriptor("waitAgent", "Wait for agents"),
-                self.wait_agent.map(Value::Bool),
-            ),
-            (
-                descriptor("asyncNotifications", "Async notifications"),
+                descriptor("asyncNotifications"),
                 self.async_notifications.map(Value::Bool),
             ),
             (
-                descriptor("requestUserInput", "Native questions"),
+                descriptor("requestUserInput"),
                 self.request_user_input.map(Value::Bool),
             ),
+            (descriptor("clock"), self.clock.map(Value::Bool)),
             (
-                descriptor("clock", "Clock and time reminders"),
-                self.clock.map(Value::Bool),
-            ),
-            (
-                descriptor("tokenBudget", "Token budget"),
+                descriptor("tokenBudget"),
                 self.token_budget.map(Value::Bool),
             ),
             (
-                descriptor("historyNotes", "History and notes"),
+                descriptor("historyNotes"),
                 self.history_notes.map(Value::Bool),
             ),
         ]
@@ -232,10 +240,9 @@ impl NativeFeatureStore {
     }
 }
 
-fn descriptor(key: &'static str, label: &'static str) -> NativeFeatureDescriptor {
+fn descriptor(key: &'static str) -> NativeFeatureDescriptor {
     NativeFeatureDescriptor {
         key,
-        label,
         restart_required: true,
     }
 }
@@ -247,41 +254,29 @@ fn startup_overrides(preferences: &NativeFeaturePreferences) -> Result<Vec<(Stri
             result.push((key.to_owned(), value.to_string()));
         }
     };
-    push_bool("features.code_mode.enabled", preferences.code_mode);
+    push_bool(CONFIG_FEATURE_CODE_MODE, preferences.code_mode);
+    push_bool(CONFIG_FEATURE_CODE_MODE_HOST, preferences.code_mode_host);
+    push_bool(CONFIG_FEATURE_MULTI_AGENT_V2, preferences.multi_agent_v2);
+    push_bool(CONFIG_FEATURE_WAIT_AGENT, preferences.wait_agent);
     push_bool(
-        "features.code_mode_host.enabled",
-        preferences.code_mode_host,
-    );
-    push_bool(
-        "features.multi_agent_v2.enabled",
-        preferences.multi_agent_v2,
-    );
-    push_bool(
-        "features.multi_agent_v2.wait_agent_enabled",
-        preferences.wait_agent,
-    );
-    push_bool(
-        "features.send_message_to_user_async",
+        CONFIG_FEATURE_ASYNC_NOTIFICATIONS,
         preferences.async_notifications,
     );
     push_bool(
-        "tools.experimental_request_user_input.enabled",
+        CONFIG_FEATURE_REQUEST_USER_INPUT,
         preferences.request_user_input,
     );
     push_bool(
-        "features.default_mode_request_user_input",
+        CONFIG_FEATURE_REQUEST_USER_INPUT_DEFAULT_MODE,
         preferences.request_user_input,
     );
-    push_bool("features.current_time_reminder.enabled", preferences.clock);
-    push_bool("features.token_budget.enabled", preferences.token_budget);
-    push_bool(
-        "features.token_budget.use_history_notes_extension",
-        preferences.history_notes,
-    );
+    push_bool(CONFIG_FEATURE_CLOCK, preferences.clock);
+    push_bool(CONFIG_FEATURE_TOKEN_BUDGET, preferences.token_budget);
+    push_bool(CONFIG_FEATURE_HISTORY_NOTES, preferences.history_notes);
     // The fork extends spawn_agent with provider/executor selection. Use Codex's
     // namespace setting instead of changing the model's reserved collaboration schema.
     result.push((
-        "features.multi_agent_v2.tool_namespace".to_owned(),
+        CONFIG_FEATURE_TOOL_NAMESPACE.to_owned(),
         serde_json::to_string("discodex_agents")?,
     ));
     Ok(result)
@@ -293,18 +288,15 @@ fn startup_overrides(preferences: &NativeFeaturePreferences) -> Result<Vec<(Stri
 pub(crate) fn subagent_model_overrides(preferences: &NativeFeaturePreferences) -> Value {
     let mut overrides = serde_json::Map::new();
     if let Some(model) = &preferences.subagent_model {
-        overrides.insert("agents.default_subagent_model".into(), json!(model));
+        overrides.insert(CONFIG_SUBAGENT_MODEL.into(), json!(model));
         let executor = preferences
             .subagent_model_executor
             .as_deref()
-            .unwrap_or("codex");
-        overrides.insert("agents.default_subagent_executor".into(), json!(executor));
-        if executor == "codex" {
+            .unwrap_or(crate::model_catalog::ModelExecutor::Codex.as_str());
+        overrides.insert(CONFIG_SUBAGENT_EXECUTOR.into(), json!(executor));
+        if executor == crate::model_catalog::ModelExecutor::Codex.as_str() {
             if let Some(provider) = &preferences.subagent_model_provider {
-                overrides.insert(
-                    "agents.default_subagent_model_provider".into(),
-                    json!(provider),
-                );
+                overrides.insert(CONFIG_SUBAGENT_PROVIDER.into(), json!(provider));
             }
         }
     }
@@ -313,8 +305,8 @@ pub(crate) fn subagent_model_overrides(preferences: &NativeFeaturePreferences) -
 
 pub fn feature_config_read_params(cwd: &Path) -> Value {
     json!({
-        "includeLayers": true,
-        "cwd": cwd.to_string_lossy(),
+        CONFIG_INCLUDE_LAYERS: true,
+        CONFIG_CURRENT_WORKING_DIRECTORY: cwd.to_string_lossy(),
     })
 }
 

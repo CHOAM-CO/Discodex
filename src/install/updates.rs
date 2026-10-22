@@ -19,7 +19,11 @@ use uuid::Uuid;
 const RELEASE_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/releases/latest";
 const COMMIT_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/commits/";
 const RELEASE_BY_ID_URL: &str = "https://api.github.com/repos/CHOAM-CO/Discodex/releases/";
-pub const DEFAULT_CHECK_INTERVAL_SECS: u64 = 6 * 60 * 60;
+pub fn default_check_interval_seconds() -> u64 {
+    super::product::resources()
+        .product
+        .default_update_check_interval_seconds
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -197,7 +201,7 @@ impl UpdateStore {
     pub fn due(&self, now_unix: u64) -> bool {
         self.snapshot
             .last_checked_unix
-            .is_none_or(|last| now_unix.saturating_sub(last) >= DEFAULT_CHECK_INTERVAL_SECS)
+            .is_none_or(|last| now_unix.saturating_sub(last) >= default_check_interval_seconds())
     }
 
     /// Merge only the result of discovery into the latest in-memory state. The caller

@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
 async fn run_command(args: &[String]) -> Result<()> {
     let selected_config_path = config_path(args)?;
     let config = Config::load(&selected_config_path)?;
+    let diagnostic_config = config.clone();
     discodex::logging::init_file_logging(&config.state_dir)?;
 
     let result = async {
@@ -169,7 +170,9 @@ async fn run_command(args: &[String]) -> Result<()> {
     .await;
 
     if let Err(error) = &result {
-        tracing::error!(error = %format!("{error:#}"), "bridge process failed");
+        let detail =
+            discodex::discord::sanitize_diagnostic(&diagnostic_config, &format!("{error:#}"));
+        tracing::error!(error = %detail, "bridge process failed");
     }
     result
 }

@@ -10,7 +10,9 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const MANIFEST_FILE: &str = "discodex-runtime.json";
+fn manifest_file_name() -> &'static str {
+    &super::product::resources().product.runtime_manifest_file
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -41,39 +43,52 @@ impl Prepared {
 }
 
 pub(super) fn target() -> Result<String> {
-    let asset = super::updates::platform_asset_name()?;
-    Ok(asset
-        .trim_start_matches("discodex-")
-        .trim_end_matches(".exe")
-        .to_owned())
+    let platform = super::product::platform(std::env::consts::OS, std::env::consts::ARCH).context(
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic07c7b15fabf3),
+    )?;
+    Ok(platform.target.clone())
 }
 
 /// Download the runtime selected by this worker release, before stopping services.
 pub(super) fn prepare(data_root: &Path) -> Result<Prepared> {
     let version = env!("CARGO_PKG_VERSION");
     let target = target()?;
-    let base = format!("https://github.com/CHOAM-CO/Discodex/releases/download/v{version}");
+    let product = &super::product::resources().product;
+    let base = format!(
+        "{}/download/{}{version}",
+        product.release_download_root.trim_end_matches('/'),
+        product.version_tag_prefix
+    );
     let client = Client::builder()
-        .user_agent(concat!("discodex/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("{}/{}", product.name, env!("CARGO_PKG_VERSION")))
         // The runtime includes the code-mode host; do not apply reqwest's
         // default whole-request deadline to a large streamed release download.
         .timeout(None)
         .build()?;
+    let manifest_asset = product
+        .runtime_manifest_asset_template
+        .replace("{target}", &target);
     let manifest: Manifest = client
-        .get(format!("{base}/discodex-runtime-{target}.json"))
+        .get(format!("{base}/{manifest_asset}"))
         .send()?
         .error_for_status()?
         .json()
-        .context("read this release's managed Codex runtime manifest")?;
+        .context(
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnosticE735d32a17b2),
+        )?;
     validate_selected_manifest(&manifest, version, &target, env!("DISCODEX_CODEX_COMMIT"))?;
-    let runtimes = data_root.join("runtime");
+    let runtimes = data_root.join(&product.runtime_directory);
     fs::create_dir_all(&runtimes)?;
     let runtimes = runtimes.canonicalize()?;
     let destination = runtimes.join(format!("{version}-{}", manifest.codex_commit));
     if destination.exists() {
         ensure!(
             read_manifest(&destination)? == manifest,
-            "existing runtime belongs to a different release"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic03b57d1f8364)
         );
         verify_files(&destination, &manifest)?;
         return Ok(prepared(destination, manifest, false));
@@ -101,64 +116,93 @@ fn validate_selected_manifest(
     validate_manifest(manifest, version, target)?;
     ensure!(
         manifest.codex_commit == codex_commit,
-        "managed runtime Codex commit differs from this worker's pinned core"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticB8ade295b973)
     );
     Ok(())
 }
 
 fn validate_manifest(manifest: &Manifest, version: &str, target: &str) -> Result<()> {
     ensure!(
-        manifest.format_version == 1,
-        "unsupported managed runtime manifest format"
+        manifest.format_version
+            == super::product::resources()
+                .product
+                .runtime_manifest_format_version,
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticCa42f447972e)
     );
     ensure!(
         manifest.worker_version == version && manifest.target == target,
-        "managed runtime is not compatible with this worker version and platform"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic071b1b7a14af)
     );
     ensure!(
         manifest.codex_commit.len() == 40
             && manifest.codex_commit.bytes().all(|b| b.is_ascii_hexdigit()),
-        "managed runtime manifest has no full Codex commit"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic095c867211ec)
     );
     ensure!(
-        manifest.archive == format!("discodex-runtime-{target}.tar.gz"),
-        "managed runtime archive name differs from its platform"
+        manifest.archive
+            == super::product::resources()
+                .product
+                .runtime_archive_template
+                .replace("{target}", target),
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticF818872960ce)
     );
     ensure!(
         manifest.sha256.len() == 64,
-        "managed runtime archive checksum is invalid"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticB1bf0d2003fa)
     );
     for (path, digest) in &manifest.files {
         ensure!(
-            safe_relative(Path::new(path)) && path != MANIFEST_FILE,
-            "runtime manifest contains an invalid package path"
+            safe_relative(Path::new(path))
+                && path.as_str()
+                    != super::product::resources()
+                        .product
+                        .runtime_manifest_file
+                        .as_str(),
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic16fa8e175521)
         );
-        ensure!(digest.len() == 64, "runtime file checksum is invalid");
+        ensure!(
+            digest.len() == 64,
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnosticD566932879ec)
+        );
     }
-    let suffix = if target.contains("windows") {
-        ".exe"
-    } else {
-        ""
-    };
-    let mut required = vec![
-        format!("bin/codex{suffix}"),
-        format!("bin/codex-code-mode-host{suffix}"),
-        format!("codex-path/rg{suffix}"),
-        "codex-package.json".into(),
-    ];
-    if target.contains("linux") {
-        required.push("codex-resources/bwrap".into());
-    }
-    if target.contains("windows") {
-        required.extend([
-            "codex-resources/codex-command-runner.exe".into(),
-            "codex-resources/codex-windows-sandbox-setup.exe".into(),
-        ]);
+    let platform = super::product::platform_for_target(target).context(
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticFadaec66212c),
+    )?;
+    let extension = &platform.extension;
+    let metadata = &super::product::resources();
+    let mut required = metadata
+        .runtime
+        .common_files
+        .iter()
+        .map(|path| path.replace("{extension}", extension))
+        .collect::<Vec<_>>();
+    if let Some(platform_files) = metadata.runtime.platform_files.get(platform.os.as_str()) {
+        required.extend(platform_files.iter().cloned());
     }
     for path in required {
         ensure!(
             manifest.files.contains_key(&path),
-            "runtime package is missing required component {path}"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic0a67a2e96f40)
+                .replace("{0}", &path)
         );
     }
     Ok(())
@@ -184,38 +228,51 @@ fn install_archive(
         let path = entry.path()?.into_owned();
         ensure!(
             safe_relative(&path),
-            "runtime archive entry escapes its package"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic5d5dece9007c)
         );
         let kind = entry.header().entry_type();
         ensure!(
             kind.is_file() || kind.is_dir(),
-            "runtime archive contains an unsupported link or device"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic275f5114aa6f)
         );
         if kind.is_file() {
             ensure!(
                 manifest
                     .files
                     .contains_key(&path.to_string_lossy().replace('\\', "/")),
-                "runtime archive contains an unrecorded file"
+                "{}",
+                crate::i18n::Language::default()
+                    .message(crate::i18n::MessageKey::InstallDiagnostic51d161544bed)
             );
         }
         ensure!(
             entry.unpack_in(staging.path())?,
-            "runtime archive entry escapes staging"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnosticD65ad117f784)
         );
     }
     verify_files(staging.path(), &manifest)?;
     fs::write(
-        staging.path().join(MANIFEST_FILE),
+        staging.path().join(manifest_file_name()),
         serde_json::to_vec_pretty(&manifest)?,
     )?;
-    fs::rename(staging.path(), destination).context("publish staged managed runtime")?;
+    fs::rename(staging.path(), destination).context(
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnosticF70950a542d7),
+    )?;
     Ok(prepared(destination.to_owned(), manifest, true))
 }
 
 fn prepared(directory: PathBuf, manifest: Manifest, created: bool) -> Prepared {
     Prepared {
-        executable: directory.join("bin").join(super::codex_executable_name()),
+        executable: directory
+            .join(super::binary_directory_name())
+            .join(super::codex_executable_name()),
         directory,
         manifest,
         created,
@@ -224,7 +281,7 @@ fn prepared(directory: PathBuf, manifest: Manifest, created: bool) -> Prepared {
 
 fn read_manifest(directory: &Path) -> Result<Manifest> {
     Ok(serde_json::from_slice(&fs::read(
-        directory.join(MANIFEST_FILE),
+        directory.join(manifest_file_name()),
     )?)?)
 }
 
@@ -245,7 +302,10 @@ fn digest_file(path: &Path) -> Result<String> {
 fn verify_checksum(actual: &str, expected: &str, component: &str) -> Result<()> {
     ensure!(
         actual == expected,
-        "{component} checksum differs from its release manifest"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic98a2d72efb23)
+            .replace("{0}", component)
     );
     Ok(())
 }
@@ -253,7 +313,9 @@ fn verify_checksum(actual: &str, expected: &str, component: &str) -> Result<()> 
 fn verify_files(directory: &Path, manifest: &Manifest) -> Result<()> {
     ensure!(
         fs::symlink_metadata(directory)?.file_type().is_dir(),
-        "managed runtime is not a directory"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic3f1c3fca7c97)
     );
     for (relative, digest) in &manifest.files {
         let path = directory.join(relative);
@@ -266,12 +328,17 @@ fn verify_files(directory: &Path, manifest: &Manifest) -> Result<()> {
                 fs::symlink_metadata(directory.join(parent))?
                     .file_type()
                     .is_dir(),
-                "managed runtime component parent is not a directory"
+                "{}",
+                crate::i18n::Language::default()
+                    .message(crate::i18n::MessageKey::InstallDiagnostic3f4966d2495b)
             );
         }
         ensure!(
             fs::symlink_metadata(&path)?.file_type().is_file(),
-            "managed runtime component is not a regular file: {relative}"
+            "{}",
+            crate::i18n::Language::default()
+                .message(crate::i18n::MessageKey::InstallDiagnostic127aa0dc35f3)
+                .replace("{0}", relative)
         );
         verify_checksum(&digest_file(&path)?, digest, relative)?;
     }
@@ -284,7 +351,7 @@ pub(super) fn remove_owned(directory: &Path) -> Result<()> {
     for relative in manifest.files.keys() {
         fs::remove_file(directory.join(relative))?;
     }
-    fs::remove_file(directory.join(MANIFEST_FILE))?;
+    fs::remove_file(directory.join(manifest_file_name()))?;
     let mut parents: Vec<PathBuf> = manifest
         .files
         .keys()
@@ -308,7 +375,9 @@ pub(super) fn remove_owned(directory: &Path) -> Result<()> {
 pub(super) fn verify_owned(directory: &Path) -> Result<Manifest> {
     ensure!(
         fs::symlink_metadata(directory)?.file_type().is_dir(),
-        "managed runtime is not a directory"
+        "{}",
+        crate::i18n::Language::default()
+            .message(crate::i18n::MessageKey::InstallDiagnostic3f1c3fca7c97)
     );
     let manifest = read_manifest(directory)?;
     validate_manifest(&manifest, &manifest.worker_version, &manifest.target)?;
@@ -454,7 +523,7 @@ mod tests {
         for path in [
             "../shared/config.toml",
             "/outside/session.jsonl",
-            MANIFEST_FILE,
+            manifest_file_name(),
         ] {
             let mut invalid = manifest.clone();
             invalid.files.insert(path.into(), "c".repeat(64));

@@ -30,7 +30,13 @@ impl Language {
             Self::Japanese => ja,
         }
     }
+
+    pub const fn message(self, key: MessageKey) -> &'static str {
+        key.text(self)
+    }
 }
+
+include!(concat!(env!("OUT_DIR"), "/message_resources.rs"));
 impl fmt::Display for Language {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.code())
@@ -44,7 +50,10 @@ impl FromStr for Language {
             "ko" | "korean" | "2" => Ok(Self::Korean),
             "zh" | "zh-cn" | "chinese" | "3" => Ok(Self::Chinese),
             "ja" | "japanese" | "4" => Ok(Self::Japanese),
-            _ => anyhow::bail!("unsupported language; choose en, ko, zh, or ja"),
+            _ => anyhow::bail!(
+                "{}",
+                Language::English.message(MessageKey::CommonLanguageUnsupported)
+            ),
         }
     }
 }
@@ -68,5 +77,25 @@ mod tests {
         }
         assert_eq!(Language::default(), Language::English);
         assert!("unknown".parse::<Language>().is_err());
+    }
+
+    #[test]
+    fn message_key_selects_each_supported_locale() {
+        assert_eq!(
+            Language::English.message(MessageKey::CommonLanguageUnsupported),
+            "Unsupported language; choose en, ko, zh, or ja."
+        );
+        assert_eq!(
+            Language::Korean.message(MessageKey::CommonLanguageUnsupported),
+            "지원하지 않는 언어입니다. en, ko, zh, ja 중에서 선택하세요."
+        );
+        assert_eq!(
+            Language::Chinese.message(MessageKey::CommonLanguageUnsupported),
+            "不支持此语言；请选择 en、ko、zh 或 ja。"
+        );
+        assert_eq!(
+            Language::Japanese.message(MessageKey::CommonLanguageUnsupported),
+            "サポートされていない言語です。en、ko、zh、ja から選択してください。"
+        );
     }
 }

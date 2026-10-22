@@ -1,0 +1,44 @@
+{
+  "mac_signing.keychain_open_failed": {
+    "en": "Could not open the configured login keychain",
+    "ko": "설정된 로그인 키체인을 열 수 없습니다",
+    "zh": "无法打开已配置的登录钥匙串",
+    "ja": "設定されたログインキーチェーンを開けませんでした"
+  },
+  "mac_signing.keychain_unlock_failed": {
+    "en": "macOS could not unlock the configured login keychain; complete the system authentication prompt and retry",
+    "ko": "macOS에서 설정된 로그인 키체인을 잠금 해제하지 못했습니다. 시스템 인증 안내를 완료한 뒤 다시 시도하세요",
+    "zh": "macOS 无法解锁已配置的登录钥匙串；请完成系统身份验证提示后重试",
+    "ja": "macOSで設定されたログインキーチェーンを解除できませんでした。システム認証ダイアログを完了してから再試行してください"
+  },
+  "mac_signing.identity_import_failed": {
+    "en": "macOS could not import the local signing identity; complete the system authentication prompt and retry",
+    "ko": "macOS에서 로컬 서명 ID를 가져오지 못했습니다. 시스템 인증 안내를 완료한 뒤 다시 시도하세요",
+    "zh": "macOS 无法导入本地签名身份；请完成系统身份验证提示后重试",
+    "ja": "macOSでローカル署名IDを読み込めませんでした。システム認証ダイアログを完了してから再試行してください"
+  },
+  "mac_signing.command_authorization_guidance": {
+    "en": "Unlock the login keychain and authorize codesign from a Mac login session.",
+    "ko": "Mac 로그인 세션에서 로그인 키체인을 잠금 해제하고 codesign을 승인하세요.",
+    "zh": "请在 Mac 登录会话中解锁登录钥匙串并授权 codesign。",
+    "ja": "Macのログインセッションでログインキーチェーンを解除し、codesignを承認してください。"
+  },
+  "mac_signing.preserved_identity_guidance": {
+    "en": "The existing login-keychain identity was preserved; unlock and authorize it from a Mac login session.",
+    "ko": "기존 로그인 키체인 ID는 보존되었습니다. Mac 로그인 세션에서 잠금 해제하고 승인하세요.",
+    "zh": "现有登录钥匙串身份已保留；请在 Mac 登录会话中解锁并授权。",
+    "ja": "既存のログインキーチェーンIDは保持されています。Macのログインセッションで解除して承認してください。"
+  },
+  "mac_signing.operation_failed": {
+    "en": "Mac signing operation failed: {detail}",
+    "ko": "Mac 서명 작업에 실패했습니다: {detail}",
+    "zh": "Mac 签名操作失败：{detail}",
+    "ja": "Mac署名操作に失敗しました: {detail}"
+  },
+  "mac_signing.staged_binary_signed": {
+    "en": "Staged binary signed and verified with this Mac's persistent identity.",
+    "ko": "스테이징된 바이너리를 이 Mac의 영구 ID로 서명하고 확인했습니다.",
+    "zh": "已使用此 Mac 的持久身份签署并验证暂存的二进制文件。",
+    "ja": "ステージ済みバイナリをこのMacの永続IDで署名し、検証しました。"
+  }
+}

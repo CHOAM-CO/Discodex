@@ -1,8 +1,8 @@
 //! Discord-owned update notifications. No notification becomes a Codex turn.
 use crate::{
     commands::split_discord_content,
-    discord::{BridgeState, QueueDelivery},
-    i18n::Language,
+    discord::{BridgeState, QueueDelivery, sanitize_discord_error, sanitize_discord_error_chain},
+    i18n::{Language, MessageKey},
     install::updates::{self, UpdateSnapshot, UpdateStatus, UpdateStore},
 };
 use anyhow::{Context as _, Result, bail};
@@ -245,9 +245,12 @@ impl UpdateController {
         self.store.lock().await.snapshot().muted
     }
 
-    pub(crate) async fn set_muted(&self, muted: bool) -> Result<()> {
+    pub(crate) async fn set_muted(&self, muted: bool, language: Language) -> Result<()> {
         if let Some(error) = &self.initialization_error {
-            bail!("update state is unavailable: {error}");
+            bail!(
+                "{}",
+                localized_update_error(language, MessageKey::DiscordUpdatesStateUnavailable, error)
+            );
         }
         self.store.lock().await.set_muted(muted)?;
         self.wake.notify_one();
@@ -273,20 +276,30 @@ impl UpdateController {
             Ok(Ok(result)) => self.store.lock().await.apply_check(result)?,
             Ok(Err(error)) => {
                 let message = format!("{error:#}");
-                let _ = self
+                if let Err(record_error) = self
                     .store
                     .lock()
                     .await
-                    .record_check_failure(epoch(), message.clone());
+                    .record_check_failure(epoch(), message.clone())
+                {
+                    bail!(
+                        "{message}; also failed to persist release-check failure: {record_error:#}"
+                    );
+                }
                 bail!(message);
             }
             Err(error) => {
                 let message = format!("release check task failed: {error}");
-                let _ = self
+                if let Err(record_error) = self
                     .store
                     .lock()
                     .await
-                    .record_check_failure(epoch(), message.clone());
+                    .record_check_failure(epoch(), message.clone())
+                {
+                    bail!(
+                        "{message}; also failed to persist release-check failure: {record_error:#}"
+                    );
+                }
                 bail!(message);
             }
         }
@@ -354,7 +367,7 @@ fn check_due(snapshot: &UpdateSnapshot, now: u64) -> bool {
     let delay = if snapshot.last_check_error.is_some() {
         RETRY_DELAY.as_secs()
     } else {
-        updates::DEFAULT_CHECK_INTERVAL_SECS
+        updates::default_check_interval_seconds()
     };
     snapshot
         .last_checked_unix
@@ -444,12 +457,7 @@ fn manual_update_action(snapshot: &UpdateSnapshot) -> ManualUpdateAction {
 }
 
 fn update_start_text(language: Language) -> &'static str {
-    language.text(
-        "Starting the update now. All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
-        "업데이트를 시작합니다. 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
-        "现在开始更新。包括子代理在内的所有进行中工作和通话都会中断，中断的工作不会自动恢复。会话历史和设置会保留。",
-        "更新を開始します。サブエージェントを含む進行中の作業と通話は中断され、中断した作業は自動再開されません。セッション履歴と設定は保持されます。",
-    )
+    language.message(MessageKey::DiscordUpdatesStartingUpdateNowAllActiveWork)
 }
 
 fn manual_update_response(
@@ -459,41 +467,41 @@ fn manual_update_response(
 ) -> (String, Vec<CreateActionRow>) {
     let text = match action {
         ManualUpdateAction::Active(target) => format!(
-            "**Discodex {}**\n{}", target.version, update_start_text(language)),
-        ManualUpdateAction::ActiveWithoutTarget => language.text(
-            "An update is already in progress.", "업데이트가 이미 진행 중입니다.",
-            "更新已在进行中。", "更新はすでに進行中です。").to_owned(),
+            "**Discodex {}**\n{}",
+            target.version,
+            update_start_text(language)
+        ),
+        ManualUpdateAction::ActiveWithoutTarget => language
+            .message(MessageKey::DiscordUpdatesUpdateAlreadyProgress)
+            .to_owned(),
         ManualUpdateAction::Confirm(target) => format!(
-            "**Discodex {}**\n{}\n[{}](<{}>)", target.version,
-            language.text(
-                "Update now? All active work, including subagent work, and any voice call will be interrupted. Interrupted work will not resume automatically. Session history and settings are preserved.",
-                "지금 업데이트할까요? 서브에이전트 작업을 포함한 모든 진행 중 작업과 통화가 중단되며 자동 재개되지 않습니다. 세션 기록과 설정은 유지됩니다.",
-                "现在更新吗？包括子代理在内的所有进行中工作和通话都会中断，且不会自动恢复。会话历史和设置会保留。",
-                "今すぐ更新しますか？サブエージェントを含む進行中の作業と通話は中断され、自動再開されません。セッション履歴と設定は保持されます。"),
-            language.text("Release notes", "변경 내용", "版本说明", "リリースノート"),
-            target.url),
+            "**Discodex {}**\n{}\n[{}](<{}>)",
+            target.version,
+            language.message(MessageKey::DiscordUpdatesUpdateNowAllActiveWorkIncluding),
+            language.message(MessageKey::DiscordUpdatesReleaseNotes),
+            target.url
+        ),
         ManualUpdateAction::NoUpdate => format!(
-            "{} (v{})", language.text("Already up to date.", "이미 최신 버전입니다.",
-            "已是最新版本。", "すでに最新バージョンです。"), updates::current_build_version()),
+            "{} (v{})",
+            language.message(MessageKey::DiscordUpdatesAlreadyUpDate),
+            updates::current_build_version()
+        ),
         ManualUpdateAction::NoPublishedRelease => format!(
-            "{} (v{})", language.text(
-                "No stable release has been published yet. Current version:",
-                "아직 공개된 안정 버전이 없습니다. 현재 버전:",
-                "尚未发布稳定版本。当前版本：", "安定版はまだ公開されていません。現在のバージョン:"),
-            updates::current_build_version()),
-        ManualUpdateAction::MissingVerifiedAsset => language.text(
-            "The latest release has no verified prebuilt executable for this platform. No update was started.",
-            "최신 릴리스에 이 플랫폼용 검증된 사전 빌드 실행 파일이 없어 업데이트를 시작하지 않았습니다.",
-            "最新版本没有适用于此平台且可验证的预构建可执行文件。未开始更新。",
-            "最新リリースにはこのプラットフォーム向けの検証済みビルドがありません。更新は開始していません。").to_owned(),
+            "{} (v{})",
+            language.message(MessageKey::DiscordUpdatesNoStableReleasePublishedYetCurrent),
+            updates::current_build_version()
+        ),
+        ManualUpdateAction::MissingVerifiedAsset => language
+            .message(MessageKey::DiscordUpdatesLatestReleaseNoVerifiedPrebuiltExecutable)
+            .to_owned(),
     };
     let rows = if matches!(action, ManualUpdateAction::Confirm(_)) {
         vec![CreateActionRow::Buttons(vec![
             CreateButton::new(format!("discodex:update-confirm:{confirmation_id}:install"))
-                .label(language.text("Update", "업데이트", "更新", "更新"))
+                .label(language.message(MessageKey::DiscordUpdatesUpdate))
                 .style(ButtonStyle::Primary),
             CreateButton::new(format!("discodex:update-confirm:{confirmation_id}:cancel"))
-                .label(language.text("Cancel", "취소", "取消", "キャンセル"))
+                .label(language.message(MessageKey::DiscordUpdatesCancel))
                 .style(ButtonStyle::Secondary),
         ])]
     } else {
@@ -502,15 +510,8 @@ fn manual_update_response(
     (text, rows)
 }
 
-fn manual_check_failed(language: Language) -> String {
-    language
-        .text(
-            "Could not check for updates. Please try again later.",
-            "업데이트를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-            "无法检查更新，请稍后重试。",
-            "更新を確認できませんでした。しばらくしてから再試行してください。",
-        )
-        .to_owned()
+fn localized_update_error(language: Language, key: MessageKey, error: &str) -> String {
+    language.message(key).replace("{error}", error)
 }
 
 pub(crate) async fn manual_update(
@@ -518,7 +519,14 @@ pub(crate) async fn manual_update(
     requester_id: u64,
 ) -> Result<(String, Vec<CreateActionRow>)> {
     if let Some(error) = &state.updates.initialization_error {
-        bail!("update state is unavailable: {error}");
+        bail!(
+            "{}",
+            localized_update_error(
+                state.config.language,
+                MessageKey::DiscordUpdatesStateUnavailable,
+                error
+            )
+        );
     }
     let _manual = state.updates.manual_lock.lock().await;
     // An already confirmed, pinned update keeps its target while it runs.
@@ -531,8 +539,16 @@ pub(crate) async fn manual_update(
     }
     // A check never selects or retries a release. Only the confirmation button does.
     if let Err(error) = state.updates.check_now().await {
-        tracing::warn!(%error, "manual Discodex release check failed");
-        return Ok((manual_check_failed(state.config.language), Vec::new()));
+        tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "manual Discodex release check failed");
+        let detail = crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+        return Ok((
+            localized_update_error(
+                state.config.language,
+                MessageKey::DiscordCoreFailureDetails,
+                &detail,
+            ),
+            Vec::new(),
+        ));
     }
     let action = manual_update_action(&state.updates.store.lock().await.snapshot());
     let key = uuid::Uuid::new_v4().simple().to_string();
@@ -555,9 +571,10 @@ fn confirm_update(
     confirmation: &UpdateConfirmation,
     requester_id: u64,
     install: bool,
+    language: Language,
 ) -> Result<()> {
     if confirmation.requester_id != requester_id {
-        bail!("this confirmation belongs to another operator");
+        bail!(language.message(MessageKey::DiscordUpdatesConfirmationOtherOperator));
     }
     if !install {
         return Ok(());
@@ -566,7 +583,7 @@ fn confirm_update(
     match manual_update_action(&store.snapshot()) {
         ManualUpdateAction::Confirm(current) | ManualUpdateAction::Active(current)
             if current == *target => {}
-        _ => bail!("release confirmation is stale"),
+        _ => bail!(language.message(MessageKey::DiscordUpdatesConfirmationStale)),
     }
     store.request_immediate(target.release_id)?;
     Ok(())
@@ -581,10 +598,10 @@ pub(crate) async fn handle_confirmation(
         .create_response(ctx, CreateInteractionResponse::Acknowledge)
         .await?;
     let parts: Vec<_> = interaction.data.custom_id.split(':').collect();
-    if parts.len() != 4 || !matches!(parts[3], "install" | "cancel") {
-        bail!("invalid update confirmation");
-    }
     let language = state.config.language;
+    if parts.len() != 4 || !matches!(parts[3], "install" | "cancel") {
+        bail!(language.message(MessageKey::DiscordUpdatesConfirmationInvalid));
+    }
     let _manual = state.updates.manual_lock.lock().await;
     let mut confirmations = state.updates.confirmations.lock().await;
     let confirmation = confirmations.get(parts[2]).cloned();
@@ -594,45 +611,37 @@ pub(crate) async fn handle_confirmation(
             &confirmation,
             interaction.user.id.get(),
             parts[3] == "install",
+            language,
         );
         match result {
             Ok(()) => {
                 confirmations.remove(parts[2]);
                 if parts[3] == "install" {
                     state.updates.wake.notify_one();
-                    update_start_text(language)
+                    update_start_text(language).to_owned()
                 } else {
-                    language.text(
-                        "Update cancelled.",
-                        "업데이트를 취소했습니다.",
-                        "已取消更新。",
-                        "更新をキャンセルしました。",
-                    )
+                    language
+                        .message(MessageKey::DiscordUpdatesUpdateCancelled)
+                        .to_owned()
                 }
             }
             Err(error) => {
-                tracing::warn!(%error, "update confirmation failed");
-                language.text(
-                    "Could not start this update. Run /discodex update again.",
-                    "업데이트를 시작하지 못했습니다. /discodex update로 다시 확인해 주세요.",
-                    "无法开始此更新，请重新运行 /discodex update。",
-                    "更新を開始できませんでした。/discodex update を再実行してください。",
-                )
+                let detail =
+                    crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+                tracing::warn!(%detail, "update confirmation failed");
+                localized_update_error(language, MessageKey::DiscordCoreFailureDetails, &detail)
             }
         }
     } else {
-        language.text(
-            "This confirmation is no longer active. Run /discodex update again.",
-            "지난 확인 화면입니다. /discodex update로 다시 확인해 주세요.",
-            "此确认已失效，请重新运行 /discodex update。",
-            "この確認画面は無効です。/discodex update を再実行してください。",
-        )
+        language
+            .message(MessageKey::DiscordUpdatesConfirmationNoLongerActiveRunDiscodex)
+            .to_owned()
     };
     interaction
         .edit_response(
             ctx,
             serenity::builder::EditInteractionResponse::new()
-                .content(response)
+                .content(&response)
                 .components(Vec::new())
                 .allowed_mentions(mentions()),
         )
@@ -701,35 +710,39 @@ fn render(
     let (id, version, url) = card_target(snapshot)?;
     let release_status = status_for(snapshot, id);
     let status = if snapshot.skipped_release_id == Some(id) {
-        language.text(
-            "Skipped this version.",
-            "이번 버전을 건너뛰었습니다.",
-            "已跳过此版本。",
-            "このバージョンをスキップしました。",
-        )
+        language.message(MessageKey::DiscordUpdatesSkippedVersion)
     } else {
         match release_status {
             UpdateStatus::Selected | UpdateStatus::Ready
-                if snapshot.immediate_release_id == Some(id) => update_start_text(language),
-            UpdateStatus::Selected | UpdateStatus::Ready => language.text("Scheduled. Installation will wait until work and calls are idle.", "예약했습니다. 작업과 통화가 끝나고 유휴 상태가 되면 설치합니다.", "已安排，将在工作和通话结束且空闲后安装。", "予約しました。作業と通話が終了し、待機状態になってからインストールします。"),
-            UpdateStatus::Preparing => language.text("Preparing the selected version. You can keep working.", "선택한 버전을 준비하고 있습니다. 계속 작업할 수 있습니다.", "正在准备所选版本，可以继续工作。", "選択したバージョンを準備中です。作業は続けられます。"),
-            UpdateStatus::Applying => language.text("Installing. Discodex will reconnect with your session and settings preserved.", "설치 중입니다. 세션과 설정을 유지한 채 다시 연결합니다.", "正在安装，将保留会话和设置并重新连接。", "インストール中です。セッションと設定を保持して再接続します。"),
-            UpdateStatus::Failed => language.text("Update failed. It will not retry automatically. You can retry with Update.", "업데이트에 실패했습니다. 자동 재시도하지 않습니다. 업데이트 버튼으로 다시 시도할 수 있습니다.", "更新失败，不会自动重试。可点击更新重试。", "更新に失敗しました。自動では再試行しません。「更新」で再試行できます。"),
-            UpdateStatus::Applied => language.text("Updated. Your session and settings were preserved.", "업데이트했습니다. 세션과 설정을 유지했습니다.", "已更新，会话和设置已保留。", "更新しました。セッションと設定は保持されています。"),
-            UpdateStatus::Idle => language.text("Choose Update to start; your session and settings are preserved.", "업데이트를 누르면 시작합니다. 세션과 설정은 유지됩니다.", "选择更新即可开始；会话和设置将被保留。", "「更新」で開始します。セッションと設定は保持されます。"),
+                if snapshot.immediate_release_id == Some(id) =>
+            {
+                update_start_text(language)
+            }
+            UpdateStatus::Selected | UpdateStatus::Ready => {
+                language.message(MessageKey::DiscordUpdatesScheduledInstallationWaitUntilWorkCalls)
+            }
+            UpdateStatus::Preparing => {
+                language.message(MessageKey::DiscordUpdatesPreparingSelectedVersionYouCanKeep)
+            }
+            UpdateStatus::Applying => language.message(
+                MessageKey::DiscordUpdatesInstallingDiscodexReconnectSessionSettingsPreserved,
+            ),
+            UpdateStatus::Failed => {
+                language.message(MessageKey::DiscordUpdatesUpdateFailedNotRetryAutomaticallyYou)
+            }
+            UpdateStatus::Applied => {
+                language.message(MessageKey::DiscordUpdatesUpdatedSessionSettingsPreserved)
+            }
+            UpdateStatus::Idle => language
+                .message(MessageKey::DiscordUpdatesChooseUpdateStartSessionSettingsPreserved),
         }
     };
     let mut text = format!(
         "**Discodex {version}**\n{status}\n[{}](<{url}>)",
-        language.text("Release notes", "변경 내용", "版本说明", "リリースノート")
+        language.message(MessageKey::DiscordUpdatesReleaseNotes)
     );
     if snapshot.muted {
-        text.push_str(language.text(
-            "\nUpdate notifications are off. You can turn them back on in Settings.",
-            "\n업데이트 알림을 껐습니다. 설정에서 다시 켤 수 있습니다.",
-            "\n更新通知已关闭，可在设置中重新开启。",
-            "\n更新通知はオフです。設定で再度オンにできます。",
-        ));
+        text.push_str(language.message(MessageKey::DiscordUpdatesUpdateNotificationsOffYouCanTurn));
     }
     let complete =
         release_status == UpdateStatus::Applied && snapshot.last_applied_release_id == Some(id);
@@ -745,24 +758,14 @@ fn render(
         );
         vec![CreateActionRow::Buttons(vec![
             CreateButton::new(format!("discodex:update:{id}:install"))
-                .label(language.text("Update", "업데이트", "更新", "更新"))
+                .label(language.message(MessageKey::DiscordUpdatesUpdate))
                 .style(ButtonStyle::Primary)
                 .disabled(busy),
             CreateButton::new(format!("discodex:update:{id}:skip"))
-                .label(language.text(
-                    "Skip this version",
-                    "이번 버전은 스킵",
-                    "跳过此版本",
-                    "このバージョンをスキップ",
-                ))
+                .label(language.message(MessageKey::DiscordUpdatesSkipVersion))
                 .disabled(release_status == UpdateStatus::Applying),
             CreateButton::new(format!("discodex:update:{id}:mute"))
-                .label(language.text(
-                    "Never notify again",
-                    "다시 알리지 않음",
-                    "不再通知",
-                    "今後通知しない",
-                ))
+                .label(language.message(MessageKey::DiscordUpdatesNeverNotifyAgain))
                 .disabled(release_status == UpdateStatus::Applying),
         ])]
     };
@@ -774,12 +777,16 @@ pub(crate) async fn handle_component(
     interaction: &ComponentInteraction,
     state: &Arc<BridgeState>,
 ) -> Result<()> {
+    let language = state.config.language;
     if let Some(error) = &state.updates.initialization_error {
-        bail!("update state is unavailable: {error}");
+        bail!(
+            "{}",
+            localized_update_error(language, MessageKey::DiscordUpdatesStateUnavailable, error)
+        );
     }
     let parts = interaction.data.custom_id.split(':').collect::<Vec<_>>();
     if parts.len() != 4 {
-        bail!("invalid update action");
+        bail!(language.message(MessageKey::DiscordUpdatesActionInvalid));
     }
     let id: u64 = parts[2].parse().context("invalid release identity")?;
     // Authorisation is performed by commands::handle_component before dispatch.
@@ -791,7 +798,6 @@ pub(crate) async fn handle_component(
             ),
         )
         .await?;
-    let language = state.config.language;
     let snapshot = state.updates.store.lock().await.snapshot();
     if snapshot.message_id != Some(interaction.message.id.get())
         || snapshot.notified_release_id != Some(id)
@@ -800,12 +806,10 @@ pub(crate) async fn handle_component(
             .edit_response(
                 ctx,
                 serenity::builder::EditInteractionResponse::new()
-                    .content(language.text(
-                        "This update notice has been replaced. Use the latest notice.",
-                        "새 업데이트 알림을 사용해 주세요.",
-                        "此通知已被替换，请使用最新通知。",
-                        "最新の更新通知を使用してください。",
-                    ))
+                    .content(
+                        language
+                            .message(MessageKey::DiscordUpdatesUpdateNoticeReplacedUseLatestNotice),
+                    )
                     .allowed_mentions(mentions()),
             )
             .await?;
@@ -816,12 +820,9 @@ pub(crate) async fn handle_component(
             .edit_response(
                 ctx,
                 serenity::builder::EditInteractionResponse::new()
-                    .content(language.text(
-                        "The update is already being installed.",
-                        "업데이트를 이미 설치하고 있습니다.",
-                        "正在安装更新。",
-                        "更新をインストール中です。",
-                    ))
+                    .content(
+                        language.message(MessageKey::DiscordUpdatesUpdateAlreadyBeingInstalled),
+                    )
                     .allowed_mentions(mentions()),
             )
             .await?;
@@ -833,12 +834,18 @@ pub(crate) async fn handle_component(
             // same explicit interrupt warning used by /discodex update.
             let _manual = state.updates.manual_lock.lock().await;
             if let Err(error) = state.updates.check_now().await {
-                tracing::warn!(%error, "notice update release check failed");
+                let detail =
+                    crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+                tracing::warn!(%detail, "notice update release check failed");
                 interaction
                     .edit_response(
                         ctx,
                         serenity::builder::EditInteractionResponse::new()
-                            .content(manual_check_failed(language))
+                            .content(localized_update_error(
+                                language,
+                                MessageKey::DiscordCoreFailureDetails,
+                                &detail,
+                            ))
                             .allowed_mentions(mentions()),
                     )
                     .await?;
@@ -871,20 +878,10 @@ pub(crate) async fn handle_component(
                 let mut store = state.updates.store.lock().await;
                 if parts[3] == "skip" {
                     store.skip_release(id)?;
-                    language.text(
-                        "Skipped this version.",
-                        "이번 버전을 건너뛰었습니다.",
-                        "已跳过此版本。",
-                        "このバージョンをスキップしました。",
-                    )
+                    language.message(MessageKey::DiscordUpdatesSkippedVersion)
                 } else {
                     store.set_muted(true)?;
-                    language.text(
-                        "Update notifications are off. Turn them back on in Settings.",
-                        "업데이트 알림을 껐습니다. 설정에서 다시 켤 수 있습니다.",
-                        "更新通知已关闭，可在设置中重新开启。",
-                        "更新通知をオフにしました。設定で再度オンにできます。",
-                    )
+                    language.message(MessageKey::DiscordUpdatesUpdateNotificationsOffTurnThemBack)
                 }
             };
             interaction
@@ -897,7 +894,7 @@ pub(crate) async fn handle_component(
                 .await?;
             state.updates.wake.notify_one();
         }
-        _ => bail!("unknown update action"),
+        _ => bail!(language.message(MessageKey::DiscordUpdatesActionUnknown)),
     }
     Ok(())
 }
@@ -1034,18 +1031,11 @@ fn result_message(
     }
     let result = snapshot.last_result.as_ref()?;
     let status = match snapshot.status {
-        UpdateStatus::Applied if result.commit == current_commit => language.text(
-            "Update complete. Discodex has restarted; your session and settings were preserved.",
-            "업데이트 완료. Discodex가 재시작됐으며 세션과 설정을 유지했습니다.",
-            "更新完成。Discodex 已重启，会话和设置已保留。",
-            "更新完了。Discodex が再起動し、セッションと設定は保持されています。",
-        ),
-        UpdateStatus::Failed => language.text(
-            "Update failed. Run /discodex update to retry.",
-            "업데이트에 실패했습니다. /discodex update로 다시 시도할 수 있습니다.",
-            "更新失败。可运行 /discodex update 重试。",
-            "更新に失敗しました。/discodex update で再試行できます。",
-        ),
+        UpdateStatus::Applied if result.commit == current_commit => language
+            .message(MessageKey::DiscordUpdatesUpdateCompleteDiscodexRestartedSessionSettings),
+        UpdateStatus::Failed => {
+            language.message(MessageKey::DiscordUpdatesUpdateFailedRunDiscodexUpdateRetry)
+        }
         _ => return None,
     };
     let mut content = format!("**Discodex {}**\n{status}", result.version);
@@ -1102,8 +1092,12 @@ where
 async fn deliver_result(state: &BridgeState, http: &Http) -> Result<()> {
     let mut store = state.updates.store.lock().await;
     let channel = ChannelId::new(state.config.home_channel_id);
+    let mut snapshot = store.snapshot();
+    if let Some(error) = &mut snapshot.last_error {
+        *error = crate::discord::sanitize_discord_error(&state.config, error);
+    }
     let Some(token) = deliver_result_with(
-        &store.snapshot(),
+        &snapshot,
         state.config.language,
         updates::current_build_commit(),
         |message| async move {
@@ -1126,7 +1120,7 @@ fn immediate_requested(snapshot: &UpdateSnapshot) -> bool {
         .is_some_and(|p| snapshot.immediate_release_id == Some(p.release_id))
 }
 
-async fn interrupt_owned_turns(state: &BridgeState) {
+async fn interrupt_owned_turns(state: &BridgeState, http: &Http) {
     // Turn-state handlers take current_turn before active_turns. Keep that order
     // while taking a stable snapshot, then release both locks before IPC.
     let current = state.current_turn.lock().await;
@@ -1149,10 +1143,26 @@ async fn interrupt_owned_turns(state: &BridgeState) {
                 tracing::info!(%thread_id, %turn_id, "requested active turn interruption for update")
             }
             Ok(Err(error)) => {
-                tracing::warn!(%error, %thread_id, %turn_id, "could not interrupt active turn for update")
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, %thread_id, %turn_id, "could not interrupt active turn for update");
+                crate::discord::report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
             Err(error) => {
-                tracing::warn!(%error, %thread_id, %turn_id, "active turn interruption timed out for update")
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, %thread_id, %turn_id, "active turn interruption timed out for update");
+                crate::discord::report_discord_failure(
+                    http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
     }
@@ -1198,13 +1208,22 @@ pub(crate) async fn run(
     mut stop: tokio::sync::oneshot::Receiver<()>,
 ) {
     if let Some(error) = &state.updates.initialization_error {
-        tracing::warn!(%error, "update notifications unavailable; bridge continues normally");
+        let detail = sanitize_discord_error(&state.config, error);
+        tracing::warn!(%detail, "update notifications unavailable; bridge continues normally");
+        crate::discord::report_discord_failure(
+            &http,
+            &state.config,
+            ChannelId::new(state.config.home_channel_id),
+            &detail,
+        )
+        .await;
         return;
     }
     let mut tick = tokio::time::interval(Duration::from_secs(15));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut retry_after = Instant::now();
     let mut rendered = None;
+    let mut detached_error_reported = false;
     loop {
         tokio::select! { _ = &mut stop => break, _ = tick.tick() => {}, _ = state.updates.wake.notified() => {} }
         if state.bot_user_id.lock().await.is_none() {
@@ -1240,9 +1259,23 @@ pub(crate) async fn run(
                     *state.updates.store.lock().await = store;
                     state.updates.release_apply();
                     state.voice.input_gate.ready.notify_one();
+                    detached_error_reported = false;
                 }
                 Ok(Ok(_)) => {}
-                error => tracing::warn!(?error, "could not reconcile detached updater"),
+                error => {
+                    let detail = crate::discord::sanitize_discord_diagnostic(&format!("{error:?}"));
+                    tracing::warn!(%detail, "could not reconcile detached updater");
+                    if !detached_error_reported {
+                        crate::discord::report_discord_failure(
+                            &http,
+                            &state.config,
+                            ChannelId::new(state.config.home_channel_id),
+                            &detail,
+                        )
+                        .await;
+                        detached_error_reported = true;
+                    }
+                }
             }
             continue;
         }
@@ -1250,18 +1283,26 @@ pub(crate) async fn run(
         let immediate = immediate_requested(&before);
         if !immediate {
             if let Err(error) = deliver_result(&state, &http).await {
-                tracing::warn!(%error, "could not deliver update result");
+                tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not deliver update result");
             }
             let due = check_due(&before, epoch());
             if due && Instant::now() >= retry_after {
                 if let Err(error) = state.updates.check_now().await {
-                    tracing::warn!(%error, "could not check Discodex releases");
+                    let detail = sanitize_discord_error_chain(&state.config, &error);
+                    tracing::warn!(%detail, "could not check Discodex releases");
+                    crate::discord::report_discord_failure(
+                        &http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &detail,
+                    )
+                    .await;
                     retry_after = Instant::now() + RETRY_DELAY;
                 }
             }
             let is_idle = idle(&state).await;
             if let Err(error) = deliver_notice(&state, &http, is_idle, &mut rendered).await {
-                tracing::warn!(%error, "could not deliver update notice");
+                tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not deliver update notice");
             }
         }
         let snapshot = state.updates.store.lock().await.snapshot();
@@ -1278,9 +1319,18 @@ pub(crate) async fn run(
         };
         if snapshot.prepared.is_none() {
             let id = target.release_id;
-            if let Err(error) = state.updates.store.lock().await.mark_preparing(id) {
-                tracing::warn!(%error, "could not record update preparation");
-                continue;
+            let preparation_record = state.updates.store.lock().await.mark_preparing(id);
+            if let Err(error) = preparation_record {
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, "could not record update preparation");
+                crate::discord::report_discord_failure(
+                    &http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
+                return;
             }
             let dir = state.updates.state_dir.clone();
             let result =
@@ -1298,7 +1348,17 @@ pub(crate) async fn run(
                         .mark_apply_failed(id, format!("Update preparation failed: {result:?}")),
                 };
                 if let Err(error) = saved {
-                    tracing::warn!(%error, "could not save prepared update");
+                    let detail = sanitize_discord_error_chain(&state.config, &error);
+                    tracing::warn!(%detail, "could not save prepared update");
+                    drop(store);
+                    crate::discord::report_discord_failure(
+                        &http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &detail,
+                    )
+                    .await;
+                    return;
                 }
             }
             state.updates.wake.notify_one();
@@ -1311,34 +1371,50 @@ pub(crate) async fn run(
         if !state.updates.claim_apply(true) {
             continue;
         }
-        let (prepared, attempt_id) = {
+        let handoff = {
             let mut store = state.updates.store.lock().await;
             let snapshot = store.snapshot();
             match snapshot.prepared {
-                Some(prepared) if snapshot.status == UpdateStatus::Ready => {
-                    let attempt_id = match store.mark_applying(prepared.release_id) {
-                        Ok(attempt_id) => attempt_id,
-                        Err(error) => {
-                            tracing::warn!(%error, "could not record update handoff");
-                            state.updates.release_apply();
-                            continue;
-                        }
-                    };
-                    (prepared, attempt_id)
-                }
+                Some(prepared) if snapshot.status == UpdateStatus::Ready => store
+                    .mark_applying(prepared.release_id)
+                    .map(|attempt_id| (prepared, attempt_id)),
                 _ => {
                     state.updates.release_apply();
                     continue;
                 }
             }
         };
+        let (prepared, attempt_id) = match handoff {
+            Ok(handoff) => handoff,
+            Err(error) => {
+                state.updates.release_apply();
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, "could not record update handoff");
+                crate::discord::report_discord_failure(
+                    &http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
+                return;
+            }
+        };
         if immediate {
             if let Err(error) =
                 tokio::time::timeout(HANDLER_DRAIN_TIMEOUT, state.updates.wait_for_handlers()).await
             {
-                tracing::warn!(%error, "ingress handler drain timed out before update interruption");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, "ingress handler drain timed out before update interruption");
+                crate::discord::report_discord_failure(
+                    &http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
-            interrupt_owned_turns(&state).await;
+            interrupt_owned_turns(&state, &http).await;
             match tokio::time::timeout(
                 VOICE_LEAVE_TIMEOUT,
                 state.voice.leave(GuildId::new(state.config.guild_id)),
@@ -1347,16 +1423,40 @@ pub(crate) async fn run(
             {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    tracing::warn!(%error, "could not fully close voice before update restart")
+                    let detail = sanitize_discord_error_chain(&state.config, &error);
+                    tracing::warn!(%detail, "could not fully close voice before update restart");
+                    crate::discord::report_discord_failure(
+                        &http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &detail,
+                    )
+                    .await;
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "voice shutdown timed out before update restart")
+                    let detail = sanitize_discord_error_chain(&state.config, &error);
+                    tracing::warn!(%detail, "voice shutdown timed out before update restart");
+                    crate::discord::report_discord_failure(
+                        &http,
+                        &state.config,
+                        ChannelId::new(state.config.home_channel_id),
+                        &detail,
+                    )
+                    .await;
                 }
             }
             if let Err(error) =
                 tokio::time::timeout(HANDLER_DRAIN_TIMEOUT, state.updates.wait_for_handlers()).await
             {
-                tracing::warn!(%error, "handler drain timed out before confirmed update restart");
+                let detail = sanitize_discord_error_chain(&state.config, &error);
+                tracing::warn!(%detail, "handler drain timed out before confirmed update restart");
+                crate::discord::report_discord_failure(
+                    &http,
+                    &state.config,
+                    ChannelId::new(state.config.home_channel_id),
+                    &detail,
+                )
+                .await;
             }
         }
         if immediate {
@@ -1366,10 +1466,14 @@ pub(crate) async fn run(
             )
             .await
             {
-                tracing::warn!(%error, "update notice delivery timed out before restart");
+                tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "update notice delivery timed out before restart");
             }
         } else {
-            let _ = deliver_notice(&state, &http, false, &mut rendered).await;
+            if let Err(error) = deliver_notice(&state, &http, false, &mut rendered).await {
+                let detail =
+                    crate::discord::sanitize_discord_error(&state.config, &format!("{error:#}"));
+                tracing::error!(%detail, "could not deliver update notice before restart");
+            }
         }
         let config = state.updates.config_path.clone();
         let id = prepared.release_id;
@@ -1386,7 +1490,7 @@ pub(crate) async fn run(
                 &attempt_id,
                 format!("Update handoff failed: {launched:?}"),
             ) {
-                tracing::warn!(%error, "could not cancel unstarted updater");
+                tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not cancel unstarted updater");
             }
             // launch_apply may already have cancelled its ticket on timeout.
             // A second cancellation then returns false, but admission must reopen.
@@ -1401,7 +1505,9 @@ pub(crate) async fn run(
                         state.voice.input_gate.ready.notify_one();
                     }
                 }
-                Err(error) => tracing::warn!(%error, "could not reload update handoff outcome"),
+                Err(error) => {
+                    tracing::warn!(error = %sanitize_discord_error_chain(&state.config, &error), "could not reload update handoff outcome")
+                }
             }
         }
     }
@@ -1600,16 +1706,16 @@ mod tests {
             target,
         };
         let before = store.snapshot();
-        confirm_update(&mut store, &choice, 12, false).unwrap();
+        confirm_update(&mut store, &choice, 12, false, Language::English).unwrap();
         assert_eq!(store.snapshot(), before);
-        assert!(confirm_update(&mut store, &choice, 13, true).is_err());
+        assert!(confirm_update(&mut store, &choice, 13, true, Language::English).is_err());
         assert_eq!(store.snapshot(), before);
-        confirm_update(&mut store, &choice, 12, true).unwrap();
+        confirm_update(&mut store, &choice, 12, true, Language::English).unwrap();
         let selected = store.snapshot();
         assert!(immediate_requested(&selected));
         assert_eq!(selected.status, UpdateStatus::Selected);
         assert_eq!(selected.pending, Some(choice.target.clone()));
-        confirm_update(&mut store, &choice, 12, true).unwrap();
+        confirm_update(&mut store, &choice, 12, true, Language::English).unwrap();
         assert_eq!(store.snapshot(), selected);
         store.skip_release(9).unwrap();
         store
@@ -1620,7 +1726,7 @@ mod tests {
             })
             .unwrap();
         let moved_on = store.snapshot();
-        assert!(confirm_update(&mut store, &choice, 12, true).is_err());
+        assert!(confirm_update(&mut store, &choice, 12, true, Language::English).is_err());
         assert_eq!(store.snapshot(), moved_on);
     }
 
@@ -1648,7 +1754,7 @@ mod tests {
                 release: Some(release_notice(10, Some(&digest))),
             })
             .unwrap();
-        assert!(confirm_update(&mut store, &old_choice, 12, true).is_err());
+        assert!(confirm_update(&mut store, &old_choice, 12, true, Language::English).is_err());
         assert_eq!(store.snapshot().pending, Some(old));
         let ManualUpdateAction::Confirm(new) = manual_update_action(&store.snapshot()) else {
             panic!("expected new release")
@@ -1662,6 +1768,7 @@ mod tests {
             },
             12,
             true,
+            Language::English,
         )
         .unwrap();
         store

@@ -10,9 +10,20 @@ permissions:
   contents: read
 
 jobs:
+  resolve-platforms:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: platforms
+        shell: bash
+        run: echo "matrix=$(python3 scripts/product_resources.py test-matrix)" >> "$GITHUB_OUTPUT"
+
   test:
     name: Test ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    needs: resolve-platforms
     env:
       LIBOPUS_BUNDLED: '1'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
@@ -20,13 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - target: aarch64-apple-darwin
-            runner: macos-15
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
+        include: ${{ fromJson(needs.resolve-platforms.outputs.matrix).include }}
     steps:
       - name: Enable Git long paths on Windows
         if: runner.os == 'Windows'

@@ -16,9 +16,20 @@ permissions:
   contents: read
 
 jobs:
+  resolve-platforms:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: platforms
+        shell: bash
+        run: echo "matrix=$(python3 scripts/product_resources.py release-matrix)" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    needs: resolve-platforms
     env:
       LIBOPUS_BUNDLED: '1'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
@@ -26,25 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-            suffix: ''
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
-            suffix: ''
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            suffix: ''
-          - target: aarch64-apple-darwin
-            runner: macos-15
-            suffix: ''
-          - target: x86_64-pc-windows-msvc
-            runner: windows-2025
-            suffix: '.exe'
-          - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
-            suffix: '.exe'
+        include: ${{ fromJson(needs.resolve-platforms.outputs.matrix).include }}
     steps:
       - name: Enable Git long paths on Windows
         if: runner.os == 'Windows'
@@ -191,7 +184,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          zip -q discodex-installers.zip install update scripts/install.sh scripts/install.ps1 scripts/update.sh scripts/update.ps1
+          python3 scripts/product_resources.py generate
+          zip -q discodex-installers.zip install update scripts/install.sh scripts/install.ps1 scripts/update.sh scripts/update.ps1 scripts/product.generated.sh scripts/product.generated.ps1
           sha256sum discodex-installers.zip > discodex-installers.zip.sha256
       - name: Upload installer bundle artifact
         uses: actions/upload-artifact@v4

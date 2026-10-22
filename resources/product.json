@@ -1,0 +1,128 @@
+{
+  "product": {
+    "name": "discodex",
+    "serviceName": "discodex",
+    "legacyAppName": "codex-worker",
+    "legacyServiceName": "codex-worker-renewal",
+    "repository": "CHOAM-CO/Discodex",
+    "githubApiRoot": "https://api.github.com/repos/CHOAM-CO/Discodex",
+    "releaseDownloadRoot": "https://github.com/CHOAM-CO/Discodex/releases",
+    "versionTagPrefix": "v",
+    "dataDirectory": "discodex",
+    "codexHomeDirectory": ".codex",
+    "runtimeDirectory": "runtime",
+    "updatesFile": "updates.json",
+    "updatesDirectory": "updates",
+    "preparedUpdateDirectory": "prepared",
+    "separateCodexHomeDirectory": "codex-home",
+    "migrationMarkerFile": "migration-in-progress",
+    "officialRuntimeDirectory": "official-codex",
+    "configFile": "config.json",
+    "ownershipFile": "ownership.json",
+    "installationListFile": "installation-list.json",
+    "credentialsFile": "discord-token",
+    "stateDirectory": "state",
+    "binaryDirectory": "bin",
+    "messageAccessFile": "message-access.json",
+    "discordCommandFile": "discord-command-id.json",
+    "runtimeManifestFile": "discodex-runtime.json",
+    "runtimeManifestFormatVersion": 1,
+    "runtimeManifestAssetTemplate": "discodex-runtime-{target}.json",
+    "runtimeArchiveTemplate": "discodex-runtime-{target}.tar.gz",
+    "defaultUpdateCheckIntervalSeconds": 21600,
+    "workerAssetTemplate": "discodex-{target}{extension}",
+    "installTempTemplate": "discodex-install-{id}",
+    "updateTempTemplate": "discodex-update-{id}",
+    "installStagingTemplate": ".discodex.installing-{id}",
+    "supportedLanguages": ["en", "ko", "zh", "ja"]
+  },
+  "runtime": {
+    "commonFiles": [
+      "bin/codex{extension}",
+      "bin/codex-code-mode-host{extension}",
+      "codex-path/rg{extension}",
+      "codex-package.json"
+    ],
+    "platformFiles": {
+      "linux": ["codex-resources/bwrap"],
+      "windows": [
+        "codex-resources/codex-command-runner.exe",
+        "codex-resources/codex-windows-sandbox-setup.exe"
+      ]
+    }
+  },
+  "platforms": [
+    {
+      "os": "linux",
+      "arch": "x86_64",
+      "target": "x86_64-unknown-linux-gnu",
+      "extension": "",
+      "shellOs": "Linux",
+      "shellArch": ["x86_64", "amd64"],
+      "powershellArch": [],
+      "releaseRunner": "ubuntu-22.04",
+      "testRunner": "ubuntu-22.04",
+      "test": true
+    },
+    {
+      "os": "linux",
+      "arch": "aarch64",
+      "target": "aarch64-unknown-linux-gnu",
+      "extension": "",
+      "shellOs": "Linux",
+      "shellArch": ["aarch64", "arm64"],
+      "powershellArch": [],
+      "releaseRunner": "ubuntu-22.04-arm",
+      "testRunner": null,
+      "test": false
+    },
+    {
+      "os": "macos",
+      "arch": "x86_64",
+      "target": "x86_64-apple-darwin",
+      "extension": "",
+      "shellOs": "Darwin",
+      "shellArch": ["x86_64", "amd64"],
+      "powershellArch": [],
+      "releaseRunner": "macos-15-intel",
+      "testRunner": null,
+      "test": false
+    },
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "target": "aarch64-apple-darwin",
+      "extension": "",
+      "shellOs": "Darwin",
+      "shellArch": ["arm64", "aarch64"],
+      "powershellArch": [],
+      "releaseRunner": "macos-15",
+      "testRunner": "macos-15",
+      "test": true
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "target": "x86_64-pc-windows-msvc",
+      "extension": ".exe",
+      "shellOs": null,
+      "shellArch": [],
+      "powershellArch": ["X64"],
+      "releaseRunner": "windows-2025",
+      "testRunner": "windows-2025",
+      "test": true
+    },
+    {
+      "os": "windows",
+      "arch": "aarch64",
+      "target": "aarch64-pc-windows-msvc",
+      "extension": ".exe",
+      "shellOs": null,
+      "shellArch": [],
+      "powershellArch": ["Arm64"],
+      "releaseRunner": "windows-11-arm",
+      "testRunner": null,
+      "test": false
+    }
+  ]
+}
