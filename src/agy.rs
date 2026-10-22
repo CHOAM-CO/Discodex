@@ -140,6 +140,44 @@ fn json_value_type(value: &Value) -> &'static str {
     }
 }
 
+// Record the public protocol boundary without retaining response text, tool
+// arguments/results, or planner/thinking content.
+fn log_event_shape(value: &Value, binding: Option<&crate::agy_mcp::NativeRunBinding>) {
+    let event = value.get(protocol::EVENT).and_then(Value::as_str);
+    let payload = match event {
+        Some(protocol::STEP_UPDATE) => &value[protocol::STEP_UPDATE],
+        Some(protocol::RESULT) => &value[protocol::RESULT],
+        _ => return,
+    };
+    if event == Some(protocol::STEP_UPDATE)
+        && payload.get(protocol::STATE).and_then(Value::as_str) != Some("DONE")
+        && !payload
+            .get(protocol::TEXT_DELTA)
+            .is_some_and(Value::is_string)
+    {
+        return;
+    }
+    tracing::info!(
+        target: "discodex::agy",
+        thread_id = binding.map(|binding| binding.thread_id.as_str()),
+        turn_id = binding.map(|binding| binding.turn_id.as_str()),
+        run_id = binding.map(|binding| binding.run_id.as_str()),
+        event,
+        step_type = payload.get(protocol::STEP_TYPE).and_then(Value::as_str),
+        step_index = payload.get(protocol::STEP_INDEX).and_then(Value::as_u64),
+        state = payload.get(protocol::STATE).and_then(Value::as_str),
+        fields = ?payload.as_object().map(|object| object.keys().collect::<Vec<_>>()),
+        text_delta_type = payload.get(protocol::TEXT_DELTA).map(json_value_type),
+        text_delta_bytes = payload.get(protocol::TEXT_DELTA).and_then(Value::as_str).map(str::len),
+        subagent_info_type = payload.get(protocol::SUBAGENT_INFO).map(json_value_type),
+        tool_info_type = payload.get(protocol::TOOL_INFO).map(json_value_type),
+        response_type = payload.get(protocol::RESPONSE).map(json_value_type),
+        response_bytes = payload.get(protocol::RESPONSE).and_then(Value::as_str).map(str::len),
+        error_type = payload.get(protocol::ERROR).map(json_value_type),
+        "AGY public event shape"
+    );
+}
+
 /// Parse one documented `stream-json` line without discarding unknown fields.
 pub fn parse_event(value: Value) -> Result<Event> {
     match value.get(protocol::EVENT).and_then(Value::as_str) {
@@ -808,6 +846,7 @@ impl Session {
         let (sender, events) = mpsc::unbounded_channel();
         let (reader_cancel, _) = watch::channel(false);
         let mut stdout_cancel = reader_cancel.subscribe();
+        let stdout_binding = mcp_context.map(|context| context.binding.clone());
         let stdout_reader = tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             loop {
@@ -820,6 +859,7 @@ impl Session {
                     Ok(Some(line)) => {
                         let parsed = serde_json::from_str::<Value>(&line)
                             .context("decode AGY stream-json event")
+                            .inspect(|value| log_event_shape(value, stdout_binding.as_ref()))
                             .and_then(parse_event)
                             .context("parse AGY stream-json event");
                         if sender.send(parsed).is_err() {

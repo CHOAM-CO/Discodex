@@ -5,6 +5,18 @@
     "zh": "当前目录中没有此原生工具：{name}",
     "ja": "現在のカタログにネイティブツールがありません: {name}"
   },
+  "harness.native_tool_alias_conflict": {
+    "en": "Native tools have conflicting MCP names: {name}",
+    "ko": "네이티브 도구의 MCP 이름이 중복됩니다: {name}",
+    "zh": "原生工具的 MCP 名称冲突：{name}",
+    "ja": "ネイティブツールの MCP 名が重複しています: {name}"
+  },
+  "harness.native_tool_alias_description": {
+    "en": "Native tool: {name}\n{description}",
+    "ko": "네이티브 도구: {name}\n{description}",
+    "zh": "原生工具：{name}\n{description}",
+    "ja": "ネイティブツール: {name}\n{description}"
+  },
   "harness.native_catalog_missing_tools": {
     "en": "Native tool catalog response has no tools array.",
     "ko": "네이티브 도구 카탈로그 응답에 tools 배열이 없습니다.",

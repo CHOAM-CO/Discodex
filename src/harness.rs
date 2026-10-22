@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use codex_uds::UnixStream;
 use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{path::Path, sync::Arc};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -190,7 +191,8 @@ fn function_specs(specs: &[Value]) -> Vec<Value> {
     result
 }
 
-fn mcp_tool_specs(specs: &[Value]) -> Vec<Value> {
+fn mcp_tool_specs(specs: &[Value]) -> Result<Vec<Value>> {
+    let mut names = std::collections::HashSet::new();
     function_specs(specs)
         .into_iter()
         .filter_map(|spec| {
@@ -206,6 +208,36 @@ fn mcp_tool_specs(specs: &[Value]) -> Vec<Value> {
                 (None, true) => format!("custom__{name}"),
                 _ => name.to_owned(),
             };
+            // AGY prefixes MCP tools with `mcp_<server>_` before enforcing its
+            // 64-character function-name limit. Keep readable names when they
+            // fit; otherwise use a stable alias of the complete native identity.
+            let prefix_len = "mcp_".len() + crate::agy_mcp::SERVER_NAME.len() + 1;
+            let alias = if prefix_len + exposed_name.len() <= 64
+                && exposed_name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            {
+                exposed_name.clone()
+            } else {
+                let identity = json!([namespace, name, custom]).to_string();
+                let digest = Sha256::digest(identity);
+                let suffix = digest[..16].iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                format!("n_{suffix}")
+            };
+            if !names.insert(alias.clone()) {
+                return Some(Err(anyhow::anyhow!(
+                    crate::i18n::Language::English
+                        .message(crate::i18n::MessageKey::HarnessNativeToolAliasConflict)
+                        .replace("{name}", &alias)
+                )));
+            }
+            let description = spec.get("description").and_then(Value::as_str).unwrap_or("");
+            let description = if alias == exposed_name {
+                description.to_owned()
+            } else {
+                crate::i18n::Language::English
+                    .message(crate::i18n::MessageKey::HarnessNativeToolAliasDescription)
+                    .replace("{name}", &exposed_name)
+                    .replace("{description}", description)
+            };
             let input_schema = if custom {
                 json!({
                     "type":"object",
@@ -219,22 +251,22 @@ fn mcp_tool_specs(specs: &[Value]) -> Vec<Value> {
                     .cloned()
                     .unwrap_or_else(|| json!({"type":"object","properties":{}}))
             };
-            Some(json!({
-                "name": exposed_name,
-                "description": spec.get("description").cloned().unwrap_or_else(|| json!("")),
+            Some(Ok(json!({
+                "name": alias,
+                "description": description,
                 "inputSchema": input_schema,
                 "_meta": {
                     "discodex/nativeNamespace": namespace,
                     "discodex/nativeName": name,
                     "discodex/nativeCustom": custom
                 }
-            }))
+            })))
         })
         .collect()
 }
 
-fn combined_tool_specs(native_specs: &[Value]) -> Vec<Value> {
-    let mut tools = mcp_tool_specs(native_specs);
+fn combined_tool_specs(native_specs: &[Value]) -> Result<Vec<Value>> {
+    let mut tools = mcp_tool_specs(native_specs)?;
     let mut names: std::collections::HashSet<String> = tools
         .iter()
         .filter_map(|tool| tool.get("name")?.as_str().map(str::to_owned))
@@ -257,7 +289,7 @@ fn combined_tool_specs(native_specs: &[Value]) -> Vec<Value> {
             tools.push(tool);
         }
     }
-    tools
+    Ok(tools)
 }
 
 /// AGY owns ordinary local execution and browsing. Retain the narrow upstream
@@ -300,7 +332,7 @@ fn native_call_envelope(
         .context("missing native tool name")?;
     // MCP names are presentation identifiers. Native names may themselves
     // contain `__`, so preserve identity from the actual catalog, never split it.
-    let spec = mcp_tool_specs(native_specs)
+    let spec = mcp_tool_specs(native_specs)?
         .into_iter()
         .find(|spec| spec.get("name").and_then(Value::as_str) == Some(exposed_name))
         .with_context(|| {
@@ -423,22 +455,21 @@ async fn reply_native(endpoint: &Path, binding: &NativeBinding, request: Value) 
         }}),
         "ping" | "shutdown" => json!({"jsonrpc":"2.0","id":id,"result":{}}),
         "tools/list" => {
-            let result = invoke_native(
+            let result = async {
+                let value = invoke_native(
                 endpoint,
                 binding,
                 "thread/tool/list",
                 json!({"threadId":binding.thread_id,"turnId":binding.turn_id,"runId":binding.run_id}),
             )
-            .await;
+                .await?;
+                let specs = value.get("tools").and_then(Value::as_array).context(
+                    crate::i18n::Language::English.message(crate::i18n::MessageKey::HarnessNativeCatalogMissingTools)
+                )?;
+                combined_tool_specs(specs)
+            }.await;
             match result {
-                Ok(value) => {
-                    let specs = value
-                        .get("tools")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    json!({"jsonrpc":"2.0","id":id,"result":{"tools":combined_tool_specs(&specs)}})
-                }
+                Ok(tools) => json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}}),
                 Err(error) => {
                     json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":format!("{error:#}")}})
                 }
@@ -633,7 +664,7 @@ mod tests {
         let tools = mcp_tool_specs(&[
             json!({"type":"function","name":"read","description":"Read","inputSchema":{"type":"object"}}),
             json!({"type":"namespace","name":"codex","tools":[{"type":"function","name":"wait_threads","description":"Wait","parameters":{"type":"object","properties":{"timeoutMs":{"type":"integer"}}}}]}),
-        ]);
+        ]).unwrap();
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["name"], "read");
         assert_eq!(tools[0]["inputSchema"]["type"], "object");
@@ -650,7 +681,7 @@ mod tests {
             json!({"type":"function","name":"exec_command","description":"shell","parameters":{"type":"object"}}),
             json!({"type":"function","name":"future_native_capability","description":"new","parameters":{"type":"object"}}),
             json!({"type":"namespace","name":"multi_agent_v1","tools":[{"type":"function","name":"spawn_agent","description":"delegate","parameters":{"type":"object"}}]}),
-        ]);
+        ]).unwrap();
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["name"], "future_native_capability");
         assert_eq!(tools[1]["name"], "multi_agent_v1__spawn_agent");
@@ -666,7 +697,7 @@ mod tests {
                 {"type":"function","name":"wait_agent","description":"Wait for a task","parameters":{"type":"object","properties":{"task_name":{"type":"string"}}}}
             ]
         })];
-        let output = combined_tool_specs(&native_specs);
+        let output = combined_tool_specs(&native_specs).unwrap();
         let names: Vec<&str> = output
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
@@ -748,7 +779,7 @@ mod tests {
         let tools = combined_tool_specs(&[
             json!({"type":"function","name":"native_extra","description":"extra","parameters":{"type":"object"}}),
             json!({"type":"namespace","name":"codex_tui","tools":[{"type":"function","name":"list_threads","description":"native list","parameters":{"type":"object"}}]}),
-        ]);
+        ]).unwrap();
         let names: Vec<&str> = tools
             .iter()
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
@@ -838,7 +869,7 @@ mod tests {
             spec,
             json!({"type":"custom","name":"run","format":{"type":"text","syntax":"plain","definition":"Program text"}}),
         ];
-        let tools = mcp_tool_specs(&specs);
+        let tools = mcp_tool_specs(&specs).unwrap();
         assert_eq!(tools[0]["name"], "agent__custom__run");
         assert_eq!(
             tools[0]["inputSchema"]["properties"]["input"]["type"],
