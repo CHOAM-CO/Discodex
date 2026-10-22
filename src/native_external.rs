@@ -764,7 +764,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(base_ultra.model, "example-orbit");
-        assert_eq!(base_ultra.effort, None);
+        assert_eq!(base_ultra.effort.as_deref(), Some("high"));
 
         let no_catalog = agy_invocation(
             &json!({"model":"example-quartz-low", "effort":"high"}),

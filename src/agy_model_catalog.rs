@@ -24,7 +24,81 @@ pub(crate) struct Family {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Invocation {
     pub model: String,
+    /// The effort passed to AGY, resolved only from discovered metadata.
     pub effort: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EffortAlias {
+    pub requested: String,
+    pub actual: String,
+}
+
+#[derive(serde::Deserialize)]
+struct EffortAliasRule {
+    requested: String,
+    actual: String,
+    requires: Vec<String>,
+    excludes: Vec<String>,
+}
+
+fn effort_alias_rules() -> &'static [EffortAliasRule] {
+    static RULES: std::sync::OnceLock<Vec<EffortAliasRule>> = std::sync::OnceLock::new();
+    RULES.get_or_init(|| {
+        serde_json::from_str(include_str!("../resources/agy_effort_aliases.json"))
+            .expect("embedded AGY effort aliases are valid")
+    })
+}
+
+fn resolve_alias_for_family(family: &Family, requested: &str) -> Option<String> {
+    let has_effort = |effort: &str| {
+        family
+            .variants
+            .iter()
+            .any(|variant| variant.effort.eq_ignore_ascii_case(effort))
+    };
+    effort_alias_rules()
+        .iter()
+        .find(|rule| rule.requested.eq_ignore_ascii_case(requested))
+        .filter(|rule| rule.requires.iter().all(|effort| has_effort(effort)))
+        .filter(|rule| rule.excludes.iter().all(|effort| !has_effort(effort)))
+        .and_then(|rule| {
+            family
+                .variants
+                .iter()
+                .find(|variant| variant.effort.eq_ignore_ascii_case(&rule.actual))
+                .map(|variant| variant.effort.clone())
+        })
+}
+
+/// Return the explicitly configured aliases that apply to a discovered model.
+/// UI/catalog serialization and CLI invocation share this metadata source.
+pub(crate) fn effort_aliases(
+    catalog: &crate::agy::Catalog,
+    selected_model: &str,
+) -> Vec<EffortAlias> {
+    let Some(family) = families(catalog).into_iter().find(|family| {
+        family.id == selected_model
+            || family
+                .variants
+                .iter()
+                .any(|variant| variant.id == selected_model)
+    }) else {
+        return Vec::new();
+    };
+    effort_aliases_for_family(&family)
+}
+
+pub(crate) fn effort_aliases_for_family(family: &Family) -> Vec<EffortAlias> {
+    effort_alias_rules()
+        .iter()
+        .filter_map(|rule| {
+            resolve_alias_for_family(&family, &rule.requested).map(|actual| EffortAlias {
+                requested: rule.requested.clone(),
+                actual,
+            })
+        })
+        .collect()
 }
 
 fn normalized_effort<'a>(value: &'a str, available: &'a [String]) -> Option<&'a str> {
@@ -129,10 +203,13 @@ pub(crate) fn invocation(
                     .find(|variant| variant.effort.eq_ignore_ascii_case(effort))
                     .map(|variant| variant.effort.as_str())
             });
+            let mapped =
+                selected_effort.and_then(|effort| resolve_alias_for_family(family, effort));
             return Invocation {
                 model: family.id.clone(),
                 effort: compatible_requested
                     .map(str::to_owned)
+                    .or(mapped)
                     .or_else(|| legacy_effort.map(str::to_owned)),
             };
         }
@@ -235,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn invocation_preserves_legacy_variant_and_explicit_effort() {
+    fn invocation_preserves_legacy_variant_and_resolves_explicit_aliases() {
         let catalog = catalog();
         assert_eq!(
             invocation(Some(&catalog), "example-argon", Some("medium")),
@@ -255,7 +332,7 @@ mod tests {
             invocation(Some(&catalog), "example-opus", Some("xhigh")),
             Invocation {
                 model: "example-opus".into(),
-                effort: Some("xhigh".into())
+                effort: Some("high".into())
             }
         );
         assert_eq!(
@@ -268,11 +345,14 @@ mod tests {
     }
 
     #[test]
-    fn ultra_is_not_forwarded_and_keeps_legacy_variant_default() {
+    fn ultra_is_preserved_for_orchestration_and_mapped_only_from_discovered_high() {
         let catalog = catalog();
         assert_eq!(
-            invocation(Some(&catalog), "example-argon", Some("ultra")).effort,
-            None
+            invocation(Some(&catalog), "example-argon", Some("ultra")),
+            Invocation {
+                model: "example-argon".into(),
+                effort: Some("high".into()),
+            }
         );
         assert_eq!(
             invocation(Some(&catalog), "example-argon-high", Some("ultra"))
@@ -287,13 +367,69 @@ mod tests {
     }
 
     #[test]
-    fn discovered_family_drops_unsupported_inherited_effort_to_provider_default() {
+    fn xhigh_and_ultra_do_not_map_without_discovered_high_support() {
+        let catalog = crate::agy::Catalog {
+            models: vec![
+                crate::agy::ModelOption {
+                    id: "synthetic-model-low".into(),
+                    label: "Synthetic Model (Low)".into(),
+                },
+                crate::agy::ModelOption {
+                    id: "synthetic-model-medium".into(),
+                    label: "Synthetic Model (Medium)".into(),
+                },
+            ],
+            efforts: vec!["low".into(), "medium".into(), "high".into()],
+        };
+        assert_eq!(
+            invocation(Some(&catalog), "synthetic-model", Some("xhigh")),
+            Invocation {
+                model: "synthetic-model".into(),
+                effort: None,
+            }
+        );
+        assert_eq!(
+            invocation(Some(&catalog), "synthetic-model", Some("ultra")),
+            Invocation {
+                model: "synthetic-model".into(),
+                effort: None,
+            }
+        );
+    }
+
+    #[test]
+    fn selectable_effort_aliases_match_the_invocation_resolution() {
+        let catalog = catalog();
+        assert_eq!(
+            effort_aliases(&catalog, "example-argon"),
+            vec![
+                EffortAlias {
+                    requested: "xhigh".into(),
+                    actual: "high".into(),
+                },
+                EffortAlias {
+                    requested: "ultra".into(),
+                    actual: "high".into(),
+                },
+            ]
+        );
+        for alias in effort_aliases(&catalog, "example-argon") {
+            assert_eq!(
+                invocation(Some(&catalog), "example-argon", Some(&alias.requested)).effort,
+                Some(alias.actual)
+            );
+        }
+        assert!(effort_aliases(&catalog, "custom-user-model").is_empty());
+    }
+
+    #[test]
+    fn discovered_family_resolves_only_explicitly_supported_or_aliased_efforts() {
         let catalog = catalog();
         assert_eq!(
             invocation(Some(&catalog), "example-argon", Some("xhigh")),
             Invocation {
                 model: "example-argon".into(),
-                effort: None,
+                effort: Some("high".into()),
             }
         );
         assert_eq!(
@@ -307,7 +443,7 @@ mod tests {
             invocation(Some(&catalog), "example-argon-low", Some("xhigh")),
             Invocation {
                 model: "example-argon".into(),
-                effort: Some("low".into()),
+                effort: Some("high".into()),
             }
         );
         assert_eq!(

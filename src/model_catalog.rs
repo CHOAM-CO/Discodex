@@ -187,6 +187,7 @@ pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::a
                 }))
                 .collect::<Vec<_>>()
         );
+        let effort_aliases = crate::agy_model_catalog::effort_aliases_for_family(&family);
         let mut efforts = Vec::new();
         for variant in &family.variants {
             if !efforts.contains(&variant.effort) {
@@ -203,7 +204,17 @@ pub(crate) fn add_antigravity_catalog(catalog: &mut Value, discovered: &crate::a
                 .chain(std::iter::once(json!({
                     (FIELD_REASONING_EFFORT): crate::agy_model_catalog::CODEX_ORCHESTRATION_EFFORT,
                     (FIELD_AGY_ORCHESTRATION): true,
+                    "agyEffort": effort_aliases
+                        .iter()
+                        .find(|alias| alias.requested == crate::agy_model_catalog::CODEX_ORCHESTRATION_EFFORT)
+                        .map(|alias| alias.actual.as_str()),
                 })))
+                .collect::<Vec<_>>()
+        );
+        row["reasoningEffortAliases"] = json!(
+            effort_aliases
+                .iter()
+                .map(|alias| json!({"requested":alias.requested,"actual":alias.actual}))
                 .collect::<Vec<_>>()
         );
         rows.push(row);

@@ -1148,13 +1148,7 @@ async fn build_settings_menu_with_catalog(
             })?;
             let model = selected_model_with_language(&catalog, &model_scope, language)?;
             if kind == SettingsKind::Effort {
-                let choices = model
-                    .get("supportedReasoningEfforts")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| model_effort_settings_choice(item, language))
-                    .collect::<Vec<_>>();
+                let choices = model_effort_settings_choices(model, language);
                 let selected = thread
                     .get("effort")
                     .and_then(Value::as_str)
@@ -1347,11 +1341,79 @@ fn model_effort_settings_choice(
 ) -> Option<SettingsChoice> {
     let mut choice = effort_settings_choice(item, language)?;
     if item.get("agyOrchestration").and_then(Value::as_bool) == Some(true) {
+        choice.label = if let Some(actual) = item.get("agyEffort").and_then(Value::as_str) {
+            language
+                .message(MessageKey::CommandsAgyUltraEffortAliasLabel)
+                .replace(
+                    "{actual}",
+                    &effort_settings_choice(&json!(actual), language)?.label,
+                )
+        } else {
+            language
+                .message(MessageKey::CommandsUltraCodexProactiveOrchestrationAgyDefault5b74f52a)
+                .to_owned()
+        };
+    } else if let Some(actual) = item.get("agyEffort").and_then(Value::as_str) {
         choice.label = language
-            .message(MessageKey::CommandsUltraCodexProactiveOrchestrationAgyDefault5b74f52a)
-            .to_owned();
+            .message(MessageKey::CommandsAgyEffortAliasLabel)
+            .replace(
+                "{actual}",
+                &effort_settings_choice(&json!(actual), language)?.label,
+            );
     }
     Some(choice)
+}
+
+fn model_effort_settings_choices(
+    model: &Value,
+    language: crate::i18n::Language,
+) -> Vec<SettingsChoice> {
+    let mut items = model
+        .get("supportedReasoningEfforts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let aliases = model
+        .get("reasoningEffortAliases")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for alias in aliases {
+        let (Some(requested), Some(actual)) = (
+            alias.get("requested").and_then(Value::as_str),
+            alias.get("actual").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        if items.iter().any(|item| {
+            item.get("reasoningEffort")
+                .and_then(Value::as_str)
+                .or_else(|| item.as_str())
+                == Some(requested)
+        }) {
+            continue;
+        }
+        let alias_item = json!({
+            "reasoningEffort": requested,
+            "agyEffort": actual,
+            "source": "agy-effort-alias"
+        });
+        let insert_at = items
+            .iter()
+            .position(|item| {
+                item.get("reasoningEffort")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.as_str())
+                    == Some(actual)
+            })
+            .map(|index| index + 1)
+            .unwrap_or(items.len());
+        items.insert(insert_at, alias_item);
+    }
+    items
+        .iter()
+        .filter_map(|item| model_effort_settings_choice(item, language))
+        .collect()
 }
 
 fn agy_variant_effort(model: &Value, model_id: &str) -> Option<String> {
@@ -5400,7 +5462,15 @@ async fn validate_setting_choice_with_language(
                             .or_else(|| x.as_str())
                             == Some(requested)
                     })
-                });
+                })
+                || model
+                    .get("reasoningEffortAliases")
+                    .and_then(Value::as_array)
+                    .is_some_and(|aliases| {
+                        aliases.iter().any(|alias| {
+                            alias.get("requested").and_then(Value::as_str) == Some(requested)
+                        })
+                    });
             if !valid {
                 bail!(
                     "{}",
@@ -12079,20 +12149,19 @@ mod native_feature_settings_tests {
         );
         let current = Some("sample-family-high".to_owned());
         let selected_model = selected_model(&catalog, &current).unwrap();
-        let choices = selected_model["supportedReasoningEfforts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|item| model_effort_settings_choice(item, crate::i18n::Language::English))
-            .collect::<Vec<_>>();
+        let choices = model_effort_settings_choices(selected_model, crate::i18n::Language::English);
         assert_eq!(
             choices
                 .iter()
                 .map(|choice| choice.value.as_str())
                 .collect::<Vec<_>>(),
-            vec!["high", "medium", "low", "ultra"]
+            vec!["high", "xhigh", "medium", "low", "ultra"]
         );
-        assert!(choices[3].label.contains("Codex proactive orchestration"));
+        assert_eq!(choices[1].label, "Extra high (AGY uses High)");
+        assert_eq!(
+            choices[4].label,
+            "Ultra (Codex orchestration; AGY uses High)"
+        );
         assert!(
             validate_setting_choice("effort", "ultra", &catalog, &current)
                 .await
@@ -12101,12 +12170,86 @@ mod native_feature_settings_tests {
         assert!(
             validate_setting_choice("effort", "xhigh", &catalog, &current)
                 .await
-                .is_err()
+                .is_ok()
         );
+        let current_label = effort_current_label(
+            &choices,
+            Some(&json!("xhigh")),
+            crate::i18n::Language::English,
+        );
+        assert_eq!(current_label, "Extra high (AGY uses High)");
         assert_eq!(
             agy_variant_effort(selected_model, "sample-family-high").as_deref(),
             Some("high")
         );
+
+        let unsupported = json!({"data":[{
+            "id":"sample-low-only",
+            "executor":"antigravity",
+            "supportedReasoningEfforts":[
+                {"reasoningEffort":"low","source":"agy-model-variant"},
+                {"reasoningEffort":"ultra","agyOrchestration":true}
+            ],
+            "reasoningEffortAliases":[]
+        }]});
+        let unsupported_current = Some("sample-low-only".to_owned());
+        assert_eq!(
+            model_effort_settings_choices(&unsupported["data"][0], crate::i18n::Language::English)
+                .iter()
+                .map(|choice| choice.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["low", "ultra"]
+        );
+        assert!(
+            validate_setting_choice("effort", "xhigh", &unsupported, &unsupported_current)
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn agy_effort_alias_labels_show_actual_effort_in_all_locales() {
+        let ultra = json!({
+            "reasoningEffort":"ultra",
+            "agyOrchestration":true,
+            "agyEffort":"high"
+        });
+        for (language, extra_high, ultra_label) in [
+            (
+                crate::i18n::Language::English,
+                "Extra high (AGY uses High)",
+                "Ultra (Codex orchestration; AGY uses High)",
+            ),
+            (
+                crate::i18n::Language::Korean,
+                "매우 높음 (AGY는 높음 사용)",
+                "Ultra (Codex 오케스트레이션; AGY는 높음 사용)",
+            ),
+            (
+                crate::i18n::Language::Chinese,
+                "很高（AGY 使用高）",
+                "Ultra（Codex 编排；AGY 使用高）",
+            ),
+            (
+                crate::i18n::Language::Japanese,
+                "非常に高い（AGY は「高」を使用）",
+                "Ultra（Codex オーケストレーション、AGY は「高」を使用）",
+            ),
+        ] {
+            let mapped_xhigh = json!({"reasoningEffort":"xhigh","agyEffort":"high"});
+            assert_eq!(
+                model_effort_settings_choice(&mapped_xhigh, language)
+                    .unwrap()
+                    .label,
+                extra_high
+            );
+            assert_eq!(
+                model_effort_settings_choice(&ultra, language)
+                    .unwrap()
+                    .label,
+                ultra_label
+            );
+        }
     }
 
     #[tokio::test]
