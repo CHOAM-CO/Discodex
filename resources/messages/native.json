@@ -59,6 +59,12 @@
     "zh": "附加的图像文件：{path}",
     "ja": "添付画像ファイル: {path}"
   },
+  "native.external_cli_exit_failure": {
+    "en": "Antigravity CLI exited unsuccessfully after its terminal result: {status}",
+    "ko": "Antigravity CLI가 최종 결과를 반환한 뒤 비정상 종료했습니다: {status}",
+    "zh": "Antigravity CLI 返回最终结果后异常退出：{status}",
+    "ja": "Antigravity CLI が最終結果を返した後に異常終了しました: {status}"
+  },
   "native.request_failed": {
     "en": "Native request failed",
     "ko": "네이티브 요청에 실패했습니다",

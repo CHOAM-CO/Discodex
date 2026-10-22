@@ -1008,10 +1008,11 @@ impl Session {
     }
 
     async fn drain_exited_readers(&mut self) -> Result<()> {
-        let stderr = match self.stderr_reader.take() {
+        let stderr = match self.stderr_reader.as_mut() {
             Some(reader) => reader.await.context("join AGY stderr reader"),
             None => Ok(()),
         };
+        self.stderr_reader.take();
         let readers = self.stop_readers().await;
         stderr?;
         readers
@@ -1019,17 +1020,21 @@ impl Session {
 
     async fn stop_readers(&mut self) -> Result<()> {
         let _ = self.reader_cancel.send(true);
-        if let Some(reader) = self.stdout_reader.take() {
-            reader.await.context("join AGY stdout reader")?;
+        if let Some(reader) = self.stdout_reader.as_mut() {
+            let result = reader.await;
+            self.stdout_reader.take();
+            result.context("join AGY stdout reader")?;
         }
-        if let Some(reader) = self.stderr_reader.take() {
-            reader.await.context("join AGY stderr reader")?;
+        if let Some(reader) = self.stderr_reader.as_mut() {
+            let result = reader.await;
+            self.stderr_reader.take();
+            result.context("join AGY stderr reader")?;
         }
         Ok(())
     }
 
     /// Close stdin and let the current turn finish before collecting status.
-    pub async fn finish(mut self) -> Result<std::process::ExitStatus> {
+    pub async fn finish(&mut self) -> Result<std::process::ExitStatus> {
         self.stdin.take();
         let status = self.child.wait().await.context("wait for AGY process");
         let cleanup = self.owned_children.terminate();

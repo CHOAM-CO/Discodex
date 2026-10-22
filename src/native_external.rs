@@ -632,9 +632,28 @@ async fn run(
             }
         }
     }.await;
-    // stdin-close alone can leave MCP subprocesses alive. Always reap the owned
-    // process tree after the terminal result or cancellation.
-    let cleanup = session.terminate().await.map(|_| ());
+    // The documented successful shutdown is stdin-close followed by process
+    // exit. Cancellation/failure stops the owned tree; successful runs still
+    // reap remaining children, but only after the CLI has exited and flushed
+    // its diagnostics. Do not discard a nonzero CLI exit after a JSON result.
+    let cleanup = async {
+        if outcome.is_err() {
+            return session.terminate().await.map(|_| ());
+        }
+        let status = tokio::select! {
+            result = session.finish() => result?,
+            _ = canceled.changed() => {
+                session.terminate().await?;
+                bail!("{}", language.message(crate::i18n::MessageKey::NativeExternalTurnInterrupted));
+            }
+        };
+        if !status.success() {
+            bail!("{}", language
+                .message(crate::i18n::MessageKey::NativeExternalCliExitFailure)
+                .replace("{status}", &status.to_string()));
+        }
+        Ok(())
+    }.await;
     let diagnostics = session.take_diagnostics().await;
     if !diagnostics.trim().is_empty() {
         let message = language
