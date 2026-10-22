@@ -587,11 +587,11 @@ async fn run(
                 && !is_native_call_echo(&native.inner, binding, &event) {
                 native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":event})).await?;
             }
+            if let Some(text) = event.text_delta().filter(|text| !text.is_empty()) {
+                streamed.push_str(text);
+                native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
+            }
             match event {
-                crate::agy::Event::TextDelta { text, .. } if !text.is_empty() => {
-                    streamed.push_str(&text);
-                    native.request_raw("turn/external/event", json!({"threadId":thread_id,"turnId":turn_id,"runId":run_id,"event":{"type":"textDelta","delta":text}})).await?;
-                }
                 crate::agy::Event::Result { status, response, error, .. } => {
                     tracing::info!(status = status.as_deref(), response_bytes = response.as_deref().map(str::len), error_present = error.is_some(), "AGY turn completed");
                     if let Some(text) = terminal_response_fallback(&streamed, response.as_deref()) {

@@ -33,7 +33,6 @@ pub(crate) mod protocol {
     pub const STATE: &str = "state";
     pub const SUBAGENT_INFO: &str = "subagent_info";
     pub const STEP_TYPE: &str = "step_type";
-    pub const AGENT_RESPONSE: &str = "agent_response";
     pub const TEXT_DELTA: &str = "text_delta";
     pub const TOOL: &str = "tool";
     pub const TOOL_NAME: &str = "tool_name";
@@ -111,6 +110,17 @@ pub enum Event {
     Other(Value),
 }
 
+impl Event {
+    /// Only the documented public delta field; never planner or thinking data.
+    pub fn text_delta(&self) -> Option<&str> {
+        match self {
+            Self::TextDelta { text, .. } => Some(text),
+            Self::ToolStep { raw, .. } => string_at(raw, &[protocol::TEXT_DELTA]),
+            _ => None,
+        }
+    }
+}
+
 fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     let mut current = value;
     for segment in path {
@@ -174,11 +184,21 @@ pub fn parse_event(value: Value) -> Result<Event> {
                     raw: step,
                 });
             }
+            let text = match step.get(protocol::TEXT_DELTA) {
+                Some(Value::String(text)) => Some(text.to_owned()),
+                None | Some(Value::Null) => None,
+                Some(value) => bail!(
+                    "{}",
+                    crate::i18n::Language::English
+                        .message(crate::i18n::MessageKey::AgyProtocolTextDeltaType)
+                        .replace("{type}", json_value_type(value))
+                ),
+            };
             let step_type = match step.get(protocol::STEP_TYPE) {
-                Some(Value::String(step_type)) => step_type.clone(),
+                Some(Value::String(step_type)) => Some(step_type.clone()),
                 // Preserve lifecycle updates that describe state before naming
                 // a step type; callers can inspect the untouched event if needed.
-                None | Some(Value::Null) => return Ok(Event::Other(value)),
+                None | Some(Value::Null) => None,
                 Some(value) => {
                     bail!(
                         "AGY stream-json step_update step_type must be a string, got {}",
@@ -186,29 +206,20 @@ pub fn parse_event(value: Value) -> Result<Event> {
                     );
                 }
             };
-            match step_type.as_str() {
-                protocol::AGENT_RESPONSE => match step.get(protocol::TEXT_DELTA) {
-                    Some(Value::String(text)) => Ok(Event::TextDelta {
-                        conversation_id,
-                        step_index,
-                        state,
-                        text: text.to_owned(),
-                        raw: step,
-                    }),
-                    // AGY also emits agent_response lifecycle/status updates that
-                    // do not carry text. Preserve the full event for future callers.
-                    None | Some(Value::Null) => Ok(Event::Other(value)),
-                    Some(value) => bail!(
-                        "AGY agent_response text_delta must be a string, got {}",
-                        json_value_type(value)
-                    ),
-                },
-                protocol::TOOL => Ok(Event::ToolStep {
+            match (step_type.as_deref(), text) {
+                (Some(protocol::TOOL), _) => Ok(Event::ToolStep {
                     conversation_id,
                     step_index,
                     state,
                     tool_name: string_at(&step, &[protocol::TOOL_NAME]).map(str::to_owned),
                     tool_info: step.get(protocol::TOOL_INFO).cloned(),
+                    raw: step,
+                }),
+                (_, Some(text)) => Ok(Event::TextDelta {
+                    conversation_id,
+                    step_index,
+                    state,
+                    text,
                     raw: step,
                 }),
                 _ => Ok(Event::Other(value)),
@@ -1611,7 +1622,7 @@ mod tests {
         let delta_error = parse_event(malformed_delta).unwrap_err();
         assert_eq!(
             delta_error.to_string(),
-            "AGY agent_response text_delta must be a string, got number"
+            "AGY step_update text_delta must be a string, got number"
         );
         let malformed_result = json!({"event":"result"});
         let result_error = parse_event(malformed_result).unwrap_err();

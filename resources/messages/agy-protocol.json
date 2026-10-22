@@ -1,0 +1,8 @@
+{
+  "agy_protocol.text_delta_type": {
+    "en": "AGY step_update text_delta must be a string, got {type}",
+    "ko": "AGY step_update text_delta는 문자열이어야 합니다. 실제 형식: {type}",
+    "zh": "AGY step_update text_delta 必须是字符串，实际类型为 {type}",
+    "ja": "AGY step_update text_delta は文字列である必要があります。実際の型: {type}"
+  }
+}
