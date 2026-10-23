@@ -43,6 +43,8 @@ jobs:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     needs: resolve-platforms
+    permissions:
+      contents: write
     env:
       LIBOPUS_BUNDLED: '1'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
