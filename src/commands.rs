@@ -7937,7 +7937,14 @@ pub(crate) async fn mark_request_resolved(
             .edit(
                 http,
                 serenity::builder::EditMessage::new()
-                    .content(format!("{}\n\n요청이 처리되었습니다.", message.content))
+                    .content(format!(
+                        "{}\n\n{}",
+                        message.content,
+                        state
+                            .config
+                            .language
+                            .message(MessageKey::CommandsRequestNoLongerAwaitingResponse)
+                    ))
                     .components(Vec::new()),
             )
             .await

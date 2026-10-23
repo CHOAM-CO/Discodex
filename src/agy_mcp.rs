@@ -51,6 +51,9 @@ pub fn native_server_entry(command: &Path) -> Result<Value> {
     Ok(json!({
         "command": command,
         "args": ["harness-tools", "--native"],
+        // Native tools can wait for a user's approval or another task. Let the
+        // owning run cancel them instead of AGY's default three-minute deadline.
+        "timeoutSeconds": -1,
         "env": { OWNER_KEY: OWNER_VALUE }
     }))
 }
