@@ -8,6 +8,10 @@ Never commit a user's actual agent names, personal preferences, model or voice c
 
 The installation language defaults to English and can be selected as English, Korean, Simplified Chinese, or Japanese. Respect `DISCODEX_LANGUAGE` when it is set. Use the selected language for installer guidance, Discord UI text, and agent base instructions without changing official Codex API names or command semantics.
 
+## Planning ownership and implementation scope
+
+Product proposals and design-persuasion documents must be authored and revised by the actual Antigravity CLI using Gemini 4 Argon. Codex collects evidence, relays the user's requirements, reviews the result and implements the documented scope; it must not write or expand those documents itself. If implementation needs a new behavior, structure or exception-handling path, return that change to the AGY author for a document revision before implementing it. Do not add undocumented engineering scope or arbitrary restrictions. Review feedback goes back to the same author instead of being silently rewritten by Codex.
+
 ## Validation and data preservation
 
 - Automated tests provide inputs and check outputs and changes in program values (objects and data structures).
