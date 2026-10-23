@@ -11,20 +11,28 @@ on:
         description: Optional release tag whose matching Codex runtime archive can be reused
         required: false
         type: string
+      platform_os:
+        description: Optional OS to rebuild (linux, macos, windows); blank builds all
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   resolve-platforms:
-    runs-on: ubuntu-22.04
+    runs-on: discodex-build-linux
     outputs:
       matrix: ${{ steps.platforms.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
       - id: platforms
         shell: bash
-        run: echo "matrix=$(python3 scripts/product_resources.py release-matrix)" >> "$GITHUB_OUTPUT"
+        env:
+          PLATFORM_OS: ${{ inputs.platform_os }}
+        run: echo "matrix=$(python3 scripts/product_resources.py release-matrix --os "$PLATFORM_OS")" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.target }}
@@ -42,13 +50,29 @@ jobs:
       - name: Enable Git long paths on Windows
         if: runner.os == 'Windows'
         shell: powershell
-        run: git config --global core.longpaths true
+        run: |
+          'GIT_CONFIG_COUNT=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'GIT_CONFIG_KEY_0=core.longpaths' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'GIT_CONFIG_VALUE_0=true' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Check out requested release tag
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 0
           submodules: recursive
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Limit Windows compilation to sixteen parallel jobs
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          'CARGO_BUILD_JOBS=16' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'CMAKE_BUILD_PARALLEL_LEVEL=16' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Limit Linux compilation to eight parallel jobs
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          echo 'CARGO_BUILD_JOBS=8' >> "$GITHUB_ENV"
+          echo 'CMAKE_BUILD_PARALLEL_LEVEL=8' >> "$GITHUB_ENV"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
@@ -76,9 +100,10 @@ jobs:
               raise SystemExit(f"Release tag must be {expected} for this worker and runtime")
           PY
       - name: Install official Linux package dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils pkg-config libcap-dev libssl-dev
       - name: Cache Rust build
+        if: runner.environment == 'github-hosted'
         uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
@@ -111,6 +136,8 @@ jobs:
           REUSE_RUNTIME_TAG: ${{ inputs.reuse_runtime_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          rm -rf -- runtime-package
+          rm -f -- "discodex-runtime-${TARGET}.tar.gz" "discodex-runtime-${TARGET}.json"
           STABLE_GIT_COMMIT="$(git -C third_party/codex rev-parse HEAD)"
           export STABLE_GIT_COMMIT
           if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
@@ -130,8 +157,10 @@ jobs:
           else
             # rust-cache prunes gn_out but retains V8's build-script fingerprint.
             # Let the official build script restore its verified native archive.
-            cargo clean --manifest-path third_party/codex/codex-rs/Cargo.toml \
-              --package v8 --target "$TARGET" --release
+            if [[ '${{ runner.environment }}' == 'github-hosted' ]]; then
+              cargo clean --manifest-path third_party/codex/codex-rs/Cargo.toml \
+                --package v8 --target "$TARGET" --release
+            fi
             python third_party/codex/scripts/build_codex_package.py \
               --variant codex --target "$TARGET" --cargo-profile release \
               --package-dir "runtime-package" \
@@ -170,17 +199,19 @@ jobs:
   package-installers:
     name: Package source-free installers
     needs: build
-    runs-on: ubuntu-22.04
+    runs-on: discodex-build-linux
     steps:
       - name: Check out requested release tag
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_tag }}
+          clean: false
       - name: Package installer scripts only
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/product_resources.py generate
+          rm -f -- discodex-installers.zip
           zip -q discodex-installers.zip install update scripts/install.sh scripts/install.ps1 scripts/update.sh scripts/update.ps1 scripts/product.generated.sh scripts/product.generated.ps1
           sha256sum discodex-installers.zip > discodex-installers.zip.sha256
       - name: Upload installer bundle artifact
@@ -196,10 +227,13 @@ jobs:
   upload-draft:
     name: Upload to draft release
     needs: [build, package-installers]
-    runs-on: ubuntu-22.04
+    runs-on: discodex-build-linux
     permissions:
       contents: write
     steps:
+      - name: Clear previous release upload staging
+        shell: bash
+        run: rm -rf -- release-assets
       - name: Download runner artifacts
         uses: actions/download-artifact@v4
         with:

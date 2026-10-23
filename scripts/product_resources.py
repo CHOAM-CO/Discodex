@@ -150,9 +150,11 @@ def generated_powershell(product, messages):
     return "\n".join(lines) + "\n"
 
 
-def matrix(product, release):
+def matrix(product, release, platform_os=None):
     rows = []
     for platform in product["platforms"]:
+        if platform_os and platform["os"] != platform_os:
+            continue
         runner = platform["releaseRunner"] if release else platform["testRunner"]
         if runner is None:
             continue
@@ -177,12 +179,13 @@ def generate():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("generate", "release-matrix", "test-matrix"))
+    parser.add_argument("--os", dest="platform_os")
     args = parser.parse_args()
     product, messages = load_resources()
     if args.command == "generate":
         generate()
     else:
-        print(matrix(product, args.command == "release-matrix"))
+        print(matrix(product, args.command == "release-matrix", args.platform_os))
 
 
 if __name__ == "__main__":
