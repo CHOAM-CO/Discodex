@@ -2662,6 +2662,13 @@ struct ProfileRuntimeSnapshot {
     config: Vec<u8>,
     ownership_path: PathBuf,
     ownership: Vec<u8>,
+    managed_settings: Vec<ManagedSettingsSnapshot>,
+    language: Language,
+}
+
+struct ManagedSettingsSnapshot {
+    path: PathBuf,
+    previous: Option<(Vec<u8>, fs::Permissions)>,
 }
 
 impl ProfileRuntimeSnapshot {
@@ -2674,17 +2681,60 @@ impl ProfileRuntimeSnapshot {
                     .message(MessageKey::InstallDiagnosticsProfileDirectoryMissing),
             )?
             .join("ownership.json");
+        let config = Config::load(&owner.config_file)?;
+        let mut managed_settings = Vec::new();
+        if NativeFeatureStore::new(&config.state_dir)
+            .read()?
+            .antigravity_share_settings
+            .is_some()
+        {
+            for path in crate::agy_settings::managed_update_paths(&config)? {
+                let previous = match fs::read(&path) {
+                    Ok(bytes) => Some((bytes, fs::metadata(&path)?.permissions())),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            config
+                                .language
+                                .message(MessageKey::AgySettingsRead)
+                                .replace("{path}", &path.display().to_string())
+                        });
+                    }
+                };
+                managed_settings.push(ManagedSettingsSnapshot { path, previous });
+            }
+        }
         Ok(Self {
             config_path: owner.config_file.clone(),
             config: fs::read(&owner.config_file)?,
             ownership: fs::read(&ownership_path)?,
             ownership_path,
+            managed_settings,
+            language: config.language,
         })
     }
 
     fn restore(&self, replaced: bool) -> Result<()> {
         for (path, bytes) in self.restore_inputs(replaced).into_iter().flatten() {
             write_bytes_private(path, bytes)?;
+        }
+        if replaced {
+            for file in &self.managed_settings {
+                let restored = if let Some((bytes, permissions)) = &file.previous {
+                    atomic_restore(&file.path, bytes, permissions)
+                } else {
+                    match fs::remove_file(&file.path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(error.into()),
+                    }
+                };
+                restored.with_context(|| {
+                    self.language
+                        .message(MessageKey::AgySettingsRestore)
+                        .replace("{path}", &file.path.display().to_string())
+                })?;
+            }
         }
         Ok(())
     }
@@ -2736,7 +2786,14 @@ fn activate_runtime(
             )?
             .join("ownership.json"),
         owner,
-    )
+    )?;
+    // The incoming installer may run from a temporary download. Older profiles
+    // without workerPath must register the installed worker, not that installer.
+    let mut managed_config = config.clone();
+    if managed_config.worker_path.is_none() {
+        managed_config.worker_path = owner.worker_executable.clone();
+    }
+    crate::agy_settings::reconcile(&managed_config)
 }
 
 fn apply_runtime_selection(
@@ -3506,7 +3563,6 @@ mod mac_update_policy_tests {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn atomic_restore(path: &Path, bytes: &[u8], permissions: &fs::Permissions) -> Result<()> {
     let mut temp = tempfile::NamedTempFile::new_in(
         path.parent().context(

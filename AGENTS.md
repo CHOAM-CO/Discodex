@@ -16,6 +16,7 @@ The installation language defaults to English and can be selected as English, Ko
 - The user performs real-use checks such as voice testing; do not add automated real-use tests, fixtures, or example code.
 - Record unverified behavior and failures as observed.
 - Preserve production settings, accounts, conversation history, and project data during product cleanup.
+- Updates must reconcile changed Discodex-owned configuration conventions before startup readiness and update-completion reporting. Reuse the existing idempotent managed-settings preparation; preserve explicit user choices and unrelated personal settings, and surface reconciliation failures instead of reporting a package-only update as complete.
 
 Product documentation defaults to English in `README.md`, `docs/design.md`, and `docs/installation.md`. Keep Korean (`.ko.md`), Simplified Chinese (`.zh-CN.md`), and Japanese (`.ja.md`) versions current, with language navigation and links to the matching language. Document behavior from the current implementation, including persisted update-check timing separately from notification idle conditions.
 

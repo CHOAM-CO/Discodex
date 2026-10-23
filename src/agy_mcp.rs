@@ -142,10 +142,20 @@ pub fn remove_workspace_registration(project_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_registration(path: &Path) -> Result<bool> {
+/// Include legacy workspace configuration in an update snapshot only when it
+/// contains the registration that managed preparation is allowed to remove.
+pub(crate) fn owned_workspace_config_path(project_dir: &Path) -> Result<Option<PathBuf>> {
+    let _guard = CONFIG_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!(Language::English.message(MessageKey::AgyMcpLock)))?;
+    let path = workspace_config_path(project_dir);
+    Ok(read_owned_registration(&path)?.map(|_| path))
+}
+
+fn read_owned_registration(path: &Path) -> Result<Option<(String, CstRootNode)>> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
             return Err(error).context(Language::English.message(MessageKey::AgyMcpReadLegacy));
         }
@@ -160,12 +170,25 @@ fn remove_registration(path: &Path) -> Result<bool> {
         .and_then(|root| root.object_value("mcpServers"))
         .and_then(|servers| servers.get(SERVER_NAME))
     else {
-        return Ok(false);
+        return Ok(None);
     };
     if !entry.to_serde_value().as_ref().is_some_and(is_owned_entry) {
-        return Ok(false);
+        return Ok(None);
     }
-    entry.remove();
+    Ok(Some((text, document)))
+}
+
+fn remove_registration(path: &Path) -> Result<bool> {
+    let Some((text, document)) = read_owned_registration(path)? else {
+        return Ok(false);
+    };
+    if let Some(entry) = document
+        .object_value()
+        .and_then(|root| root.object_value("mcpServers"))
+        .and_then(|servers| servers.get(SERVER_NAME))
+    {
+        entry.remove();
+    }
     let mut updated = document.to_string();
     if text.starts_with('\u{feff}') {
         updated.insert(0, '\u{feff}');

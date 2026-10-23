@@ -160,9 +160,21 @@ async fn run_command(args: &[String]) -> Result<()> {
     discodex::logging::init_file_logging(&config.state_dir)?;
 
     let result = async {
-        let _token = config.token()?;
+        let token = config.token()?;
         let shutdown = start_shutdown_listener();
-        let native = Native::start_for_bridge(&config).await?;
+        let native = match Native::start_for_bridge(&config).await {
+            Ok(native) => native,
+            Err(error) => {
+                discodex::discord::report_discord_failure(
+                    &serenity::http::Http::new(&token),
+                    &config,
+                    serenity::all::ChannelId::new(config.home_channel_id),
+                    &format!("{error:#}"),
+                )
+                .await;
+                return Err(error);
+            }
+        };
         let result =
             discodex::discord::run(config, native.clone(), shutdown, selected_config_path).await;
         let shutdown = native.shutdown().await;

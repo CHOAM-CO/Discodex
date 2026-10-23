@@ -232,6 +232,30 @@ pub fn set(config: &Config, share: bool, key: &str, value: Value) -> Result<()> 
     )
 }
 
+/// Reapply current managed conventions for an already configured AGY profile.
+pub(crate) fn reconcile(config: &Config) -> Result<()> {
+    if let Some(share) = crate::native_features::NativeFeatureStore::new(&config.state_dir)
+        .read()?
+        .antigravity_share_settings
+    {
+        prepare(config, share)
+            .context(config.language.message(MessageKey::AgySettingsReconcile))?;
+    }
+    Ok(())
+}
+
+/// Files that the installer must restore if managed preparation fails.
+pub(crate) fn managed_update_paths(config: &Config) -> Result<Vec<PathBuf>> {
+    let mut paths = vec![
+        cli_path(config)?,
+        crate::agy_mcp::managed_config_path(&root(&config.state_dir)?),
+    ];
+    if let Some(path) = crate::agy_mcp::owned_workspace_config_path(&config.project_dir)? {
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
 /// Materialize private preferences and MCP configuration before any CLI launch.
 pub fn prepare(config: &Config, share: bool) -> Result<()> {
     let _guard = SETTINGS_LOCK

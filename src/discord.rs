@@ -4626,7 +4626,7 @@ pub(crate) async fn send_failure_notice(
     Ok(())
 }
 
-pub(crate) async fn report_discord_failure(
+pub async fn report_discord_failure(
     http: &serenity::http::Http,
     config: &Config,
     channel: ChannelId,

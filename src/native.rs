@@ -1365,6 +1365,7 @@ impl Native {
             .with_context(|| format!("create state directory {}", config.state_dir.display()))?;
 
         let native_feature_store = NativeFeatureStore::new(&config.state_dir);
+        crate::agy_settings::reconcile(config)?;
         let native_feature_overrides = native_feature_store.startup_overrides()?;
 
         let endpoint_dir = private_socket_endpoint_dir(&std::env::temp_dir());
@@ -1473,6 +1474,8 @@ impl Native {
             .arg(format!("mcp_servers.discodex_tasks.args={harness_args}"))
             .arg("--config")
             .arg("mcp_servers.discodex_tasks.enabled=true")
+            .arg("--config")
+            .arg("mcp_servers.discodex_tasks.default_tools_approval_mode=\"approve\"")
             .arg("--config")
             .arg("mcp_servers.discodex_tasks.tool_timeout_sec=180")
             .arg("--config")

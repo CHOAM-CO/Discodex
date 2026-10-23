@@ -1,4 +1,16 @@
 {
+  "agy_settings.reconcile": {
+    "en": "Could not apply the current Discodex-managed AGY settings.",
+    "ko": "Discodex 관리 AGY 설정을 현재 규칙에 맞게 적용하지 못했습니다.",
+    "zh": "无法应用当前的 Discodex 托管 AGY 设置。",
+    "ja": "現在の Discodex 管理 AGY 設定を適用できませんでした。"
+  },
+  "agy_settings.restore": {
+    "en": "Restore managed AGY settings: {path}",
+    "ko": "관리 AGY 설정 복원: {path}",
+    "zh": "恢复托管 AGY 设置：{path}",
+    "ja": "管理 AGY 設定の復元: {path}"
+  },
   "agy_settings.read": {
     "en": "Read AGY settings: {path}",
     "ko": "AGY 설정 읽기: {path}",
