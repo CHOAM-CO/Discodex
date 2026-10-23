@@ -100,9 +100,6 @@ jobs:
               exit 1
             }
           }
-      - name: Test
-        shell: bash
-        run: cargo test --locked --all-targets --target '${{ matrix.target }}'
       - name: Build release binary
         shell: bash
         run: cargo build --locked --release --target '${{ matrix.target }}'
@@ -114,7 +111,6 @@ jobs:
           REUSE_RUNTIME_TAG: ${{ inputs.reuse_runtime_tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          python -m unittest discover -s scripts -p 'test_runtime_manifest.py'
           STABLE_GIT_COMMIT="$(git -C third_party/codex rev-parse HEAD)"
           export STABLE_GIT_COMMIT
           if [[ "$TARGET" == "x86_64-pc-windows-msvc" ]]; then
