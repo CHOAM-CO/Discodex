@@ -57,11 +57,21 @@ jobs:
         uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: ${{ matrix.target }}
-      - name: Configure the official MSVC environment
+      - name: Configure the official MSVC host environment
         if: runner.os == 'Windows'
         uses: ./third_party/codex/.github/actions/setup-msvc-env
         with:
-          target: ${{ matrix.target }}
+          target: x86_64-pc-windows-msvc
+      - name: Use native MSVC linkers for host and target
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $HostLinker = (Resolve-Path (Join-Path $env:VCToolsInstallDir 'bin/Hostx64/x64/link.exe')).Path
+          $ArmLinker = (Resolve-Path (Join-Path $env:VCToolsInstallDir 'bin/Hostx64/arm64/link.exe')).Path
+          'VSCMD_ARG_TGT_ARCH=x64' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VSINSTALLDIR=$((Get-Item $env:VCINSTALLDIR).Parent.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$HostLinker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$ArmLinker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Install Linux package dependencies
         if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends binutils pkg-config libcap-dev libssl-dev

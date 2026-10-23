@@ -15,6 +15,10 @@ on:
         description: Optional OS to rebuild (linux, macos, windows); blank builds all
         required: false
         type: string
+      target:
+        description: Optional single target triple to rebuild; blank builds the selected OS targets
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -32,7 +36,8 @@ jobs:
         shell: bash
         env:
           PLATFORM_OS: ${{ inputs.platform_os }}
-        run: echo "matrix=$(python3 scripts/product_resources.py release-matrix --os "$PLATFORM_OS")" >> "$GITHUB_OUTPUT"
+          BUILD_TARGET: ${{ inputs.target }}
+        run: echo "matrix=$(python3 scripts/product_resources.py release-matrix --os "$PLATFORM_OS" --target "$BUILD_TARGET")" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.target }}
@@ -80,11 +85,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Configure the official MSVC environment
+      - name: Configure the official MSVC host environment
         if: runner.os == 'Windows'
         uses: ./third_party/codex/.github/actions/setup-msvc-env
         with:
-          target: ${{ matrix.target }}
+          target: x86_64-pc-windows-msvc
+      - name: Use native MSVC linkers for host and target
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $HostLinker = (Resolve-Path (Join-Path $env:VCToolsInstallDir 'bin/Hostx64/x64/link.exe')).Path
+          $ArmLinker = (Resolve-Path (Join-Path $env:VCToolsInstallDir 'bin/Hostx64/arm64/link.exe')).Path
+          'VSCMD_ARG_TGT_ARCH=x64' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VSINSTALLDIR=$((Get-Item $env:VCINSTALLDIR).Parent.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$HostLinker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_TARGET_AARCH64_PC_WINDOWS_MSVC_LINKER=$ArmLinker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Confirm release tag matches the worker runtime version
         shell: bash
         env:
