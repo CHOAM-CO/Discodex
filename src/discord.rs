@@ -530,12 +530,12 @@ pub(crate) struct BridgeState {
     pub installation_checks: Option<Arc<crate::installation_check::Checks>>,
     pub native: Native,
     pub voice: Arc<VoiceBridge>,
-    pub input_mode: RwLock<InputMode>,
+    pub input_mode: Arc<RwLock<InputMode>>,
     pub input_mode_path: PathBuf,
-    pub message_access: RwLock<crate::message_access::MessageAccess>,
+    pub message_access: Arc<RwLock<crate::message_access::MessageAccess>>,
     pub message_access_path: PathBuf,
     message_channel_parents: Mutex<HashMap<ChannelId, Option<u64>>>,
-    pub current_turn: Mutex<Option<String>>,
+    pub current_turn: Arc<Mutex<Option<String>>>,
     pub active_turns: Mutex<HashMap<String, String>>,
     // Access only while current_turn is held, with the active-turn state update.
     turn_observation_orders: Mutex<HashMap<String, (u64, u64)>>,
@@ -560,8 +560,7 @@ pub(crate) struct BridgeState {
     pub agy_setup: crate::discord_agy_setup::Controller,
     pub plugin_menus: Mutex<HashMap<String, commands::PluginMenuState>>,
     pub async_questions: Mutex<crate::async_questions::AsyncQuestionStore>,
-    pub settings_change_lock: Mutex<()>,
-    pub(crate) settings_operations: crate::settings_operation::SettingsOperations,
+    pub settings: Arc<crate::settings_service::SettingsAppService>,
 }
 
 pub(crate) struct StateKey;
@@ -1167,21 +1166,29 @@ pub async fn run(
     if changed_queue {
         save_queue(&queue_path, &queued_inputs)?;
     }
+    let updates = Arc::new(crate::discord_updates::UpdateController::new(
+        config.state_dir.clone(), config_path,
+    )?);
+    let input_mode = Arc::new(RwLock::new(input_mode));
+    let message_access = Arc::new(RwLock::new(message_access));
+    let current_turn = Arc::new(Mutex::new(None));
+    let settings = Arc::new(crate::settings_service::SettingsAppService::new(
+        config.clone(), native.clone(), voice.clone(), input_mode.clone(), input_mode_path.clone(),
+        message_access.clone(), message_access_path.clone(), current_turn.clone(),
+        installation_checks.clone(), updates.settings(),
+    ));
     let state = Arc::new(BridgeState {
-        updates: Arc::new(crate::discord_updates::UpdateController::new(
-            config.state_dir.clone(),
-            config_path,
-        )?),
-        input_mode: RwLock::new(input_mode),
+        updates,
+        input_mode,
         input_mode_path,
-        message_access: RwLock::new(message_access),
+        message_access,
         message_access_path,
         message_channel_parents: Mutex::new(HashMap::new()),
         config: config.clone(),
         installation_checks,
         native: native.clone(),
         voice,
-        current_turn: Mutex::new(None),
+        current_turn,
         active_turns: Mutex::new(HashMap::new()),
         turn_observation_orders: Mutex::new(HashMap::new()),
         queued_inputs: Mutex::new(queued_inputs),
@@ -1201,8 +1208,7 @@ pub async fn run(
         agy_setup: crate::discord_agy_setup::Controller::default(),
         plugin_menus: Mutex::new(HashMap::new()),
         async_questions: Mutex::new(async_questions),
-        settings_change_lock: Mutex::new(()),
-        settings_operations: crate::settings_operation::SettingsOperations::new(config.language),
+        settings,
     });
 
     let voice_tool = Arc::downgrade(&state.voice);
@@ -3493,13 +3499,7 @@ fn load_input_mode(path: &std::path::Path) -> anyhow::Result<Option<InputMode>> 
 }
 
 pub(crate) fn save_input_mode(path: &std::path::Path, mode: InputMode) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .context("Discord settings path has no parent")?;
-    fs::create_dir_all(parent)?;
-    let temp = path.with_extension("json.tmp");
-    fs::write(&temp, serde_json::to_vec(&mode)?)?;
-    fs::rename(&temp, path).with_context(|| format!("replace Discord settings {}", path.display()))
+    crate::settings_service::save_input_mode(path, mode)
 }
 
 fn save_queue(path: &std::path::Path, queue: &VecDeque<QueuedInput>) -> anyhow::Result<()> {

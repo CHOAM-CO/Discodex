@@ -446,7 +446,7 @@ async fn run(
                     Ok(ready) => {
                         // Serialize the final preference write with other settings; cancellation
                         // checked after acquiring the lock wins over a late verification result.
-                        let _settings = state.settings_change_lock.lock().await;
+                        let _settings = state.settings.settings_change_lock.lock().await;
                         if *cancellation.borrow() {
                             Stage::Finished(cancelled_notice(language).to_owned())
                         } else {

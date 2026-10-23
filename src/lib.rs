@@ -21,6 +21,8 @@ pub mod message_access;
 pub mod native;
 pub mod reply_files;
 pub(crate) mod settings_operation;
+pub(crate) mod settings_service;
+pub mod setup_interaction;
 pub mod state;
 pub mod voice;
 mod voice_input;

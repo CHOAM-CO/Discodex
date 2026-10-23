@@ -24,6 +24,10 @@ use crate::config::{Config, InputMode};
 use crate::i18n::{Language, MessageKey};
 use crate::message_access::{MessageAccess, MessagePolicy};
 use crate::native_features::{NativeFeaturePreferences, NativeFeatureStore};
+use crate::setup_interaction::{
+    SetupFuture, SetupInteractionPort, SetupProgress, SetupPrompt, check_cancelled, input_or_cancel,
+};
+use tokio::sync::watch;
 
 mod product;
 mod runtime;
@@ -40,40 +44,40 @@ const LEGACY_SERVICE_NAME: &str = "codex-worker-renewal";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct InstallationList {
-    format_version: u32,
+pub struct InstallationList {
+    pub format_version: u32,
     #[serde(default)]
-    language: Language,
-    profile: String,
-    native_source: NativeSource,
-    native_path: Option<PathBuf>,
+    pub language: Language,
+    pub profile: String,
+    pub native_source: NativeSource,
+    pub native_path: Option<PathBuf>,
     #[serde(default)]
-    codex_home: Option<PathBuf>,
+    pub codex_home: Option<PathBuf>,
     /// A newly chosen installer action, consumed after applying it. Reinstalls
     /// otherwise preserve the current Discord settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    antigravity: Option<AntigravityInstallChoice>,
-    discord_app: String,
-    guild_id: u64,
-    home_channel_id: u64,
-    transcript_channel_id: u64,
-    operator_ids: Vec<u64>,
+    pub antigravity: Option<AntigravityInstallChoice>,
+    pub discord_app: String,
+    pub guild_id: u64,
+    pub home_channel_id: u64,
+    pub transcript_channel_id: u64,
+    pub operator_ids: Vec<u64>,
     #[serde(default)]
-    message_access: Option<MessageAccess>,
+    pub message_access: Option<MessageAccess>,
     /// Set only by a newly generated plan; consumed after the selected policy is
     /// written to durable state so subsequent reinstalls preserve runtime choices.
     #[serde(default)]
-    message_access_plan_pending: bool,
-    voice_channel_ids: Vec<u64>,
-    project_dir: PathBuf,
-    model: Option<String>,
-    requested_permission_profile: String,
-    created_at: String,
+    pub message_access_plan_pending: bool,
+    pub voice_channel_ids: Vec<u64>,
+    pub project_dir: PathBuf,
+    pub model: Option<String>,
+    pub requested_permission_profile: String,
+    pub created_at: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-enum AntigravityInstallChoice {
+pub enum AntigravityInstallChoice {
     Disabled,
     SharedSettings,
     SeparateSettings,
@@ -91,11 +95,18 @@ impl AntigravityInstallChoice {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
-enum NativeSource {
+pub enum NativeSource {
     DesktopApp,
     ExistingCli,
     OfficialCore,
     ManagedCore,
+}
+
+pub struct InstallOutcome {
+    pub report: Option<crate::installation_check::Report>,
+    /// Includes the existing durable native thread ID comparison, in addition
+    /// to Report::ready(). A registered service alone is not installation ready.
+    pub ready: bool,
 }
 
 fn merge_install_config(
@@ -1453,6 +1464,141 @@ fn install_at(
     language: Language,
     previous_worker_path_hint: Option<&Path>,
 ) -> Result<()> {
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    install_at_with_interaction(roots, language, previous_worker_path_hint, &CliSetupAdapter, cancel_rx)
+        .map(|_| ())
+}
+
+/// Desktop installation runs the same owned-resource flow as the CLI, on a
+/// blocking worker because archive preparation and OS service commands are sync.
+/// Dropping the UI must close or signal cancel_rx before service registration.
+pub async fn install_with_interaction(
+    plan: InstallationList,
+    interaction: std::sync::Arc<dyn SetupInteractionPort>,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<InstallOutcome> {
+    tokio::task::spawn_blocking(move || {
+        check_cancelled(&cancel_rx)?;
+        let roots = roots()?;
+        let language = env_language()?.unwrap_or(plan.language);
+        save_installation_plan(&roots, &plan)?;
+        install_at_with_interaction(roots, language, None, interaction.as_ref(), cancel_rx)
+    }).await?
+}
+
+fn save_installation_plan(roots: &Roots, plan: &InstallationList) -> Result<()> {
+    validate_existing_installation_plan(
+        &roots.config.join("ownership.json"),
+        &roots.config.join("config.json"),
+        &plan.profile,
+    )?;
+    create_private_dir(&roots.config)?;
+    write_json_private(&roots.config.join("installation-list.json"), plan)
+}
+
+fn setup_message(interaction: &dyn SetupInteractionPort, message: String) -> Result<()> {
+    interaction.on_progress(SetupProgress::Message(message))
+}
+
+fn setup_input(
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: &watch::Receiver<bool>,
+    prompt: SetupPrompt,
+) -> Result<String> {
+    run_async(input_or_cancel(interaction.request_input(prompt), cancel_rx.clone()))
+}
+
+struct CliSetupAdapter;
+
+impl SetupInteractionPort for CliSetupAdapter {
+    fn on_progress(&self, progress: SetupProgress) -> Result<()> {
+        match progress {
+            SetupProgress::Message(message) => println!("{message}"),
+            SetupProgress::Diagnostic(message) => eprintln!("{message}"),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn request_input(&self, prompt: SetupPrompt) -> SetupFuture<'_, String> {
+        Box::pin(async move {
+            if prompt.secret {
+                Ok(rpassword::prompt_password(&prompt.text)?)
+            } else {
+                ask(&prompt.text, &prompt.default)
+            }
+        })
+    }
+
+    fn request_installation_plan(&self, language: Language) -> SetupFuture<'_, InstallationList> {
+        Box::pin(async move {
+            print_plan_for_language(language)?;
+            read_json(&roots()?.config.join("installation-list.json"))
+        })
+    }
+
+    fn retry_installation_check(&self, language: Language) -> SetupFuture<'_, bool> {
+        Box::pin(async move {
+            if !io::stdin().is_terminal() {
+                return Ok(false);
+            }
+            print!("{}", language.message(MessageKey::InstallPressEnterToReadResultsAgainOrQToExitW));
+            io::stdout().flush()?;
+            let mut input = String::new();
+            let read = io::stdin().read_line(&mut input)?;
+            Ok(read != 0 && !input.trim().eq_ignore_ascii_case("q"))
+        })
+    }
+
+    fn open_mac_fda_guidance(&self, executable: PathBuf, language: Language) -> SetupFuture<'_, ()> {
+        Box::pin(async move {
+            #[cfg(target_os = "macos")]
+            {
+                require_mac_fda_interactive_terminal(
+                    &executable,
+                    language.message(MessageKey::InstallDiagnosticsFdaSetupOperationReason),
+                )?;
+                open_mac_permissions_for_executable(&executable).with_context(|| {
+                    language.message(MessageKey::InstallDiagnosticsOpenFdaGuidance)
+                        .replace("{0}", &executable.display().to_string())
+                })?;
+                println!("{}", language.message(MessageKey::InstallSelectedSignedWorkerExecutable)
+                    .replace("{}", &executable.display().to_string()));
+                println!("{}", language.message(MessageKey::InstallMacosMayAskThisExecutableForProtectedFold));
+                println!("{}", language.message(MessageKey::InstallIfYouGrantFullDiskAccessSelectTheExactE));
+                print!("{}", language.message(MessageKey::InstallContinueAfterFdaGuidanceEnterCancelQ));
+                io::stdout().flush()?;
+                let mut answer = String::new();
+                let read = io::stdin().read_line(&mut answer)?;
+                if !mac_fda_guidance_answer(read, &answer)? {
+                    bail!("{}", language.message(MessageKey::InstallDiagnosticsMacFdaCancelled)
+                        .replace("{0}", &executable.display().to_string()));
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (executable, language);
+            Ok(())
+        })
+    }
+
+    fn prepare_antigravity(
+        &self,
+        config: crate::agy_setup::SetupConfig,
+        language: Language,
+        cancel_rx: watch::Receiver<bool>,
+    ) -> SetupFuture<'_, crate::agy_setup::SetupReady> {
+        Box::pin(prepare_antigravity_at_console(config, language, cancel_rx))
+    }
+}
+
+fn install_at_with_interaction(
+    roots: Roots,
+    language: Language,
+    previous_worker_path_hint: Option<&Path>,
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<InstallOutcome> {
+    check_cancelled(&cancel_rx)?;
     fs::create_dir_all(&roots.config).with_context(|| {
         format!(
             "{}",
@@ -1474,11 +1620,14 @@ fn install_at(
 
     let list_path = roots.config.join("installation-list.json");
     if !list_path.exists() {
-        println!(
+        setup_message(interaction, format!(
             "{}",
             language.message(MessageKey::InstallNoInstallationListIsSavedCreateItBeforeS)
-        );
-        print_plan_for_language(language)?;
+        ))?;
+        let plan = run_async(input_or_cancel(
+            interaction.request_installation_plan(language), cancel_rx.clone(),
+        ))?;
+        save_installation_plan(&roots, &plan)?;
     }
     let list: InstallationList = read_json(&list_path)?;
     let config_path = roots.config.join("config.json");
@@ -1545,6 +1694,8 @@ fn install_at(
     let _ = previous_worker_path;
     // The selected release is installed before any profile/service changes.
     let managed_runtime = runtime::prepare(&roots.data)?;
+    check_cancelled(&cancel_rx)?;
+    interaction.on_progress(SetupProgress::RuntimePrepared)?;
     let codex_path = managed_runtime.executable.clone();
     let codex_version = Some(managed_runtime.manifest.codex_commit.clone());
     let mut ownership = Ownership {
@@ -1635,8 +1786,12 @@ fn install_at(
         saved_token,
     )?;
     let token = if token.trim().is_empty() {
-        rpassword::prompt_password(language.message(MessageKey::InstallDiscordBotTokenInputHidden))
-            .context(language.message(MessageKey::InstallDiagnosticsReadDiscordTokenPrivately))?
+        setup_input(interaction, &cancel_rx, SetupPrompt {
+            language,
+            text: language.message(MessageKey::InstallDiscordBotTokenInputHidden).to_owned(),
+            default: String::new(),
+            secret: true,
+        }).context(language.message(MessageKey::InstallDiagnosticsReadDiscordTokenPrivately))?
     } else {
         token
     };
@@ -1646,6 +1801,7 @@ fn install_at(
             language.message(MessageKey::InstallDiagnosticsDiscordTokenEmpty)
         );
     }
+    check_cancelled(&cancel_rx)?;
     write_secret(&credentials_path, token.trim())?;
 
     let mut config = merge_install_config(
@@ -1669,17 +1825,17 @@ fn install_at(
         set_private_file(&path)?;
     }
 
-    println!("Config saved at {}", config_path.display());
-    println!(
+    setup_message(interaction, format!("Config saved at {}", config_path.display()))?;
+    setup_message(interaction, format!(
         "Selected Codex: {} ({})",
         codex_path.display(),
         codex_version.as_deref().unwrap_or("version not reported")
-    );
+    ))?;
 
     write_json_private(&ownership_path, &ownership)?;
     #[cfg(target_os = "macos")]
     if !mac_worker_path_unchanged {
-        request_mac_fda_guidance(&ownership_path, language)?;
+        request_mac_fda_guidance_with_interaction(&ownership_path, language, interaction, &cancel_rx)?;
     }
     let discord = run_async(crate::commands::validate_discord(&config))
         .context(language.message(MessageKey::InstallDiagnosticsDiscordProfileCheckFailed))?;
@@ -1731,34 +1887,35 @@ fn install_at(
     }
     for channel in &discord.channels {
         for warning in &channel.warnings {
-            eprintln!(
+            interaction.on_progress(SetupProgress::Diagnostic(format!(
                 "{}",
                 format!(
                     "{}: {warning}",
                     language.message(MessageKey::InstallDiscordChannelPermissionCheck)
                 )
-            );
+            )))?;
         }
     }
-    println!(
+    setup_message(interaction, format!(
         "{}",
         language.message(MessageKey::InstallVerifiedTheBotSCurrentRoleAndChannelOver)
-    );
-    println!(
+    ))?;
+    setup_message(interaction, format!(
         "Discord API authenticated bot {} and can read guild {} ({}).",
         discord.bot_id, discord.guild_id, discord.guild_name
-    );
+    ))?;
     run_async(crate::commands::register_commands(&config)).context(
         language.message(MessageKey::InstallDiagnosticsDiscordCommandRegistrationFailed),
     )?;
-    configure_antigravity_install(&config, list.antigravity)?;
-    run_async(configure_native_profile(&mut config, &config_path)).context(
+    configure_antigravity_install_with_interaction(&config, list.antigravity, interaction, &cancel_rx)?;
+    run_async(configure_native_profile_with_interaction(&mut config, &config_path, interaction, cancel_rx.clone())).context(
         language.message(MessageKey::InstallDiagnosticsCodexAccountOrPermissionCheckFailed),
     )?;
     let previous_run = crate::installation_check::read(&config)
         .ok()
         .flatten()
         .map(|report| report.run_id);
+    check_cancelled(&cancel_rx)?;
     install_user_service(
         &config_path,
         &mut ownership,
@@ -1766,6 +1923,7 @@ fn install_at(
         language,
     )?;
     write_json_private(&ownership_path, &ownership)?;
+    interaction.on_progress(SetupProgress::ServiceStarted)?;
     let mut installed_list = list.clone();
     installed_list.message_access_plan_pending = false;
     installed_list.native_source = NativeSource::ManagedCore;
@@ -1776,20 +1934,23 @@ fn install_at(
     if let Some(previous) = &previous_ownership {
         retire_previous_runtime(previous, &managed_runtime);
     }
-    println!(
+    setup_message(interaction, format!(
         "{}",
         language.message(MessageKey::InstallCodexProviderAuthenticationSettingsWereChec)
-    );
-    confirm_installed_features(&config, previous_run)?;
-    Ok(())
+    ))?;
+    confirm_installed_features_with_interaction(&config, previous_run, interaction)
 }
 
-fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> Result<()> {
+fn confirm_installed_features_with_interaction(
+    config: &Config,
+    previous_run: Option<String>,
+    interaction: &dyn SetupInteractionPort,
+) -> Result<InstallOutcome> {
     let language = configured_language(config.language)?;
-    println!(
+    setup_message(interaction, format!(
         "{}",
         language.message(MessageKey::InstallSendARealTextMessageInDiscordAndTrySett)
-    );
+    ))?;
     loop {
         let report = match crate::installation_check::read(config) {
             Ok(Some(report)) if Some(report.run_id.as_str()) != previous_run.as_deref() => {
@@ -1797,7 +1958,7 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
             }
             Ok(_) => None,
             Err(error) => {
-                eprintln!(
+                interaction.on_progress(SetupProgress::Diagnostic(format!(
                     "{}",
                     format!(
                         "{}: {error:#}",
@@ -1805,22 +1966,23 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
                             MessageKey::InstallCouldNotReadInstallationFeatureObservations
                         )
                     )
-                );
+                )))?;
                 None
             }
         };
-        if let Some(report) = report {
-            println!("{}", report.summary(language));
+        interaction.on_progress(SetupProgress::InstallationReport(report.clone()))?;
+        if let Some(report) = &report {
+            setup_message(interaction, format!("{}", report.summary(language)))?;
             for (name, result) in report.features(language) {
                 match result {
-                    crate::installation_check::Observation::Failed { error } => eprintln!(
+                    crate::installation_check::Observation::Failed { error } => interaction.on_progress(SetupProgress::Diagnostic(format!(
                         "{name}: {} — {error}",
                         language.message(MessageKey::InstallFailed)
-                    ),
-                    crate::installation_check::Observation::Incomplete { reason } => println!(
+                    )))?,
+                    crate::installation_check::Observation::Incomplete { reason } => setup_message(interaction, format!(
                         "{name}: {} — {reason}",
                         language.message(MessageKey::InstallIncomplete)
-                    ),
+                    ))?,
                     _ => {}
                 }
             }
@@ -1832,37 +1994,21 @@ fn confirm_installed_features(config: &Config, previous_run: Option<String>) -> 
                     .and_then(|state| state.thread_id.as_deref())
                     == Some(report.thread_id.as_str())
             {
-                println!(
+                setup_message(interaction, format!(
                     "{}",
                     language.message(MessageKey::InstallReadyThisInstallSuccessfullyExercisedTextS)
-                );
-                return Ok(());
+                ))?;
+                return Ok(InstallOutcome { report: Some(report.clone()), ready: true });
             }
         } else {
-            println!(
+            setup_message(interaction, format!(
                 "{}",
                 language.message(MessageKey::InstallNoFeatureResultFromTheCurrentInstallHasB)
-            );
+            ))?;
         }
-        if !io::stdin().is_terminal() {
-            println!(
-                "{}",
-                language.message(MessageKey::InstallSettingsAndConversationHistoryWerePreserved)
-            );
-            return Ok(());
-        }
-        print!(
-            "{}",
-            language.message(MessageKey::InstallPressEnterToReadResultsAgainOrQToExitW)
-        );
-        io::stdout().flush()?;
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input)? == 0 || input.trim().eq_ignore_ascii_case("q") {
-            println!(
-                "{}",
-                language.message(MessageKey::InstallSettingsAndConversationHistoryWerePreserved)
-            );
-            return Ok(());
+        if !run_async(interaction.retry_installation_check(language))? {
+            setup_message(interaction, language.message(MessageKey::InstallSettingsAndConversationHistoryWerePreserved).to_owned())?;
+            return Ok(InstallOutcome { report, ready: false });
         }
     }
 }
@@ -2117,6 +2263,17 @@ fn mac_fda_guidance_answer(read_count: usize, answer: &str) -> Result<bool> {
 
 #[cfg(target_os = "macos")]
 fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result<()> {
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    request_mac_fda_guidance_with_interaction(ownership_path, language, &CliSetupAdapter, &cancel_rx)
+}
+
+#[cfg(target_os = "macos")]
+fn request_mac_fda_guidance_with_interaction(
+    ownership_path: &Path,
+    language: Language,
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: &watch::Receiver<bool>,
+) -> Result<()> {
     use crate::mac_signing::{expected_requirement, verify_binary};
 
     let (ownership, executable) = owned_mac_worker(ownership_path)?;
@@ -2131,49 +2288,9 @@ fn request_mac_fda_guidance(ownership_path: &Path, language: Language) -> Result
     }
     verify_binary(&executable, &requirement)
         .context(language.message(MessageKey::InstallDiagnosticsVerifyOwnedWorkerBeforeFda))?;
-    require_mac_fda_interactive_terminal(
-        &executable,
-        language.message(MessageKey::InstallDiagnosticsFdaSetupOperationReason),
-    )?;
-    open_mac_permissions_for_executable(&executable).with_context(|| {
-        format!(
-            "{}",
-            language
-                .message(MessageKey::InstallDiagnosticsOpenFdaGuidance)
-                .replace("{0}", &executable.display().to_string())
-        )
-    })?;
-    println!(
-        "{}",
-        language
-            .message(MessageKey::InstallSelectedSignedWorkerExecutable)
-            .replace("{}", &executable.display().to_string())
-    );
-    println!(
-        "{}",
-        language.message(MessageKey::InstallMacosMayAskThisExecutableForProtectedFold)
-    );
-    println!(
-        "{}",
-        language.message(MessageKey::InstallIfYouGrantFullDiskAccessSelectTheExactE)
-    );
-    print!(
-        "{}",
-        language.message(MessageKey::InstallContinueAfterFdaGuidanceEnterCancelQ)
-    );
-    io::stdout().flush()?;
-    let mut answer = String::new();
-    let read = io::stdin().read_line(&mut answer)?;
-    if mac_fda_guidance_answer(read, &answer)? {
-        Ok(())
-    } else {
-        bail!(
-            "{}",
-            language
-                .message(MessageKey::InstallDiagnosticsMacFdaCancelled)
-                .replace("{0}", &executable.display().to_string())
-        )
-    }
+    run_async(input_or_cancel(
+        interaction.open_mac_fda_guidance(executable, language), cancel_rx.clone(),
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -3844,6 +3961,17 @@ fn configure_antigravity_install(
     config: &Config,
     requested: Option<AntigravityInstallChoice>,
 ) -> Result<()> {
+    let (_cancel_tx, cancel_rx) = watch::channel(false);
+    configure_antigravity_install_with_interaction(config, requested, &CliSetupAdapter, &cancel_rx)
+}
+
+fn configure_antigravity_install_with_interaction(
+    config: &Config,
+    requested: Option<AntigravityInstallChoice>,
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: &watch::Receiver<bool>,
+) -> Result<()> {
+    check_cancelled(cancel_rx)?;
     let store = NativeFeatureStore::new(&config.state_dir);
     let choice = match requested {
         Some(choice) => choice,
@@ -3857,7 +3985,7 @@ fn configure_antigravity_install(
     };
     crate::agy_settings::prepare(config, share_settings)?;
     let runtime = crate::agy::Runtime::for_config(config)?;
-    run_async(prepare_antigravity_at_console(
+    run_async(interaction.prepare_antigravity(
         crate::agy_setup::SetupConfig {
             executable: runtime.executable,
             cwd: config.project_dir.clone(),
@@ -3865,18 +3993,20 @@ fn configure_antigravity_install(
             arguments: runtime.arguments,
         },
         config.language,
+        cancel_rx.clone(),
     ))?;
+    check_cancelled(cancel_rx)?;
     // Installation and sign-in can take time. Preserve any other settings saved
     // while the user completes the native authentication flow.
     let mut preferences = store.read()?;
     apply_antigravity_ready(&mut preferences, share_settings);
     store.apply(&preferences)?;
-    println!(
+    setup_message(interaction, format!(
         "{}",
         config
             .language
             .message(MessageKey::InstallAntigravityIsInstalledSignedInAndEnabled)
-    );
+    ))?;
     Ok(())
 }
 
@@ -3965,6 +4095,7 @@ fn antigravity_terminal_input(
 async fn prepare_antigravity_at_console(
     config: crate::agy_setup::SetupConfig,
     language: Language,
+    mut external_cancel: watch::Receiver<bool>,
 ) -> Result<crate::agy_setup::SetupReady> {
     use crate::agy_setup::{InputDisposition, SetupCancelled, SetupInput, SetupProgress};
     use std::sync::{
@@ -4062,9 +4193,14 @@ async fn prepare_antigravity_at_console(
     let mut input_unavailable = false;
     let mut signal_error = None;
     let mut signal_received = false;
+    let mut external_cancelled = false;
     let result = loop {
         tokio::select! {
             result = &mut setup => break result,
+            _ = crate::setup_interaction::cancelled(&mut external_cancel), if !external_cancelled => {
+                external_cancelled = true;
+                let _ = cancel_tx.send(true);
+            }
             signal = tokio::signal::ctrl_c(), if !signal_received => {
                 signal_error = signal.err();
                 signal_received = true;
@@ -5588,10 +5724,16 @@ fn remove_registered_commands(
     })
 }
 
-async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Result<()> {
+async fn configure_native_profile_with_interaction(
+    config: &mut Config,
+    config_path: &Path,
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: watch::Receiver<bool>,
+) -> Result<()> {
+    check_cancelled(&cancel_rx)?;
     let native = crate::native::Native::connect(config).await?;
     let result = async {
-        ensure_native_account(&native, config.language).await?;
+        ensure_native_account(&native, config.language, interaction, cancel_rx.clone()).await?;
 
         let models = native.model_catalog().await.context(crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsNativeModelCatalogRead))?;
         if let Some(selected) = &config.model {
@@ -5601,10 +5743,10 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
         }
 
         let profiles = native.permission_profiles().await.context(crate::i18n::Language::English.message(MessageKey::InstallDiagnosticsNativePermissionProfilesRead))?;
-        let profile_id = choose_permission_profile(&profiles, config.permissions.as_deref(), config.language)?;
+        let profile_id = choose_permission_profile_with_interaction(&profiles, config.permissions.as_deref(), config.language, interaction, &cancel_rx)?;
         config.permissions = Some(profile_id.clone());
         write_json_private(config_path, config)?;
-        println!("The live permission catalog allows profile `{profile_id}`; its exact ID was saved for the runtime's first thread.");
+        setup_message(interaction, format!("The live permission catalog allows profile `{profile_id}`; its exact ID was saved for the runtime's first thread."))?;
         Ok::<(), anyhow::Error>(())
     }.await;
     let shutdown = native.shutdown().await;
@@ -5619,17 +5761,21 @@ async fn configure_native_profile(config: &mut Config, config_path: &Path) -> Re
 async fn ensure_native_account(
     native: &crate::native::Native,
     language: Language,
+    interaction: &dyn SetupInteractionPort,
+    mut cancel_rx: watch::Receiver<bool>,
 ) -> Result<serde_json::Value> {
+    check_cancelled(&cancel_rx)?;
     let account_read = || native.request("account/read", serde_json::json!({}));
     let mut response = account_read().await.context(
         crate::i18n::Language::English
             .message(crate::i18n::MessageKey::InstallDiagnosticB8e810f6a08f),
     )?;
     if !crate::model_catalog::needs_chatgpt_login(&response) {
-        println!(
+        setup_message(interaction, format!(
             "{}",
             language.message(MessageKey::InstallUsingTheActiveCodexProviderAndItsExisting)
-        );
+        ))?;
+        interaction.on_progress(SetupProgress::CodexAccountReady)?;
         return Ok(response);
     }
 
@@ -5659,15 +5805,19 @@ async fn ensure_native_account(
             crate::i18n::Language::English
                 .message(crate::i18n::MessageKey::InstallDiagnostic804d161cfb96),
         )?;
-    println!(
+    interaction.on_progress(SetupProgress::CodexLogin {
+        login_id: login_id.clone(),
+        auth_url: auth_url.to_owned(),
+    })?;
+    setup_message(interaction, format!(
         "Complete ChatGPT sign-in in the official Codex login page. MFA and other identity checks remain user interactions."
-    );
-    println!("Official Codex authorization URL: {auth_url}");
+    ))?;
+    setup_message(interaction, format!("Official Codex authorization URL: {auth_url}"))?;
     if let Err(error) = open_login_url(auth_url) {
-        eprintln!("Could not open a browser automatically: {error:#}");
+        interaction.on_progress(SetupProgress::Diagnostic(format!("Could not open a browser automatically: {error:#}")))?;
     }
 
-    let completed = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), async {
+    let completion = tokio::time::timeout(std::time::Duration::from_secs(30 * 60), async {
         loop {
             match events.recv().await {
                 Ok(event)
@@ -5696,12 +5846,18 @@ async fn ensure_native_account(
                 }
             }
         }
-    })
-    .await
-    .context(
-        crate::i18n::Language::English
-            .message(crate::i18n::MessageKey::InstallDiagnosticF7a7a98ad83b),
-    )?;
+    });
+    let completed = tokio::select! {
+        biased;
+        _ = crate::setup_interaction::cancelled(&mut cancel_rx) => {
+            native.request("account/login/cancel", serde_json::json!({"loginId": login_id.clone()})).await?;
+            return Err(crate::setup_interaction::SetupCancelled.into());
+        }
+        result = completion => result.context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticF7a7a98ad83b),
+        )?,
+    };
     completed?;
 
     response = account_read().await.context(
@@ -5720,7 +5876,8 @@ async fn ensure_native_account(
                 .replace("{0}", &serde_json::to_string(&response)?)
         );
     }
-    println!("Codex account/read now confirms a ChatGPT account.");
+    setup_message(interaction, format!("Codex account/read now confirms a ChatGPT account."))?;
+    interaction.on_progress(SetupProgress::CodexAccountReady)?;
     Ok(response)
 }
 
@@ -5754,7 +5911,22 @@ fn open_login_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+fn open_login_url(url: &str) -> Result<()> {
+    Command::new("open")
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context(
+            crate::i18n::Language::English
+                .message(crate::i18n::MessageKey::InstallDiagnosticFeda221fb8f4),
+        )?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn open_login_url(_url: &str) -> Result<()> {
     bail!(
         crate::i18n::Language::English
@@ -5818,10 +5990,12 @@ fn default_permission_profile_id(entries: &[serde_json::Value]) -> Option<String
         .map(str::to_owned)
 }
 
-fn choose_permission_profile(
+fn choose_permission_profile_with_interaction(
     catalog: &serde_json::Value,
     preferred_id: Option<&str>,
     language: Language,
+    interaction: &dyn SetupInteractionPort,
+    cancel_rx: &watch::Receiver<bool>,
 ) -> Result<String> {
     let entries = catalog
         .get("data")
@@ -5831,18 +6005,18 @@ fn choose_permission_profile(
                 .message(MessageKey::InstallDiagnosticsPermissionProfileDataMissing),
         )?;
     if let Some(id) = preferred_permission_profile_id(entries, preferred_id) {
-        println!("The current native catalog still allows saved permission profile `{id}`.");
+        setup_message(interaction, format!("The current native catalog still allows saved permission profile `{id}`."))?;
         return Ok(id);
     }
     let default_id = default_permission_profile_id(entries).context(
         crate::i18n::Language::English
             .message(MessageKey::InstallDiagnosticsNativePermissionProfilesMissing),
     )?;
-    println!(
+    setup_message(interaction, format!(
         "Choose an allowed permission profile by its exact ID. Press Enter to use the default."
-    );
+    ))?;
     for item in entries {
-        println!(
+        setup_message(interaction, format!(
             "  id={} allowed={} description={}",
             item.get("id")
                 .and_then(serde_json::Value::as_str)
@@ -5851,23 +6025,24 @@ fn choose_permission_profile(
             item.get("description")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
-        );
+        ))?;
     }
     loop {
-        let selected = ask_text(
+        let selected = setup_input(interaction, cancel_rx, SetupPrompt {
             language,
-            MessageKey::InstallAllowedPermissionProfileId,
-            &default_id,
-        )?;
+            text: language.message(MessageKey::InstallAllowedPermissionProfileId).to_owned(),
+            default: default_id.clone(),
+            secret: false,
+        })?;
         if let Some(item) = entries.iter().find(|item| {
             item.get("id").and_then(serde_json::Value::as_str) == Some(selected.as_str())
         }) {
             if permission_profile_is_allowed(item) {
                 return Ok(selected);
             }
-            println!("That profile is not allowed by the current native catalog.");
+            setup_message(interaction, format!("That profile is not allowed by the current native catalog."))?;
         } else {
-            println!("That ID is absent from the current native catalog.");
+            setup_message(interaction, format!("That ID is absent from the current native catalog."))?;
         }
     }
 }

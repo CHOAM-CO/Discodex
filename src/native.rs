@@ -256,14 +256,19 @@ fn is_bridge_control_event(event: &Value) -> bool {
 
 #[derive(Debug)]
 pub(crate) struct NativeRequestError {
+    original: Value,
     method: String,
     code: Option<i64>,
     message: String,
 }
 
 impl NativeRequestError {
+    pub(crate) fn original_message(&self) -> &str { &self.message }
+    pub(crate) fn original_code(&self) -> Option<&Value> { self.original.get(NATIVE_ERROR_CODE_FIELD) }
+    pub(crate) fn original_status(&self) -> Option<&Value> { self.original.get("status") }
     pub(crate) fn from_response(method: String, error: &Value) -> Self {
         Self {
+            original: error.clone(),
             method,
             code: error.get(NATIVE_ERROR_CODE_FIELD).and_then(Value::as_i64),
             message: error
@@ -4341,6 +4346,7 @@ fn spawn_reader(
                 }
                 for pending in pending {
                     let _ = pending.sender.send(Err(NativeRequestError {
+                        original: Value::Null,
                         method: pending.method,
                         code: None,
                         message: if map_poisoned {

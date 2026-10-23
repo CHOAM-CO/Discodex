@@ -38,7 +38,7 @@ struct Activity {
 }
 
 pub(crate) struct UpdateController {
-    store: Mutex<UpdateStore>,
+    store: Arc<Mutex<UpdateStore>>,
     state_dir: PathBuf,
     config_path: PathBuf,
     check_lock: Mutex<()>,
@@ -46,7 +46,7 @@ pub(crate) struct UpdateController {
     confirmations: Mutex<HashMap<String, UpdateConfirmation>>,
     initialization_error: Option<String>,
     activity: SyncMutex<Activity>,
-    wake: Notify,
+    wake: Arc<Notify>,
     handlers_finished: Notify,
 }
 
@@ -124,7 +124,7 @@ impl UpdateController {
             }
         }
         Ok(Self {
-            store: Mutex::new(store),
+            store: Arc::new(Mutex::new(store)),
             state_dir,
             config_path,
             check_lock: Mutex::new(()),
@@ -137,7 +137,7 @@ impl UpdateController {
                 applying: false,
                 updater_started: false,
             }),
-            wake: Notify::new(),
+            wake: Arc::new(Notify::new()),
             handlers_finished: Notify::new(),
         })
     }
@@ -241,20 +241,17 @@ impl UpdateController {
         state.last = Instant::now();
     }
 
-    pub(crate) async fn muted(&self) -> bool {
-        self.store.lock().await.snapshot().muted
+    pub(crate) fn settings(&self) -> crate::settings_service::UpdateSettings {
+        crate::settings_service::UpdateSettings {
+            store: self.store.clone(), wake: self.wake.clone(),
+            initialization_error: self.initialization_error.clone(),
+        }
     }
 
+    pub(crate) async fn muted(&self) -> bool { self.settings().muted().await }
+
     pub(crate) async fn set_muted(&self, muted: bool, language: Language) -> Result<()> {
-        if let Some(error) = &self.initialization_error {
-            bail!(
-                "{}",
-                localized_update_error(language, MessageKey::DiscordUpdatesStateUnavailable, error)
-            );
-        }
-        self.store.lock().await.set_muted(muted)?;
-        self.wake.notify_one();
-        Ok(())
+        self.settings().set_muted(muted, language).await
     }
 
     async fn check_now(&self) -> Result<()> {
