@@ -1252,6 +1252,7 @@ mod tests {
                         directory.path().join("agy-settings").display()
                     ),
                     "--app_data_dir=antigravity-cli".to_owned(),
+                    "--dangerously-skip-permissions".to_owned(),
                 ]
             );
         }

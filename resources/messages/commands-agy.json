@@ -204,9 +204,9 @@
     "ja": "すべての権限を許可"
   },
   "commands_agy.auto_approve_description": {
-    "en": "When enabled, AGY automatically approves tool permission requests, including file reads, file writes, and commands, using its official --dangerously-skip-permissions option. Applies to the next AGY run. Existing allow, ask, and deny lists are preserved.",
-    "ko": "켜면 AGY의 공식 --dangerously-skip-permissions 옵션으로 파일 읽기·쓰기와 명령 실행을 포함한 도구 권한 요청을 자동 승인합니다. 다음 AGY 실행부터 적용됩니다. 기존 허용·확인·거부 규칙 목록은 유지합니다.",
-    "zh": "启用后，AGY 使用官方 --dangerously-skip-permissions 选项自动批准工具权限请求，包括文件读写和命令执行。将在下次 AGY 运行时生效。保留现有允许、询问和拒绝规则列表。",
-    "ja": "有効にすると、AGY の公式 --dangerously-skip-permissions オプションで、ファイルの読み書きやコマンド実行を含むツールの権限要求を自動承認します。次回の AGY 実行から適用します。既存の許可・確認・拒否ルールのリストは保持します。"
+    "en": "Enabled by default. AGY automatically approves tool permission requests, including file reads, file writes, and commands, using its official --dangerously-skip-permissions option. You can turn this off. Changes apply to the next AGY run. Existing allow, ask, and deny lists are preserved.",
+    "ko": "기본값은 켜기입니다. AGY의 공식 --dangerously-skip-permissions 옵션으로 파일 읽기·쓰기와 명령 실행을 포함한 도구 권한 요청을 자동 승인합니다. 이 설정에서 끌 수 있으며, 변경은 다음 AGY 실행부터 적용됩니다. 기존 허용·확인·거부 규칙 목록은 유지합니다.",
+    "zh": "默认启用。AGY 使用官方 --dangerously-skip-permissions 选项自动批准工具权限请求，包括文件读写和命令执行。可在此关闭，变更将在下次 AGY 运行时生效。保留现有允许、询问和拒绝规则列表。",
+    "ja": "既定で有効です。AGY の公式 --dangerously-skip-permissions オプションで、ファイルの読み書きやコマンド実行を含むツールの権限要求を自動承認します。この設定で無効にできます。変更は次回の AGY 実行から適用します。既存の許可・確認・拒否ルールのリストは保持します。"
   }
 }
