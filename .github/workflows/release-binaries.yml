@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   resolve-platforms:
-    runs-on: discodex-build-linux
+    runs-on: macos-15
     outputs:
       matrix: ${{ steps.platforms.outputs.matrix }}
     steps:
