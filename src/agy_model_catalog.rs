@@ -160,6 +160,51 @@ pub(crate) fn families(catalog: &crate::agy::Catalog) -> Vec<Family> {
     result
 }
 
+/// Project discovered IDs and model-specific efforts for the core's external catalog.
+pub(crate) fn core_metadata(catalog: &crate::agy::Catalog) -> serde_json::Value {
+    let mut rows = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut add =
+        |model: &str, display_name: &str, efforts: &[String], multi_agent_effort: Option<&str>| {
+            if seen.insert(model.to_owned()) {
+                let mut row = serde_json::json!({
+                        "model": model,
+                        "display_name": display_name,
+                        "supported_reasoning_efforts": efforts,
+                });
+                if let Some(effort) = multi_agent_effort {
+                    row["multi_agent_reasoning_effort"] = serde_json::json!(effort);
+                }
+                rows.push(row);
+            }
+        };
+    for family in families(catalog) {
+        let mut efforts: Vec<String> = Vec::new();
+        for variant in &family.variants {
+            if !efforts
+                .iter()
+                .any(|effort| effort.eq_ignore_ascii_case(&variant.effort))
+            {
+                efforts.push(variant.effort.clone());
+            }
+        }
+        let aliases = effort_aliases_for_family(&family);
+        let multi_agent_effort = aliases
+            .iter()
+            .find(|alias| alias.requested == CODEX_ORCHESTRATION_EFFORT)
+            .map(|alias| alias.actual.as_str());
+        add(&family.id, &family.label, &efforts, multi_agent_effort);
+        // Legacy variant selections use the same family and separate effort at invocation.
+        for variant in &family.variants {
+            add(&variant.id, &variant.label, &efforts, multi_agent_effort);
+        }
+    }
+    for model in &catalog.models {
+        add(&model.id, &model.label, &[], None);
+    }
+    serde_json::Value::Array(rows)
+}
+
 /// Separate model and effort, flooring only against published model variants.
 /// Ultra stays in Codex instructions and resolves to the highest lower tier.
 pub(crate) fn invocation(

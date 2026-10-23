@@ -29,6 +29,7 @@ const NATIVE_ERROR_MESSAGE_FIELD: &str = "message";
 const MISSING_NATIVE_ERROR_MESSAGE: &str = "native request failed";
 const TURN_STEER_METHOD: &str = "turn/steer";
 const THREAD_RESUME_METHOD: &str = "thread/resume";
+const EXTERNAL_MODEL_CATALOG_CONFIG_FIELD: &str = "external_model_catalog";
 
 #[path = "native_external.rs"]
 mod external;
@@ -1843,7 +1844,28 @@ impl Native {
         selection: Option<&ModelSelection>,
     ) -> Result<Value> {
         let preferences = self.read_native_feature_preferences()?;
-        prepare_model_params_with_preferences(params, selection, &preferences)
+        let child_model = prepare_model_params_with_preferences(params, selection, &preferences)?;
+        let mut metadata = json!([]);
+        if preferences.antigravity_enabled {
+            let (catalog, warning) = match self.cached_agy_catalog().await {
+                Ok(lookup) => (lookup.catalog, lookup.warning),
+                Err(error) => (None, Some(format!("{error:#}"))),
+            };
+            if let Some(catalog) = catalog {
+                metadata = crate::agy_model_catalog::core_metadata(&catalog);
+            }
+            if let Some(message) = warning {
+                publish_event(
+                    &self.inner,
+                    json!({"method":"warning","params":{"message":message}}),
+                );
+            }
+        }
+        merge_config_overrides(
+            params,
+            &json!({(EXTERNAL_MODEL_CATALOG_CONFIG_FIELD):metadata}),
+        );
+        Ok(child_model)
     }
 
     fn remember_subagent_model(&self, overrides: Value) -> Result<()> {
