@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use codex_uds::{UnixListener, UnixStream, prepare_private_socket_directory};
@@ -59,9 +59,6 @@ use windows_sys::Win32::System::Threading::{
 };
 
 type Socket = WebSocketStream<UnixStream>;
-
-#[path = "agy_catalog_cache.rs"]
-pub(crate) mod agy_catalog_cache;
 
 pub type VoiceLeaveHandler =
     Arc<dyn Fn(String) -> BoxFuture<'static, Result<Value>> + Send + Sync + 'static>;
@@ -396,7 +393,7 @@ struct Inner {
     external_turns: Mutex<HashMap<String, external::ActiveTurn>>,
     child: AsyncMutex<Option<Child>>,
     reconnect: AsyncMutex<()>,
-    agy_catalog_refresh: AsyncMutex<()>,
+    agy_catalog: crate::agy::CatalogManager,
     endpoint: PathBuf,
     endpoint_dir: PathBuf,
     voice_tool_endpoint: PathBuf,
@@ -1622,7 +1619,7 @@ impl Native {
             external_turns: Mutex::new(HashMap::new()),
             child: AsyncMutex::new(Some(child)),
             reconnect: AsyncMutex::new(()),
-            agy_catalog_refresh: AsyncMutex::new(()),
+            agy_catalog: crate::agy::CatalogManager::new(config),
             endpoint,
             endpoint_dir,
             voice_tool_endpoint,
@@ -2517,12 +2514,11 @@ impl Native {
         self.model_catalog_with_agy_refresh(true).await
     }
 
-    pub(crate) async fn cached_agy_catalog(&self) -> Result<agy_catalog_cache::CatalogLookup> {
+    pub(crate) async fn cached_agy_catalog(&self) -> Result<crate::agy::CatalogLookup> {
         self.read_agy_catalog(false).await
     }
 
-    async fn read_agy_catalog(&self, force: bool) -> Result<agy_catalog_cache::CatalogLookup> {
-        let _guard = self.inner.agy_catalog_refresh.lock().await;
+    async fn read_agy_catalog(&self, force: bool) -> Result<crate::agy::CatalogLookup> {
         let preferences = self.read_native_feature_preferences()?;
         if !preferences.antigravity_enabled {
             anyhow::bail!("AGY is not enabled for this profile");
@@ -2530,28 +2526,7 @@ impl Native {
         let share = preferences
             .antigravity_share_settings
             .context("choose whether to share existing AGY settings in Discodex settings")?;
-        crate::agy_settings::prepare(&self.inner.config, share)?;
-        let runtime = crate::agy::Runtime::for_config(&self.inner.config)?;
-        let context = format!(
-            "profile={}\nexecutable={}\narguments={}\nsharing={}",
-            std::path::absolute(&self.inner.config.state_dir)
-                .context("resolve AGY catalog profile state directory")?
-                .display(),
-            runtime.executable.display(),
-            runtime.arguments.join("\0"),
-            share
-        );
-        let context_key = context;
-        let cache = agy_catalog_cache::CatalogCache::new(&self.inner.config.state_dir, context_key);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .context("system clock is before the Unix epoch")?
-            .as_secs();
-        cache
-            .get_or_refresh(now, force, || async {
-                crate::agy::discover_catalog(&runtime).await
-            })
-            .await
+        self.inner.agy_catalog.get_or_refresh(share, force).await
     }
 
     async fn model_catalog_with_agy_refresh(&self, force_agy_refresh: bool) -> Result<Value> {

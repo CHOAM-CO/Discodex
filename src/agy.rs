@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -16,6 +17,49 @@ use tokio::{
     sync::{Mutex as AsyncMutex, mpsc, watch},
     task::JoinHandle,
 };
+
+#[path = "agy_catalog_cache.rs"]
+mod catalog_cache;
+pub(crate) use catalog_cache::CatalogLookup;
+
+/// Owns profile-scoped discovery and caching for the managed AGY runtime.
+pub(crate) struct CatalogManager {
+    config: crate::config::Config,
+    refresh: AsyncMutex<()>,
+}
+
+impl CatalogManager {
+    pub(crate) fn new(config: &crate::config::Config) -> Self {
+        Self {
+            config: config.clone(),
+            refresh: AsyncMutex::new(()),
+        }
+    }
+
+    pub(crate) async fn get_or_refresh(&self, share: bool, force: bool) -> Result<CatalogLookup> {
+        let _guard = self.refresh.lock().await;
+        crate::agy_settings::prepare(&self.config, share)?;
+        let runtime = Runtime::for_config(&self.config)?;
+        let context = format!(
+            "profile={}\nexecutable={}\narguments={}\nsharing={}",
+            std::path::absolute(&self.config.state_dir)
+                .context("resolve AGY catalog profile state directory")?
+                .display(),
+            runtime.executable.display(),
+            runtime.arguments.join("\0"),
+            share
+        );
+        let context_key = context;
+        let cache = catalog_cache::CatalogCache::new(&self.config.state_dir, context_key);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .context("system clock is before the Unix epoch")?
+            .as_secs();
+        cache
+            .get_or_refresh(now, force, || async { discover_catalog(&runtime).await })
+            .await
+    }
+}
 
 /// Canonical tokens for the documented AGY CLI protocol and argv contract.
 pub(crate) mod protocol {
