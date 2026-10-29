@@ -1,21 +1,61 @@
-MIT License
+CHOAM Community License, Version 1.0
 
-Copyright (c) 2026 Discodex contributors
+Copyright (c) 2026 CHOAM Co., Ltd. (초암 주식회사). All rights reserved except as granted below.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. Definitions
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- “Software” means the Discodex software that this License accompanies, in source or binary form, together with its documentation and updates CHOAM publishes under this License.
+- “Derivative Work” means a modification or adaptation of the Software, or a work that incorporates all or part of the Software code, made by You or on Your behalf under the rights granted by this License. Using the Software as a development or testing harness does not by itself make a separate project or its output a Derivative Work. A separate project’s independently authored code, data, and assets are not a Derivative Work if they do not include Software code; their copyrights remain with their respective creators. This License applies to the CHOAM-owned or CHOAM-licensed portions of a Derivative Work and does not transfer ownership of Your independently authored additions. Software and Derivative Works do not include third-party components except to the extent CHOAM owns or is authorized to license rights in them.
+- “Discodex Module” means any separable source-code or binary-code module taken or extracted from the Software or a Derivative Work, whether or not the module implements a convenience feature.
+- “You” means the person or legal entity exercising rights under this License.
+- “Affiliate” means an entity that controls, is controlled by, or is under common control with You. “Control” means direct or indirect ownership of more than 50% of the voting interests or the power to direct management.
+- “Product” means a separately marketed or separately released game, application, service, or other commercial offering that (a) distributes or makes the Software or a Derivative Work available to users, (b) makes the Software or a Derivative Work available through a hosted or managed service, or (c) includes or executes a Discodex Module as part of the offering’s operation. A call to the Software solely for development or testing is Development Harness Use, not Product operation. Independently authored code, data, or assets that do not include Software code do not by themselves make the separate project a Product. Each separately sold or separately released title or service counts as a separate Product. Revenue of You and Your Affiliates from the same Product is aggregated.
+- “Development Harness Use” means calling or otherwise using the Software solely as a development or testing harness to create or test a separate project, where that project neither distributes or provides access to the Software or a Derivative Work nor includes or executes a Discodex Module in its operation. Development Harness Use is free regardless of the separate project's revenue. A separate project’s independently authored code, data, and assets that do not include Software code remain separate works with their own copyrights, even when created using the Software as a harness.
+- “Net Revenue” means all revenue You or Your Affiliates receive from a Product, including sales, in-app purchases, subscriptions, advertising, and sponsorship tied to the Product, less (a) fees retained by stores, platforms, or payment processors, (b) refunds and chargebacks, and (c) value-added, sales, and similar taxes collected from buyers.
+- “Quarter” means a calendar quarter: January–March, April–June, July–September, or October–December.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. License grant
+
+Subject to this License, CHOAM grants You a worldwide, non-exclusive, non-transferable license, for the term of this License, to use and copy the Software and to modify it where it is provided in source form, and to distribute the Software or a Derivative Work or make either available as part of a Product. You may authorize Your contractors and service providers to host, operate, modify, or distribute the Software solely on Your behalf to develop, test, or provide Your Product, provided that they are bound to use it only for those purposes and You remain responsible for their compliance with this License.
+
+A person or entity that receives the Software or a Derivative Work from You, including through a free public fork or a subsequent redistribution, may exercise the rights granted by this License directly and only under these same terms, including applicable royalty and reporting obligations. You must provide this License with each such copy or distribution and may not apply different terms to the CHOAM-owned or CHOAM-licensed portions. Independently authored additions remain owned by their creators and may be licensed separately, provided that no separate terms alter the rights or obligations for the CHOAM-owned or CHOAM-licensed portions. Third-party components remain subject to their own license terms. You may not grant rights in the Software or a Derivative Work beyond the rights granted by this License.
+
+This License grants only rights in the Software that CHOAM owns or is authorized to license. You retain ownership of Your independently authored additions to a Derivative Work, subject to this License only as to the CHOAM-owned or CHOAM-licensed portions. Third-party components remain subject to their own license terms, which govern those components in case of conflict. There is no fee to begin Development Harness Use, no registration requirement, and no separate license-management fee.
+
+3. Royalty and reporting
+
+3.1 For each Product and each Quarter, no royalty is due on the first KRW 10,000,000 of Net Revenue.
+
+3.2 You owe CHOAM a royalty of 1% only on the portion of that Product's Net Revenue for that Quarter above KRW 10,000,000. The threshold is calculated separately for each Product and resets each Quarter; no amount carries over between Products or Quarters.
+
+3.3 Revenue received in a currency other than KRW must be converted to KRW using the Bank of Korea base exchange rate for the last business day of the applicable Quarter.
+
+3.4 Within 45 days after the end of each Quarter in which a royalty is due, You must send CHOAM a statement identifying each Product for which a royalty is due and showing its Net Revenue and royalty due for that Quarter. You must pay the royalty with that statement to the account CHOAM provides on request. No report is required for a Quarter in which no royalty is due. No separate reporting or license-management fee is charged.
+
+4. Conditions and reservation of rights
+
+- Keep this License and CHOAM's copyright notice with each copy of the Software that You distribute, including copies embedded in a Product.
+- This License does not grant rights to CHOAM's names, logos, or trademarks, except to state truthfully that a Product uses the Software.
+- Except for the express rights granted in this License, CHOAM and its licensors reserve all rights in the Software. No ownership is transferred to You.
+
+5. Versions published under other licenses
+
+A copy or version of the Software that CHOAM previously published under another license, including MIT-licensed versions, remains available under that license for that copy or version. This License applies only to copies or versions CHOAM publishes with this License. No change to the license for a later version withdraws rights already granted for an earlier version. Third-party components remain under their respective existing license terms; this License does not replace or narrow those terms.
+
+6. No warranty
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+7. Limitation of liability
+
+TO THE EXTENT PERMITTED BY LAW, CHOAM IS NOT LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES, OR FOR LOST PROFITS OR DATA, ARISING FROM THE SOFTWARE OR THIS LICENSE. CHOAM'S TOTAL LIABILITY IS LIMITED TO THE ROYALTIES YOU PAID IN THE TWELVE MONTHS BEFORE THE CLAIM.
+
+8. Termination
+
+If You breach this License and do not cure the breach within 30 days after CHOAM gives You written notice, this License terminates for You. Sections 3 (for royalties already due), 6, 7, and 9 survive termination.
+
+9. Governing law
+
+This License is governed by the laws of the Republic of Korea. The Seoul Central District Court has exclusive jurisdiction over disputes.
+
+Contact: mino@choam.studio
