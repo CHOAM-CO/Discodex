@@ -1,5 +1,22 @@
 # Discodex
 
+> [!WARNING]
+> **유지보수 모드 안내 (Maintenance Mode Notice)**
+>
+> **Discodex는 이제 버그 수정 외에 핵심 기능 추가 등의 업데이트가 제공되지 않습니다.**  
+> 더 많은 기능과 지속적인 업데이트가 필요하다면 차세대 에이전트 워크스페이스인 **[세헤라자드 (Scheherazade)](https://choam.studio/pages/scheherazade)** 를 사용해 보세요.
+> - **세헤라자드 제품 소개**: [https://choam.studio/pages/scheherazade](https://choam.studio/pages/scheherazade)
+> - **다운로드 페이지**: [https://choam.studio/download](https://choam.studio/download)
+> - **GitHub Releases**: [https://github.com/CHOAM-CO/scheherazade-releases/releases/latest](https://github.com/CHOAM-CO/scheherazade-releases/releases/latest)
+>
+> ---
+>
+> **Discodex will no longer receive core feature additions or major updates beyond bug fixes.**  
+> If you need more features and active updates, please try **[Scheherazade](https://choam.studio/pages/scheherazade)**:
+> - **Overview**: [https://choam.studio/pages/scheherazade](https://choam.studio/pages/scheherazade)
+> - **Download**: [https://choam.studio/download](https://choam.studio/download)
+> - **GitHub Releases**: [https://github.com/CHOAM-CO/scheherazade-releases/releases/latest](https://github.com/CHOAM-CO/scheherazade-releases/releases/latest)
+
 Discodex connects Discord text and voice conversations to a persistent working conversation.
 
 Download the latest prebuilt installers for Windows, macOS, and Linux from [GitHub Releases](https://github.com/CHOAM-CO/Discodex/releases).
